@@ -1,36 +1,242 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v3
+# DuckDB Storage Backend pro Keboola - Implementacni plan v4
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
+
+---
+
+## KRITICKA KOMPONENTA: Protocol Buffers
+
+> **Toto je zaklad cele integrace driveru do Keboola Connection!**
+
+### Proc jsou Protocol Buffers dulezite?
+
+Connection komunikuje s drivery pres **protobuf messages**:
+- Kazdy driver MUSI implementovat `ClientInterface` z `keboola/storage-driver-common`
+- Vsechny commands jsou protobuf Message objekty (ne JSON, ne REST)
+- Vsechny responses jsou protobuf Message objekty
+
+### Komunikacni tok
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           CONNECTION (PHP)                               │
+│                                                                          │
+│  TableInfoService / ImportService / ...                                  │
+│         │                                                                │
+│         ▼                                                                │
+│  DriverClientFactory::getClientForBackend('duckdb')                     │
+│         │                                                                │
+│         ▼                                                                │
+│  DriverClientWrapper                                                     │
+│         │                                                                │
+│         │ client->runCommand(                                            │
+│         │   GenericBackendCredentials,  // protobuf Message              │
+│         │   CreateTableCommand,          // protobuf Message              │
+│         │   array $features,                                             │
+│         │   RuntimeOptions               // protobuf Message              │
+│         │ ): DriverResponse              // protobuf Message              │
+│         │                                                                │
+│         ▼                                                                │
+└─────────┬───────────────────────────────────────────────────────────────┘
+          │ PROTOBUF MESSAGES
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                DUCKDB DRIVER (implements ClientInterface)                │
+│                                                                          │
+│  DuckdbDriverClient::runCommand()                                        │
+│         │                                                                │
+│         ▼                                                                │
+│  HandlerFactory::create($command)                                        │
+│         │                                                                │
+│         ├── CreateTableCommand::class => CreateTableHandler              │
+│         ├── TableImportFromFileCommand::class => ImportTableHandler      │
+│         ├── ObjectInfoCommand::class => ObjectInfoHandler                │
+│         └── ... (33+ handleru)                                           │
+│                │                                                         │
+│                │ REST/JSON (interni komunikace)                          │
+│                ▼                                                         │
+│  ┌─────────────────────────────────────────┐                            │
+│  │   DuckDB API Service (Python)           │                            │
+│  │   - FastAPI                             │                            │
+│  │   - Zpracovava SQL operace              │                            │
+│  └─────────────────────────────────────────┘                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Kriticka zavislost: storage-driver-common
+
+```json
+{
+    "require": {
+        "keboola/storage-driver-common": "^7.8.0"
+    }
+}
+```
+
+Tento balicek obsahuje:
+
+**Commands (Input):**
+```
+Keboola\StorageDriver\Command\
+├── Backend\InitBackendCommand
+├── Backend\RemoveBackendCommand
+├── Project\CreateProjectCommand
+├── Project\UpdateProjectCommand
+├── Project\DropProjectCommand
+├── Project\CreateDevBranchCommand
+├── Project\DropDevBranchCommand
+├── Bucket\CreateBucketCommand
+├── Bucket\DropBucketCommand
+├── Bucket\ShareBucketCommand
+├── Bucket\UnshareBucketCommand
+├── Bucket\LinkBucketCommand
+├── Bucket\UnlinkBucketCommand
+├── Bucket\GrantBucketAccessToReadOnlyRoleCommand
+├── Bucket\RevokeBucketAccessFromReadOnlyRoleCommand
+├── Table\CreateTableCommand
+├── Table\DropTableCommand
+├── Table\AddColumnCommand
+├── Table\DropColumnCommand
+├── Table\AlterColumnCommand
+├── Table\AddPrimaryKeyCommand
+├── Table\DropPrimaryKeyCommand
+├── Table\DeleteTableRowsCommand
+├── Table\TableImportFromFileCommand
+├── Table\TableImportFromTableCommand
+├── Table\TableExportToFileCommand
+├── Table\PreviewTableCommand
+├── Table\CreateProfileTableCommand
+├── Table\CreateTableFromTimeTravelCommand
+├── Workspace\CreateWorkspaceCommand
+├── Workspace\DropWorkspaceCommand
+├── Workspace\ClearWorkspaceCommand
+├── Workspace\DropWorkspaceObjectCommand
+├── Workspace\ResetWorkspacePasswordCommand
+├── Info\ObjectInfoCommand
+└── ExecuteQuery\ExecuteQueryCommand
+```
+
+**Responses (Output):**
+```
+Keboola\StorageDriver\Command\*\*Response
+├── ObjectInfoResponse
+├── TableImportResponse
+├── TableExportToFileResponse
+├── CreateWorkspaceResponse
+├── InitBackendResponse
+└── ... (pro kazdy command)
+```
+
+**Runtime Messages:**
+```
+Keboola\StorageDriver\Credentials\GenericBackendCredentials
+Keboola\StorageDriver\Command\Common\RuntimeOptions
+Keboola\StorageDriver\Command\Common\DriverResponse
+```
+
+### Handler priklad (z BigQuery driveru)
+
+```php
+<?php
+// ImportTableFromFileHandler.php
+
+final class ImportTableFromFileHandler extends BaseHandler
+{
+    public function __invoke(
+        Message $credentials,        // GenericBackendCredentials
+        Message $command,            // TableImportFromFileCommand
+        array $features,
+        Message $runtimeOptions,     // RuntimeOptions
+    ): ?Message {                   // TableImportResponse
+        assert($credentials instanceof GenericBackendCredentials);
+        assert($command instanceof TableImportFromFileCommand);
+
+        // Extrakce dat z protobuf
+        $filePath = $command->getFilePath();
+        $destination = $command->getDestination();
+        $path = ProtobufHelper::repeatedStringToArray($destination->getPath());
+
+        // ... zpracovani ...
+
+        // Vytvoreni protobuf response
+        $response = new TableImportResponse();
+        $response->setTableRowsCount($rowCount);
+        $response->setTableSizeBytes($sizeBytes);
+        $response->setImportedRowsCount($importedRows);
+
+        return $response;
+    }
+}
+```
+
+---
 
 ## Architektura
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         ON-PREMISE KEBOOLA                           │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌────────────────────────┐           ┌────────────────────────────┐ │
-│  │  Keboola Connection    │           │   DuckDB API Service       │ │
-│  │  (PHP)                 │◄──REST───►│   (Python + FastAPI)       │ │
-│  │                        │           │                            │ │
-│  │  - Thin HTTP client    │           │   - Write Queue (async)    │ │
-│  │  - Credentials mgmt    │           │   - Read Pool (parallel)   │ │
-│  └────────────────────────┘           │   - All handlers           │ │
-│                                       └─────────────┬──────────────┘ │
-│                                                     │                │
-│  ┌──────────────────────────────────────────────────┴───────────────┐│
-│  │                       LOCAL FILESYSTEM                           ││
-│  │                                                                  ││
-│  │  /data/duckdb/                        /data/files/               ││
-│  │  ├── project_123_main.duckdb          ├── project_123/           ││
-│  │  ├── project_123_branch_456.duckdb    │   └── *.csv, *.json      ││
-│  │  └── project_124_main.duckdb          └── project_124/           ││
-│  │                                                                  ││
-│  │  /data/snapshots/                     /data/metadata/            ││
-│  │  └── project_123/                     └── files.duckdb           ││
-│  │      └── *.parquet                                               ││
-│  └──────────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         ON-PREMISE KEBOOLA                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                    KEBOOLA CONNECTION (PHP)                         │  │
+│  │                                                                     │  │
+│  │  Services (TableInfoService, ImportService, ...)                    │  │
+│  │         │                                                           │  │
+│  │         ▼                                                           │  │
+│  │  DriverClientFactory → DriverClientWrapper                          │  │
+│  │         │                                                           │  │
+│  │         │ runCommand(credentials, command, features, runtimeOptions)│  │
+│  │         │              ↑ PROTOBUF MESSAGES ↑                        │  │
+│  │         ▼                                                           │  │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │  │
+│  │  │  StorageDriverDuckdb Package                                 │   │  │
+│  │  │                                                              │   │  │
+│  │  │  DuckdbDriverClient (implements ClientInterface)             │   │  │
+│  │  │         │                                                    │   │  │
+│  │  │         ▼                                                    │   │  │
+│  │  │  HandlerFactory::create($command)                            │   │  │
+│  │  │         │                                                    │   │  │
+│  │  │         ├── InitBackendHandler                               │   │  │
+│  │  │         ├── CreateTableHandler                               │   │  │
+│  │  │         ├── ImportTableFromFileHandler                       │   │  │
+│  │  │         ├── ObjectInfoHandler                                │   │  │
+│  │  │         └── ... (33+ handlers)                               │   │  │
+│  │  │                │                                             │   │  │
+│  │  │                │ DuckdbApiClient (HTTP/REST)                 │   │  │
+│  │  │                ▼                                             │   │  │
+│  │  └────────────────┼─────────────────────────────────────────────┘   │  │
+│  └───────────────────┼─────────────────────────────────────────────────┘  │
+│                      │                                                    │
+│                      │ REST/JSON                                          │
+│                      ▼                                                    │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                  DuckDB API Service (Python)                        │  │
+│  │                                                                     │  │
+│  │  FastAPI App                                                        │  │
+│  │  ├── /backend/init, /backend/remove                                 │  │
+│  │  ├── /projects CRUD                                                 │  │
+│  │  ├── /tables CRUD + import/export                                   │  │
+│  │  ├── /workspaces CRUD                                               │  │
+│  │  ├── /branches CRUD                                                 │  │
+│  │  └── /query (via write queue)                                       │  │
+│  │                                                                     │  │
+│  │  Write Queue (per project) → DuckDB Connection Manager              │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                      │                                                    │
+│                      ▼                                                    │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                       LOCAL FILESYSTEM                              │  │
+│  │                                                                     │  │
+│  │  /data/duckdb/                        /data/files/                  │  │
+│  │  ├── project_123_main.duckdb          ├── project_123/              │  │
+│  │  ├── project_123_branch_456.duckdb    │   └── *.csv, *.parquet      │  │
+│  │  └── project_124_main.duckdb          └── project_124/              │  │
+│  │                                                                     │  │
+│  │  /data/snapshots/                     /data/metadata/               │  │
+│  │  └── project_123/snap_001/*.parquet   └── files.duckdb              │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Architektonicka rozhodnuti (ADR)
@@ -216,50 +422,205 @@ duckdb-api-service/
     └── test_query.py
 ```
 
-### 2. PHP Driver v Connection
+### 2. PHP Driver v Connection (StorageDriverDuckdb Package)
+
+> **KRITICKA KOMPONENTA** - Implementuje Protocol Buffers integraci!
 
 ```
 connection/Package/StorageDriverDuckdb/
-├── composer.json
+├── composer.json                        # google/protobuf, storage-driver-common
 ├── services.yaml
 ├── src/
-│   ├── DuckdbDriverClient.php      # Implements ClientInterface
-│   ├── DuckdbApiClient.php         # HTTP client pro API Service
-│   ├── DuckdbCredentialsHelper.php
+│   ├── DuckdbDriverClient.php           # Implements ClientInterface
+│   │                                    # - runCommand(Message, Message, array, Message)
+│   │                                    # - Vola HandlerFactory
+│   │                                    # - Vraci DriverResponse
+│   │
+│   ├── DuckdbApiClient.php              # HTTP client pro Python API
+│   │                                    # - GET, POST, PUT, DELETE
+│   │                                    # - JSON serialization
+│   │                                    # - Error handling
+│   │
+│   ├── DuckdbCredentialsHelper.php      # Extrakce credentials z GenericBackendCredentials
+│   │
 │   └── Handler/
+│       ├── HandlerFactory.php           # Match command -> handler
+│       │                                # CreateTableCommand::class => CreateTableHandler
+│       │                                # TableImportFromFileCommand::class => ImportHandler
+│       │                                # ... (33+ mappings)
+│       │
+│       ├── BaseHttpHandler.php          # Spolecna logika pro vsechny handlery
+│       │                                # - extractProjectId()
+│       │                                # - callApi()
+│       │                                # - buildResponse()
+│       │
 │       ├── Backend/
-│       │   ├── InitBackendHandler.php
-│       │   └── RemoveBackendHandler.php
+│       │   ├── InitBackendHandler.php   # InitBackendCommand → null
+│       │   └── RemoveBackendHandler.php # RemoveBackendCommand → null
+│       │
 │       ├── Project/
-│       │   ├── CreateProjectHandler.php
-│       │   ├── UpdateProjectHandler.php
-│       │   └── DropProjectHandler.php
+│       │   ├── CreateProjectHandler.php  # CreateProjectCommand → ObjectInfoResponse
+│       │   ├── UpdateProjectHandler.php  # UpdateProjectCommand → ObjectInfoResponse
+│       │   └── DropProjectHandler.php    # DropProjectCommand → null
+│       │
 │       ├── Bucket/
-│       │   ├── CreateBucketHandler.php
-│       │   ├── DropBucketHandler.php
-│       │   ├── ShareBucketHandler.php
-│       │   └── ...
+│       │   ├── CreateBucketHandler.php                   # CreateBucketCommand
+│       │   ├── DropBucketHandler.php                     # DropBucketCommand
+│       │   ├── ShareBucketHandler.php                    # ShareBucketCommand
+│       │   ├── UnshareBucketHandler.php                  # UnshareBucketCommand
+│       │   ├── LinkBucketHandler.php                     # LinkBucketCommand
+│       │   ├── UnlinkBucketHandler.php                   # UnlinkBucketCommand
+│       │   ├── GrantBucketAccessToReadOnlyRoleHandler.php
+│       │   └── RevokeBucketAccessFromReadOnlyRoleHandler.php
+│       │
 │       ├── Table/
-│       │   ├── CreateTableHandler.php
-│       │   ├── DropTableHandler.php
-│       │   ├── ImportFromFileHandler.php
-│       │   └── ...
-│       └── Workspace/
-│           └── ...
+│       │   ├── CreateTableHandler.php                    # CreateTableCommand → ObjectInfoResponse
+│       │   ├── DropTableHandler.php                      # DropTableCommand → null
+│       │   ├── AddColumnHandler.php                      # AddColumnCommand → ObjectInfoResponse
+│       │   ├── DropColumnHandler.php                     # DropColumnCommand → ObjectInfoResponse
+│       │   ├── AlterColumnHandler.php                    # AlterColumnCommand → ObjectInfoResponse
+│       │   ├── AddPrimaryKeyHandler.php                  # AddPrimaryKeyCommand → ObjectInfoResponse
+│       │   ├── DropPrimaryKeyHandler.php                 # DropPrimaryKeyCommand → ObjectInfoResponse
+│       │   ├── DeleteTableRowsHandler.php                # DeleteTableRowsCommand → ObjectInfoResponse
+│       │   ├── ImportTableFromFileHandler.php            # TableImportFromFileCommand → TableImportResponse
+│       │   ├── ImportTableFromTableHandler.php           # TableImportFromTableCommand → TableImportResponse
+│       │   ├── ExportTableToFileHandler.php              # TableExportToFileCommand → TableExportToFileResponse
+│       │   ├── PreviewTableHandler.php                   # PreviewTableCommand → PreviewTableResponse
+│       │   ├── ProfileTableHandler.php                   # CreateProfileTableCommand → ObjectInfoResponse
+│       │   └── CreateTableFromTimeTravelHandler.php      # CreateTableFromTimeTravelCommand → ObjectInfoResponse
+│       │
+│       ├── Workspace/
+│       │   ├── CreateWorkspaceHandler.php                # CreateWorkspaceCommand → CreateWorkspaceResponse
+│       │   ├── DropWorkspaceHandler.php                  # DropWorkspaceCommand → null
+│       │   ├── ClearWorkspaceHandler.php                 # ClearWorkspaceCommand → null
+│       │   ├── DropWorkspaceObjectHandler.php            # DropWorkspaceObjectCommand → null
+│       │   └── ResetWorkspacePasswordHandler.php         # ResetWorkspacePasswordCommand → null (N/A)
+│       │
+│       ├── Branch/
+│       │   ├── CreateDevBranchHandler.php                # CreateDevBranchCommand → ObjectInfoResponse
+│       │   └── DropDevBranchHandler.php                  # DropDevBranchCommand → null
+│       │
+│       ├── Info/
+│       │   └── ObjectInfoHandler.php                     # ObjectInfoCommand → ObjectInfoResponse
+│       │
+│       └── ExecuteQuery/
+│           └── ExecuteQueryHandler.php                   # ExecuteQueryCommand → ExecuteQueryResponse
+│
 └── tests/
+    ├── Unit/
+    │   ├── HandlerFactoryTest.php
+    │   └── Handler/
+    │       └── ...
+    └── Functional/
+        └── ...
+```
+
+### DuckdbDriverClient.php - Implementace
+
+```php
+<?php
+namespace Keboola\StorageDriver\Duckdb;
+
+use Google\Protobuf\Any;
+use Google\Protobuf\Internal\Message;
+use Keboola\StorageDriver\Command\Common\DriverResponse;
+use Keboola\StorageDriver\Contract\Driver\ClientInterface;
+use Keboola\StorageDriver\Credentials\GenericBackendCredentials;
+use Keboola\StorageDriver\Duckdb\Handler\HandlerFactory;
+use Keboola\StorageDriver\Shared\Driver\BaseHandler;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
+
+class DuckdbDriverClient implements ClientInterface
+{
+    private DuckdbApiClient $apiClient;
+    protected LoggerInterface $internalLogger;
+
+    public function __construct(
+        string $apiUrl,
+        ?LoggerInterface $internalLogger = null
+    ) {
+        $this->apiClient = new DuckdbApiClient($apiUrl);
+        $this->internalLogger = $internalLogger ?? new NullLogger();
+    }
+
+    public function runCommand(
+        Message $credentials,
+        Message $command,
+        array $features,
+        Message $runtimeOptions,
+    ): ?Message {
+        assert($credentials instanceof GenericBackendCredentials);
+
+        // Dispatch command to appropriate handler
+        $handler = HandlerFactory::create(
+            $command,
+            $this->apiClient,
+            $this->internalLogger,
+        );
+
+        // Execute handler
+        $handledResponse = $handler(
+            $credentials,
+            $command,
+            $features,
+            $runtimeOptions,
+        );
+
+        // Wrap response in DriverResponse
+        $response = new DriverResponse();
+        if ($handledResponse !== null) {
+            $any = new Any();
+            $any->pack($handledResponse);
+            $response->setCommandResponse($any);
+        }
+
+        // Include log messages if handler supports them
+        if ($handler instanceof BaseHandler) {
+            $response->setMessages($handler->getMessages());
+        }
+
+        return $response;
+    }
+}
 ```
 
 ---
 
 ## Implementacni faze
 
+### Faze 0: PHP Driver Package Setup (NOVA - KRITICKA)
+> **Tato faze je nutna pro integraci do Connection!**
+
+- [ ] Vytvorit `connection/Package/StorageDriverDuckdb/` strukturu
+- [ ] Vytvorit composer.json se zavislostmi:
+  ```json
+  {
+      "require": {
+          "php": "^8.2",
+          "google/protobuf": "^3.21",
+          "keboola/storage-driver-common": "^7.8.0",
+          "guzzlehttp/guzzle": "^7.0"
+      }
+  }
+  ```
+- [ ] Implementovat `DuckdbDriverClient` (implements ClientInterface)
+- [ ] Implementovat `DuckdbApiClient` (HTTP client pro Python API)
+- [ ] Implementovat `HandlerFactory` (dispatch commands na handlery)
+- [ ] Implementovat `BaseHttpHandler` (spolecna logika pro HTTP volani)
+- [ ] Registrovat driver v `DriverClientFactory` v Connection
+- [ ] Vytvorit services.yaml
+
 ### Faze 1: Zaklad API + Backend
 - [ ] FastAPI app s healthcheck
 - [ ] DuckDB connection manager
 - [ ] Docker + docker-compose
 - [ ] Zakladni konfigurace (ENV)
-- [ ] POST /backend/init
-- [ ] POST /backend/remove
+- [ ] Python: POST /backend/init
+- [ ] Python: POST /backend/remove
+- [ ] PHP: InitBackendHandler
+- [ ] PHP: RemoveBackendHandler
+- [ ] E2E test: Connection -> Driver -> Python API
 
 ### Faze 2: Project operace
 - [ ] POST /projects (vytvorit DuckDB soubor)
@@ -372,15 +733,30 @@ prometheus-client>=0.19.0
 structlog>=24.0.0
 ```
 
-### PHP Client
+### PHP Driver (StorageDriverDuckdb)
 ```json
 {
+    "name": "keboola/storage-driver-duckdb",
+    "description": "Keboola DuckDB storage driver",
     "require": {
+        "php": "^8.2",
+        "google/protobuf": "^3.21",
+        "keboola/storage-driver-common": "^7.8.0",
         "guzzlehttp/guzzle": "^7.0",
-        "keboola/storage-driver-common": "^7.8.0"
+        "psr/log": "^1.1|^2.0|^3.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5",
+        "phpstan/phpstan": "^1.8",
+        "keboola/coding-standard": "^15.0"
     }
 }
 ```
+
+**Klicove zavislosti:**
+- `google/protobuf` - Pro praci s protobuf messages
+- `keboola/storage-driver-common` - Command/Response definice + ClientInterface
+- `guzzlehttp/guzzle` - HTTP client pro komunikaci s Python API
 
 ---
 

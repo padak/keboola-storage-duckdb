@@ -56,12 +56,15 @@ Cti ADR, pokud chces pochopit PROC jsme se rozhodli tak, jak jsme se rozhodli.
 
 ### 6. Implementacni plan
 
-**[duckdb-driver-plan.md](duckdb-driver-plan.md)** - Hlavni implementacni plan. Obsahuje:
-- Architektura (ASCII diagram)
+**[duckdb-driver-plan.md](duckdb-driver-plan.md)** - Hlavni implementacni plan (v4). Obsahuje:
+- **NOVA SEKCE: Protocol Buffers** - kriticka komponenta pro integraci!
+- Architektura (ASCII diagram s detailem komunikace)
+- Seznam vsech protobuf Commands a Responses
 - Vsech 35 driver commands s prirazenim k fazim
 - Struktura Python API Service
-- Struktura PHP driveru v Connection
-- 12 implementacnich fazi
+- **Detailni struktura PHP driveru** s 33+ handlery
+- **Faze 0: PHP Driver Setup** (nova kriticka faze)
+- 13 implementacnich fazi (vcetne nove Faze 0)
 - Kompletni API endpointy
 - Technologie a zavislosti
 
@@ -96,27 +99,42 @@ duckdb-api-endpoints.md (co implementovat)
 ## Architektura (TL;DR)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      ON-PREMISE KEBOOLA                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Keboola Connection (PHP)  ◄──REST──►  DuckDB API Service (Py)  │
-│  - Thin HTTP client                    - FastAPI                │
-│  - Credentials                         - Write Queue            │
-│                                        - All handlers           │
-│                                                 │               │
-│                                                 ▼               │
-│                          LOCAL FILESYSTEM                       │
-│                          /data/duckdb/*.duckdb                  │
-│                          /data/files/*                          │
-│                          /data/snapshots/*                      │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        ON-PREMISE KEBOOLA                               │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Keboola Connection (PHP)                                               │
+│  │                                                                      │
+│  ├── Services (TableInfoService, ImportService, ...)                    │
+│  │        │                                                             │
+│  │        │  PROTOBUF MESSAGES (Commands/Responses)                     │
+│  │        ▼                                                             │
+│  └── StorageDriverDuckdb Package                                        │
+│       ├── DuckdbDriverClient (implements ClientInterface)               │
+│       ├── HandlerFactory (33+ handlers)                                 │
+│       └── DuckdbApiClient ─────────────────────┐                        │
+│                                                │ REST/JSON              │
+│                                                ▼                        │
+│                                     DuckDB API Service (Python)         │
+│                                     ├── FastAPI                         │
+│                                     ├── Write Queue                     │
+│                                     └── DuckDB Connection Manager       │
+│                                                │                        │
+│                                                ▼                        │
+│                                     LOCAL FILESYSTEM                    │
+│                                     /data/duckdb/*.duckdb               │
+│                                     /data/files/*                       │
+│                                     /data/snapshots/*                   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Klicove rozhodnuti:**
+- **Protocol Buffers** pro komunikaci Connection ↔ Driver (KRITICKE!)
 - DuckDB bezi v Python microservice (ne PHP FFI)
+- PHP Driver Package implementuje `ClientInterface` z `storage-driver-common`
+- REST/JSON pro interní komunikaci PHP ↔ Python
 - 1 Keboola projekt = 1 DuckDB soubor
-- Dev branches = separate DuckDB soubory
+- Dev branches = separate DuckDB soubory (plna implementace)
 - Snapshoty = Parquet export
 - Write operace serializovany pres async frontu
 - Storage Files na lokalnim filesystem (ne S3)
