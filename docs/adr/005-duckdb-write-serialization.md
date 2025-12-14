@@ -242,6 +242,336 @@ class KeboolaQueryServiceClient:
             return response.json()["result"]
 ```
 
+## Edge Cases a Failure Handling
+
+### 1. Timeouts
+
+```python
+@dataclass
+class WriteOperation:
+    sql: str
+    future: asyncio.Future
+    priority: int = 0
+    timeout: float = 300.0  # Default 5 minut
+    enqueued_at: float = field(default_factory=time.time)
+    max_execution_time: float = 600.0  # Max 10 minut pro jednu operaci
+
+# Timeout handling v queue workeru:
+async def _process_queue(self, project_id: str):
+    while True:
+        _, operation = await queue.get()
+
+        # Check if already expired in queue
+        wait_time = time.time() - operation.enqueued_at
+        if wait_time > operation.timeout:
+            operation.future.set_exception(
+                TimeoutError(f"Operation expired in queue after {wait_time:.1f}s")
+            )
+            queue.task_done()
+            continue
+
+        # Execute with remaining timeout
+        remaining_timeout = operation.timeout - wait_time
+        try:
+            result = await asyncio.wait_for(
+                self._execute_sql(project_id, operation.sql),
+                timeout=min(remaining_timeout, operation.max_execution_time)
+            )
+            operation.future.set_result(result)
+        except asyncio.TimeoutError:
+            operation.future.set_exception(
+                TimeoutError(f"Query execution timed out")
+            )
+```
+
+**Doporucene timeouty:**
+| Operace | Timeout |
+|---------|---------|
+| CREATE TABLE | 30s |
+| DROP TABLE | 30s |
+| ALTER TABLE | 60s |
+| INSERT (male) | 60s |
+| INSERT (velke, >1M rows) | 300s |
+| COPY FROM FILE | 600s |
+| DELETE WHERE | 300s |
+
+### 2. Retry Policy
+
+```python
+@dataclass
+class RetryPolicy:
+    max_retries: int = 3
+    base_delay: float = 0.1  # 100ms
+    max_delay: float = 10.0
+    exponential_base: float = 2.0
+    retryable_errors: tuple = (
+        "database is locked",
+        "connection lost",
+        "disk I/O error",
+    )
+
+async def execute_with_retry(
+    self,
+    project_id: str,
+    sql: str,
+    retry_policy: RetryPolicy = RetryPolicy()
+) -> Any:
+    last_error = None
+    for attempt in range(retry_policy.max_retries + 1):
+        try:
+            return await self._execute_sql(project_id, sql)
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_retryable = any(
+                err in error_msg for err in retry_policy.retryable_errors
+            )
+
+            if not is_retryable or attempt == retry_policy.max_retries:
+                raise
+
+            last_error = e
+            delay = min(
+                retry_policy.base_delay * (retry_policy.exponential_base ** attempt),
+                retry_policy.max_delay
+            )
+            logger.warning(
+                "retrying_operation",
+                attempt=attempt + 1,
+                delay=delay,
+                error=str(e)
+            )
+            await asyncio.sleep(delay)
+
+    raise last_error
+```
+
+**Co se NERETRYUJE:**
+- Syntax errors
+- Constraint violations (UNIQUE, FK)
+- Permission errors
+- Invalid table/column names
+
+### 3. Worker Crash Recovery
+
+```python
+class WriteQueueManager:
+    def __init__(self):
+        self.queues: dict[str, asyncio.PriorityQueue] = {}
+        self.workers: dict[str, asyncio.Task] = {}
+        self.operation_log: dict[str, list[WriteOperation]] = defaultdict(list)
+
+    async def _process_queue(self, project_id: str):
+        """Worker s crash recovery."""
+        while True:
+            try:
+                _, operation = await self.queues[project_id].get()
+
+                # Log operation start (pro crash recovery)
+                operation_id = str(uuid.uuid4())
+                self._log_operation_start(project_id, operation_id, operation)
+
+                try:
+                    result = await self._execute_sql(project_id, operation.sql)
+                    operation.future.set_result(result)
+                    self._log_operation_complete(project_id, operation_id)
+                except Exception as e:
+                    operation.future.set_exception(e)
+                    self._log_operation_failed(project_id, operation_id, e)
+
+            except asyncio.CancelledError:
+                # Graceful shutdown
+                logger.info("worker_shutdown", project_id=project_id)
+                break
+            except Exception as e:
+                # Worker crash - restart
+                logger.error(
+                    "worker_crashed",
+                    project_id=project_id,
+                    error=str(e),
+                    exc_info=True
+                )
+                # Kratka pauza pred restartem
+                await asyncio.sleep(1.0)
+
+    def _ensure_worker_running(self, project_id: str):
+        """Restart worker pokud spadl."""
+        if project_id in self.workers:
+            task = self.workers[project_id]
+            if task.done():
+                # Worker spadl nebo byl zrusen
+                exception = task.exception() if not task.cancelled() else None
+                if exception:
+                    logger.warning(
+                        "restarting_crashed_worker",
+                        project_id=project_id,
+                        previous_error=str(exception)
+                    )
+                self.workers[project_id] = asyncio.create_task(
+                    self._process_queue(project_id)
+                )
+        else:
+            self.workers[project_id] = asyncio.create_task(
+                self._process_queue(project_id)
+            )
+```
+
+### 4. Long Reads vs Write Lock
+
+**Problem:** Dlouhy SELECT blokuje write operace (DuckDB pouziva MVCC, ale checkpoint potrebuje exclusive lock).
+
+```python
+class ConnectionManager:
+    """Sprava read/write connections s fair scheduling."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.write_lock = asyncio.Lock()
+        self.active_reads: int = 0
+        self.reads_condition = asyncio.Condition()
+        self.pending_writes: int = 0
+
+    async def acquire_read(self) -> duckdb.DuckDBPyConnection:
+        """Ziskej read connection - muze byt paralelni."""
+        async with self.reads_condition:
+            # Cekej pokud jsou pending writes (write priority)
+            while self.pending_writes > 0:
+                await self.reads_condition.wait()
+            self.active_reads += 1
+
+        return duckdb.connect(self.db_path, read_only=True)
+
+    async def release_read(self, conn: duckdb.DuckDBPyConnection):
+        """Uvolni read connection."""
+        conn.close()
+        async with self.reads_condition:
+            self.active_reads -= 1
+            self.reads_condition.notify_all()
+
+    async def acquire_write(self) -> duckdb.DuckDBPyConnection:
+        """Ziskej write connection - exkluzivni."""
+        async with self.reads_condition:
+            self.pending_writes += 1
+
+        # Cekej az vsechny reads dokonci
+        async with self.reads_condition:
+            while self.active_reads > 0:
+                await self.reads_condition.wait()
+
+        await self.write_lock.acquire()
+        return duckdb.connect(self.db_path)
+
+    async def release_write(self, conn: duckdb.DuckDBPyConnection):
+        """Uvolni write connection."""
+        conn.close()
+        self.write_lock.release()
+        async with self.reads_condition:
+            self.pending_writes -= 1
+            self.reads_condition.notify_all()
+
+    @asynccontextmanager
+    async def read_connection(self):
+        conn = await self.acquire_read()
+        try:
+            yield conn
+        finally:
+            await self.release_read(conn)
+
+    @asynccontextmanager
+    async def write_connection(self):
+        conn = await self.acquire_write()
+        try:
+            yield conn
+        finally:
+            await self.release_write(conn)
+```
+
+**Strategie:**
+1. **Write priority**: Pending writes blokuji nove reads
+2. **Read timeout**: Dlouhe reads maji soft timeout (warn log po 60s)
+3. **Connection pooling**: Read connections jsou recyklovane
+
+### 5. Queue Overflow
+
+```python
+class WriteQueueManager:
+    MAX_QUEUE_SIZE = 1000
+    MAX_QUEUE_WAIT = 60.0  # Max cekani na misto ve fronte
+
+    async def enqueue_write(self, project_id: str, sql: str, ...) -> Any:
+        queue = self._get_queue(project_id)
+
+        # Check queue size
+        if queue.qsize() >= self.MAX_QUEUE_SIZE:
+            logger.warning(
+                "queue_full",
+                project_id=project_id,
+                queue_size=queue.qsize()
+            )
+            raise QueueFullError(
+                f"Write queue full for project {project_id}. "
+                f"Try again later or increase capacity."
+            )
+
+        # Enqueue with backpressure
+        try:
+            await asyncio.wait_for(
+                queue.put((-priority, operation)),
+                timeout=self.MAX_QUEUE_WAIT
+            )
+        except asyncio.TimeoutError:
+            raise QueueFullError(
+                f"Could not enqueue operation within {self.MAX_QUEUE_WAIT}s"
+            )
+```
+
+### 6. Graceful Shutdown
+
+```python
+class WriteQueueManager:
+    async def shutdown(self, timeout: float = 30.0):
+        """Graceful shutdown - dokoncit rozpracovane operace."""
+        logger.info("shutdown_started", pending_workers=len(self.workers))
+
+        # Stop accepting new operations
+        self._accepting_new = False
+
+        # Wait for queues to drain
+        try:
+            await asyncio.wait_for(
+                self._drain_all_queues(),
+                timeout=timeout
+            )
+            logger.info("queues_drained")
+        except asyncio.TimeoutError:
+            logger.warning(
+                "shutdown_timeout",
+                remaining_operations=sum(q.qsize() for q in self.queues.values())
+            )
+
+        # Cancel workers
+        for project_id, task in self.workers.items():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info("shutdown_complete")
+```
+
+## Monitoring a Alerting
+
+### Doporucene alerty
+
+| Metrika | Threshold | Severity |
+|---------|-----------|----------|
+| Queue depth | > 100 | Warning |
+| Queue depth | > 500 | Critical |
+| Queue wait time p99 | > 30s | Warning |
+| Queue wait time p99 | > 120s | Critical |
+| Worker crash rate | > 1/min | Critical |
+| Write timeout rate | > 5% | Warning |
+
 ## Reference
 
 - [DuckDB Concurrency](https://duckdb.org/docs/stable/connect/concurrency.html)

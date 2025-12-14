@@ -15,6 +15,17 @@ Connection komunikuje s drivery pres **protobuf messages**:
 - Vsechny commands jsou protobuf Message objekty (ne JSON, ne REST)
 - Vsechny responses jsou protobuf Message objekty
 
+### Komunikacni protokoly
+
+| Komunikace | Protokol | Duvod |
+|------------|----------|-------|
+| Connection <-> PHP Driver | Protobuf | Definovano storage-driver-common |
+| PHP Driver <-> Python API | REST/JSON | Jednodussi, debugging, flexibilita |
+
+> **Poznamka:** PHP <-> Python pouziva REST/JSON misto protobuf pro jednodussi
+> vyvoj a debugging. Pydantic modely v Pythonu jsou single source of truth
+> pro API schema. PHP DTOs jsou generovany z OpenAPI spec, aby nedochazelo k driftu.
+
 ### Komunikacni tok
 
 ```
@@ -245,10 +256,11 @@ final class ImportTableFromFileHandler extends BaseHandler
 |-----|------------|
 | 001 | Python microservice misto PHP FFI driver |
 | 002 | 1 projekt = 1 DuckDB soubor, bucket = schema |
-| 003 | Dev branches = separate DuckDB files |
+| 003 | Dev branches = separate DuckDB files (nahrazeno ADR-007) |
 | 004 | Snapshoty = Parquet export |
 | 005 | Write serialization = async fronta per projekt |
 | 006 | Storage Files = lokalni filesystem + metadata v DuckDB |
+| 007 | Copy-on-Write branching = lazy table-level copy |
 
 ---
 
@@ -592,6 +604,11 @@ class DuckdbDriverClient implements ClientInterface
 ### Faze 0: PHP Driver Package Setup (NOVA - KRITICKA)
 > **Tato faze je nutna pro integraci do Connection!**
 
+> **POZOR na protobuf kontrakt:** Pred implementaci handleru zkontroluj skutecne
+> `storage-driver-common` definice. Implementuj pouze handlery pro commands,
+> ktere existuji v `Keboola\StorageDriver\Command\*` namespace.
+> Vyhni se generovani "mrtvych" handleru pro neexistujici commands.
+
 - [ ] Vytvorit `connection/Package/StorageDriverDuckdb/` strukturu
 - [ ] Vytvorit composer.json se zavislostmi:
   ```json
@@ -611,7 +628,7 @@ class DuckdbDriverClient implements ClientInterface
 - [ ] Registrovat driver v `DriverClientFactory` v Connection
 - [ ] Vytvorit services.yaml
 
-### Faze 1: Zaklad API + Backend
+### Faze 1: Zaklad API + Backend + Observability
 - [ ] FastAPI app s healthcheck
 - [ ] DuckDB connection manager
 - [ ] Docker + docker-compose
@@ -621,12 +638,25 @@ class DuckdbDriverClient implements ClientInterface
 - [ ] PHP: InitBackendHandler
 - [ ] PHP: RemoveBackendHandler
 - [ ] E2E test: Connection -> Driver -> Python API
+- [ ] **Observability zaklad:**
+  - [ ] Structured logging (structlog) - JSON format pro parsovani
+  - [ ] Request ID middleware (X-Request-ID propagace)
+  - [ ] Request/response logging s timing
+  - [ ] Error logging s full traceback
 
-### Faze 2: Project operace
+### Faze 2: Project operace + Metrics + Security
 - [ ] POST /projects (vytvorit DuckDB soubor)
 - [ ] PUT /projects/{id} (update metadata)
 - [ ] DELETE /projects/{id} (smazat soubor)
 - [ ] GET /projects/{id}/info
+- [ ] **Observability rozsireni:**
+  - [ ] Prometheus metrics endpoint (/metrics)
+  - [ ] Metriky: request_count, request_duration, queue_depth, active_connections
+  - [ ] DuckDB-specific metriky: db_size_bytes, table_count, query_duration
+- [ ] **Security PHP <-> Python:**
+  - [ ] API key autentizace (shared secret v ENV)
+  - [ ] Rate limiting per project (prevence DoS)
+  - [ ] Optional: mTLS pro produkci
 
 ### Faze 3: Bucket operace
 - [ ] POST /buckets (CREATE SCHEMA)
@@ -692,7 +722,7 @@ class DuckdbDriverClient implements ClientInterface
 - [ ] POST /branch/{branch_id}/workspaces (workspace v dev branch)
 - [ ] POST /workspaces/{id}/query (execute v workspace kontextu)
 
-### Faze 10: Storage Files (on-prem)
+### Faze 10: Storage Files (on-prem) + Lifecycle
 - [ ] File metadata schema v DuckDB
 - [ ] POST /files/prepare (staging path)
 - [ ] POST /files/upload
@@ -700,6 +730,15 @@ class DuckdbDriverClient implements ClientInterface
 - [ ] DELETE /files/{id}
 - [ ] Staging directory management
 - [ ] Cleanup stale staging files
+- [ ] **File Lifecycle Management:**
+  - [ ] Staging cleanup (auto-delete after 24h)
+  - [ ] Kvoty per projekt (max files, max size)
+  - [ ] Checksum validace (MD5/SHA256 pri uploadu)
+  - [ ] Optional encryption at rest (AES-256)
+- [ ] **Backup/DR:**
+  - [ ] Backup strategie pro /data/files/
+  - [ ] Point-in-time recovery plan
+  - [ ] Dokumentace DR procedur
 
 ### Faze 11: PHP Integration
 - [ ] DuckdbDriverClient (implements ClientInterface)
@@ -731,6 +770,231 @@ httpx>=0.26.0
 python-dotenv>=1.0.0
 prometheus-client>=0.19.0
 structlog>=24.0.0
+opentelemetry-api>=1.20.0          # Distributed tracing
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+```
+
+---
+
+## Observability
+
+> **Proc je observability dulezita od zacatku?**
+> - Umoznuje rychle identifikovat problemy (kde a proc neco selhalo)
+> - Request tracing propojuje PHP driver s Python API
+> - AI asistenti (Claude Code) mohou analyzovat logy a navrhnout opravy
+> - Metriky umoznuji sledovat vykon a kapacitu
+
+### Structured Logging
+
+```python
+# src/logging_config.py
+import structlog
+from structlog.types import Processor
+
+def setup_logging():
+    """Configure structured logging for the application."""
+    processors: list[Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer()
+    ]
+
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+# Pouziti v kodu:
+logger = structlog.get_logger()
+
+async def create_table(project_id: str, bucket: str, table: str):
+    logger.info(
+        "creating_table",
+        project_id=project_id,
+        bucket=bucket,
+        table=table
+    )
+    try:
+        # ... operace ...
+        logger.info(
+            "table_created",
+            project_id=project_id,
+            bucket=bucket,
+            table=table,
+            duration_ms=elapsed
+        )
+    except Exception as e:
+        logger.error(
+            "table_creation_failed",
+            project_id=project_id,
+            bucket=bucket,
+            table=table,
+            error=str(e),
+            exc_info=True
+        )
+        raise
+```
+
+### Request ID Propagation
+
+```python
+# src/middleware/request_id.py
+import uuid
+from contextvars import ContextVar
+from fastapi import Request
+import structlog
+
+request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
+
+class RequestIdMiddleware:
+    async def __call__(self, request: Request, call_next):
+        # Get or generate request ID
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        request_id_ctx.set(request_id)
+
+        # Bind to structlog context
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+```
+
+### Prometheus Metrics
+
+```python
+# src/metrics.py
+from prometheus_client import Counter, Histogram, Gauge, generate_latest
+
+# Request metrics
+REQUEST_COUNT = Counter(
+    "duckdb_api_requests_total",
+    "Total API requests",
+    ["method", "endpoint", "status"]
+)
+
+REQUEST_DURATION = Histogram(
+    "duckdb_api_request_duration_seconds",
+    "Request duration in seconds",
+    ["method", "endpoint"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
+)
+
+# Write queue metrics
+QUEUE_DEPTH = Gauge(
+    "duckdb_write_queue_depth",
+    "Number of operations waiting in write queue",
+    ["project_id"]
+)
+
+QUEUE_WAIT_TIME = Histogram(
+    "duckdb_write_queue_wait_seconds",
+    "Time spent waiting in write queue",
+    ["project_id"],
+    buckets=[0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0]
+)
+
+# DuckDB metrics
+DB_SIZE_BYTES = Gauge(
+    "duckdb_database_size_bytes",
+    "Database file size in bytes",
+    ["project_id"]
+)
+
+ACTIVE_CONNECTIONS = Gauge(
+    "duckdb_active_connections",
+    "Number of active DuckDB connections",
+    ["project_id", "mode"]  # mode: read/write
+)
+
+QUERY_DURATION = Histogram(
+    "duckdb_query_duration_seconds",
+    "Query execution duration",
+    ["project_id", "query_type"],  # query_type: read/write
+    buckets=[0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 30.0, 60.0, 300.0]
+)
+```
+
+### Log Format (JSON)
+
+```json
+{
+  "timestamp": "2024-12-15T10:30:00.123Z",
+  "level": "info",
+  "event": "table_created",
+  "request_id": "abc-123-def",
+  "project_id": "456",
+  "bucket": "in_c_sales",
+  "table": "orders",
+  "duration_ms": 45,
+  "rows_affected": 1500
+}
+```
+
+### Error Log Format
+
+```json
+{
+  "timestamp": "2024-12-15T10:30:00.123Z",
+  "level": "error",
+  "event": "query_failed",
+  "request_id": "abc-123-def",
+  "project_id": "456",
+  "sql": "INSERT INTO ...",
+  "error": "UNIQUE constraint failed",
+  "error_type": "ConstraintException",
+  "traceback": "...",
+  "duration_ms": 12
+}
+```
+
+### PHP Driver Logging
+
+```php
+// V BaseHttpHandler.php
+protected function callApi(string $method, string $endpoint, array $data = []): array
+{
+    $requestId = $this->generateRequestId();
+
+    $this->logger->info('API call started', [
+        'request_id' => $requestId,
+        'method' => $method,
+        'endpoint' => $endpoint,
+        'project_id' => $data['project_id'] ?? null,
+    ]);
+
+    $startTime = microtime(true);
+
+    try {
+        $response = $this->httpClient->request($method, $endpoint, [
+            'json' => $data,
+            'headers' => ['X-Request-ID' => $requestId],
+        ]);
+
+        $this->logger->info('API call completed', [
+            'request_id' => $requestId,
+            'status' => $response->getStatusCode(),
+            'duration_ms' => (microtime(true) - $startTime) * 1000,
+        ]);
+
+        return json_decode($response->getBody(), true);
+    } catch (Exception $e) {
+        $this->logger->error('API call failed', [
+            'request_id' => $requestId,
+            'error' => $e->getMessage(),
+            'duration_ms' => (microtime(true) - $startTime) * 1000,
+        ]);
+        throw $e;
+    }
+}
 ```
 
 ### PHP Driver (StorageDriverDuckdb)
