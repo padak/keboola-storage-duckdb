@@ -1034,6 +1034,332 @@ class ProjectDBManager:
             view_count=len(views),
         )
 
+    # ========================================
+    # Table operations
+    # ========================================
+
+    def create_table(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        columns: list[dict[str, Any]],
+        primary_key: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a table in a bucket (schema).
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            table_name: The table name
+            columns: List of column definitions with keys: name, type, nullable, default
+            primary_key: Optional list of column names for primary key
+
+        Returns:
+            Table info dict with name, bucket, columns, row_count
+        """
+        # Build column definitions
+        col_defs = []
+        for col in columns:
+            col_def = f"{col['name']} {col['type']}"
+            if not col.get("nullable", True):
+                col_def += " NOT NULL"
+            if col.get("default") is not None:
+                col_def += f" DEFAULT {col['default']}"
+            col_defs.append(col_def)
+
+        # Add primary key constraint if specified
+        if primary_key:
+            pk_cols = ", ".join(primary_key)
+            col_defs.append(f"PRIMARY KEY ({pk_cols})")
+
+        columns_sql = ", ".join(col_defs)
+        create_sql = f"CREATE TABLE {bucket_name}.{table_name} ({columns_sql})"
+
+        with self.connection(project_id) as conn:
+            conn.execute(create_sql)
+            conn.commit()
+
+        logger.info(
+            "table_created",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            column_count=len(columns),
+            primary_key=primary_key,
+        )
+
+        # Return table info
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def delete_table(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """
+        Delete a table from a bucket.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            table_name: The table name
+
+        Returns:
+            True if successful
+        """
+        with self.connection(project_id) as conn:
+            conn.execute(f"DROP TABLE IF EXISTS {bucket_name}.{table_name}")
+            conn.commit()
+
+        logger.info(
+            "table_deleted",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+        )
+        return True
+
+    def get_table(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> dict[str, Any] | None:
+        """
+        Get information about a specific table (ObjectInfo).
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            table_name: The table name
+
+        Returns:
+            Table info dict or None if not found
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            # Check if table exists
+            table_result = conn.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'
+                """,
+                [bucket_name, table_name],
+            ).fetchone()
+
+            if not table_result:
+                return None
+
+            # Get column information
+            columns_result = conn.execute(
+                """
+                SELECT column_name, data_type, is_nullable, ordinal_position
+                FROM information_schema.columns
+                WHERE table_schema = ? AND table_name = ?
+                ORDER BY ordinal_position
+                """,
+                [bucket_name, table_name],
+            ).fetchall()
+
+            columns = [
+                {
+                    "name": row[0],
+                    "type": row[1],
+                    "nullable": row[2] == "YES",
+                    "ordinal_position": row[3],
+                }
+                for row in columns_result
+            ]
+
+            # Get row count
+            row_count_result = conn.execute(
+                f"SELECT COUNT(*) FROM {bucket_name}.{table_name}"
+            ).fetchone()
+            row_count = row_count_result[0] if row_count_result else 0
+
+            # Try to get primary key info from duckdb_constraints
+            primary_key = []
+            try:
+                pk_result = conn.execute(
+                    """
+                    SELECT constraint_column_names
+                    FROM duckdb_constraints()
+                    WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'
+                    """,
+                    [bucket_name, table_name],
+                ).fetchone()
+                if pk_result and pk_result[0]:
+                    # constraint_column_names is a list of column names
+                    primary_key = list(pk_result[0])
+            except Exception:
+                # Constraint query might fail in some cases, ignore
+                pass
+
+            # Estimate table size (DuckDB doesn't have direct table size, use file size as proxy)
+            # For more accurate size, we'd need to use pragma_storage_info
+            size_bytes = 0
+            try:
+                storage_info = conn.execute(
+                    f"SELECT SUM(compressed_size) FROM pragma_storage_info('{bucket_name}.{table_name}')"
+                ).fetchone()
+                size_bytes = storage_info[0] if storage_info and storage_info[0] else 0
+            except Exception:
+                pass
+
+            return {
+                "name": table_name,
+                "bucket": bucket_name,
+                "columns": columns,
+                "row_count": row_count,
+                "size_bytes": size_bytes,
+                "primary_key": primary_key,
+                "created_at": None,  # DuckDB doesn't track creation time
+            }
+
+    def list_tables(
+        self,
+        project_id: str,
+        bucket_name: str,
+    ) -> list[dict[str, Any]]:
+        """
+        List all tables in a bucket.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+
+        Returns:
+            List of table info dicts
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            tables_result = conn.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+                """,
+                [bucket_name],
+            ).fetchall()
+
+        tables = []
+        for (table_name,) in tables_result:
+            table_info = self.get_table(project_id, bucket_name, table_name)
+            if table_info:
+                tables.append(table_info)
+
+        return tables
+
+    def table_exists(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """
+        Check if a table exists in a bucket.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            table_name: The table name
+
+        Returns:
+            True if table exists
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            result = conn.execute(
+                """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'
+                """,
+                [bucket_name, table_name],
+            ).fetchone()
+
+            return result is not None
+
+    def get_table_preview(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """
+        Get a preview of table data.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            table_name: The table name
+            limit: Maximum number of rows to return (default 1000)
+
+        Returns:
+            Dict with columns, rows, total_row_count, preview_row_count
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            # Get column information
+            columns_result = conn.execute(
+                """
+                SELECT column_name, data_type, is_nullable, ordinal_position
+                FROM information_schema.columns
+                WHERE table_schema = ? AND table_name = ?
+                ORDER BY ordinal_position
+                """,
+                [bucket_name, table_name],
+            ).fetchall()
+
+            columns = [
+                {
+                    "name": row[0],
+                    "type": row[1],
+                    "nullable": row[2] == "YES",
+                    "ordinal_position": row[3],
+                }
+                for row in columns_result
+            ]
+
+            # Get total row count
+            total_count_result = conn.execute(
+                f"SELECT COUNT(*) FROM {bucket_name}.{table_name}"
+            ).fetchone()
+            total_row_count = total_count_result[0] if total_count_result else 0
+
+            # Get preview rows
+            preview_result = conn.execute(
+                f"SELECT * FROM {bucket_name}.{table_name} LIMIT {limit}"
+            ).fetchall()
+
+            # Get column names for row dicts
+            col_names = [col["name"] for col in columns]
+
+            # Convert rows to list of dicts
+            rows = []
+            for row in preview_result:
+                row_dict = {}
+                for i, val in enumerate(row):
+                    # Handle special types for JSON serialization
+                    if isinstance(val, datetime):
+                        row_dict[col_names[i]] = val.isoformat()
+                    elif hasattr(val, "__str__") and not isinstance(
+                        val, (str, int, float, bool, type(None), list, dict)
+                    ):
+                        row_dict[col_names[i]] = str(val)
+                    else:
+                        row_dict[col_names[i]] = val
+                rows.append(row_dict)
+
+            return {
+                "columns": columns,
+                "rows": rows,
+                "total_row_count": total_row_count,
+                "preview_row_count": len(rows),
+            }
+
 
 # Global instances
 metadata_db = MetadataDB()

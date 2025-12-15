@@ -20,6 +20,7 @@
 | Centralni metadata databaze | **DONE** | ADR-008, `metadata.duckdb` |
 | Project CRUD API | **DONE** | 32 testu PASS |
 | Bucket CRUD API | **DONE** | 69 testu PASS (vcetne sharing/linking) |
+| Table CRUD API | **DONE** | 98 testu PASS (celkem) |
 
 ### Kde jsme
 
@@ -38,9 +39,9 @@
        ↓
 [DONE] Pridat Bucket CRUD do Python API (vcetne share/link/readonly)
        ↓
-[NOW]  Pridat Table CRUD do Python API
+[DONE] Pridat Table CRUD do Python API
        ↓
-[NEXT] Implementovat PHP Driver Package
+[NOW]  Implementovat PHP Driver Package
 ```
 
 ### Dalsi kroky (prioritizovane)
@@ -85,13 +86,16 @@
    - [x] `DELETE /projects/{id}/buckets/{name}/grant-readonly` - odebrat readonly
    - [x] 69 pytest testu (vsechny PASS)
 
-5. **Pridat Table CRUD do Python API** (NEXT)
-   - [ ] `POST /projects/{id}/tables` - CREATE TABLE
-   - [ ] `GET /projects/{id}/tables/{schema}/{table}` - ObjectInfo
-   - [ ] `DELETE /projects/{id}/tables/{schema}/{table}` - DROP TABLE
-   - [ ] `GET /projects/{id}/tables/{schema}/{table}/preview` - SELECT LIMIT 1000
+5. ~~**Pridat Table CRUD do Python API**~~ - DONE
+   - [x] `POST /projects/{id}/buckets/{bucket}/tables` - CREATE TABLE
+   - [x] `GET /projects/{id}/buckets/{bucket}/tables/{table}` - ObjectInfo
+   - [x] `GET /projects/{id}/buckets/{bucket}/tables` - List tables
+   - [x] `DELETE /projects/{id}/buckets/{bucket}/tables/{table}` - DROP TABLE
+   - [x] `GET /projects/{id}/buckets/{bucket}/tables/{table}/preview` - SELECT LIMIT 1000
+   - [x] Primary key support (enforced in DuckDB unlike BigQuery)
+   - [x] 29 pytest testu pro tabulky
 
-6. **Implementovat PHP Driver Package**
+6. **Implementovat PHP Driver Package** (NEXT)
    - [ ] `DuckdbDriverClient` (implements `ClientInterface`)
    - [ ] `HandlerFactory` pro dispatch commands
    - [ ] Prvni handlery: `InitBackend`, `CreateProject`

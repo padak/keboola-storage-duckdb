@@ -24,8 +24,9 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── backend.py     # Health, init, remove
   │       ├── projects.py    # Project CRUD
   │       ├── buckets.py     # Bucket CRUD
-  │       └── bucket_sharing.py  # Share, link, readonly
-  └── tests/                 # pytest tests (69 tests)
+  │       ├── bucket_sharing.py  # Share, link, readonly
+  │       └── tables.py      # Table CRUD + preview
+  └── tests/                 # pytest tests (98 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
   └── vendor/keboola/storage-driver-bigquery/  # Reference driver
@@ -46,9 +47,10 @@ connection/                   # Keboola Connection (git submodule/clone)
    - Central metadata database: DONE (ADR-008)
    - Project CRUD API: DONE (32 tests)
    - Bucket CRUD API: DONE (37 tests) - includes share/link/readonly
-   - Next: Table CRUD API
+   - Table CRUD API: DONE (29 tests) - includes preview, primary keys
+   - Next: PHP Driver Package
 
-4. **PHP Driver Package**: TODO
+4. **PHP Driver Package**: TODO (next step)
 
 ## Key Learnings (BigQuery Driver)
 
@@ -124,6 +126,11 @@ docker compose up --build
 | `/projects/{id}/buckets/{name}/link` | DELETE | Unlink bucket |
 | `/projects/{id}/buckets/{name}/grant-readonly` | POST | Grant readonly |
 | `/projects/{id}/buckets/{name}/grant-readonly` | DELETE | Revoke readonly |
+| `/projects/{id}/buckets/{bucket}/tables` | GET | List tables |
+| `/projects/{id}/buckets/{bucket}/tables` | POST | Create table (CREATE TABLE) |
+| `/projects/{id}/buckets/{bucket}/tables/{table}` | GET | Get table info (ObjectInfo) |
+| `/projects/{id}/buckets/{bucket}/tables/{table}` | DELETE | Delete table (DROP TABLE) |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/preview` | GET | Preview table data (LIMIT) |
 
 ## Local Connection Quick Reference
 

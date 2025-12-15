@@ -10,7 +10,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, buckets, bucket_sharing, projects
+from src.routers import backend, buckets, bucket_sharing, projects, tables
 from src.database import metadata_db
 
 
@@ -147,6 +147,7 @@ app.include_router(backend.router)
 app.include_router(projects.router)
 app.include_router(buckets.router)
 app.include_router(bucket_sharing.router)
+app.include_router(tables.router)
 
 # Root endpoint
 @app.get("/", include_in_schema=False)
