@@ -1,10 +1,10 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v4
+# DuckDB Storage Backend pro Keboola - Implementacni plan v5.3
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
 
 ---
 
-## AKTUALNI STAV (2024-12-15)
+## AKTUALNI STAV (2024-12-16)
 
 ### Co je hotovo
 
@@ -19,8 +19,16 @@
 | DuckDB API Service skeleton | **DONE** | `duckdb-api-service/` - FastAPI, Docker, testy |
 | Centralni metadata databaze | **DONE** | ADR-008, `metadata.duckdb` |
 | Project CRUD API | **DONE** | 32 testu PASS |
-| Bucket CRUD API | **DONE** | 69 testu PASS (vcetne sharing/linking) |
-| Table CRUD API | **DONE** | 98 testu PASS (celkem) |
+| Bucket CRUD API | **DONE** | 37 testu PASS (vcetne sharing/linking) |
+| Table CRUD + Preview | **DONE** | 29 testu PASS |
+| Table Schema Operations | TODO | Specifikace hotova |
+| Import/Export API | TODO | Specifikace hotova |
+| Write Queue | TODO | Specifikace hotova (in-memory + idempotency) |
+| Files API (on-prem) | TODO | Specifikace hotova |
+| Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
+| Auth Middleware | TODO | Hierarchicky API key model |
+| Prometheus /metrics | TODO | Metriky pro observability |
+| Schema Migrations | TODO | Verzovani v DB + migrace pri startu |
 
 ### Kde jsme
 
@@ -39,66 +47,83 @@
        ↓
 [DONE] Pridat Bucket CRUD do Python API (vcetne share/link/readonly)
        ↓
-[DONE] Pridat Table CRUD do Python API
+[DONE] Pridat Table CRUD + Preview do Python API
        ↓
-[NOW]  Implementovat PHP Driver Package
+[NOW]  Dotahnout Python API (Table Schema, Import/Export, Write Queue, Files, Snapshots)
+       ↓
+[NEXT] Implementovat PHP Driver Package (az bude Python API kompletni)
 ```
+
+### Stav implementace podle fazi
+
+| Faze | Popis | Stav | Pokryti |
+|------|-------|------|---------|
+| 1 | Backend + Observability | **90%** | Chybi Prometheus /metrics endpoint |
+| 2 | Projects | **100%** | Hotovo |
+| 3 | Buckets + Sharing | **100%** | Hotovo |
+| 4 | Table CRUD + Preview | **60%** | Chybi Write Queue, Query |
+| 5 | Table Schema + Aliases | **0%** | Specifikace hotova |
+| 6 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
+| 7 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
+| 8 | Dev Branches | **0%** | Specifikace hotova (ADR-007, full copy pro MVP) |
+| 9 | Workspaces | **0%** | Specifikace 30% |
+| 10 | Files (on-prem) | **0%** | Specifikace hotova |
+| 11 | PHP Driver | **0%** | Ceka na Python API |
 
 ### Dalsi kroky (prioritizovane)
 
+> **ZMENA STRATEGIE:** Nejprve dokoncime Python API, pak PHP Driver
+
 1. ~~**Prostudovat BigQuery driver kod**~~ - DONE
-   - [x] Jak funguje `InitBackendHandler` - validuje 4 veci (folder, permissions, IAM, billing)
-   - [x] Jak funguje `CreateProjectHandler` - 11-step GCP project creation
-   - [x] Jak funguje `CreateTableHandler` - PK je metadata-only v BigQuery
-   - [x] Jak funguje `ImportTableFromFileHandler` - 3-stage pipeline (staging->transform->cleanup)
-   - Detaily viz `bigquery-driver-research.md`
+   - [x] Detaily viz `bigquery-driver-research.md`
 
-2. ~~**Vytvorit DuckDB API Service skeleton**~~ - DONE
-   - [x] FastAPI app s `/health` endpoint
-   - [x] Docker + docker-compose
-   - [x] Zakladni projekt struktura
-   - [x] Endpointy: `/health`, `/backend/init`, `/backend/remove`
-   - [x] 12 pytest testu (vsechny PASS)
-   - [x] Structured logging (structlog), request ID middleware
+2. ~~**Project/Bucket/Table CRUD**~~ - DONE
+   - [x] 98 pytest testu celkem
+   - [x] Bucket sharing/linking
+   - [x] Table preview s primary keys
 
-3. ~~**Pridat Project CRUD do Python API**~~ - DONE
-   - [x] Centralni metadata databaze (ADR-008) - `metadata.duckdb`
-   - [x] `POST /projects` - vytvorit `.duckdb` soubor
-   - [x] `GET /projects/{id}` - info o projektu
-   - [x] `GET /projects` - list projektu s filtrovanim
-   - [x] `PUT /projects/{id}` - update projektu
-   - [x] `DELETE /projects/{id}` - smazat projekt (soft delete)
-   - [x] `GET /projects/{id}/stats` - live statistiky z DuckDB
-   - [x] MetadataDB + ProjectDBManager (`database.py`)
-   - [x] Operations audit log
-   - [x] 32 pytest testu (vsechny PASS)
+3. **Dospecifikovat a implementovat Write Queue** (NOW - P0)
+   - [x] Rozhodnout: Queue durability → **In-memory** (klient ceka, retry na strane Keboola)
+   - [x] Rozhodnout: Batch vs single statement → **Single SQL**
+   - [x] Rozhodnout: Idempotency → **X-Idempotency-Key header** (TTL 5-10 min)
+   - [ ] Implementovat `src/write_queue.py`
+   - [ ] Implementovat idempotency middleware
+   - [ ] Endpoint `POST /projects/{id}/query`
+   - [ ] Connection pooling per project
+   - [ ] Metriky: queue_depth, wait_time
 
-4. ~~**Pridat Bucket CRUD do Python API**~~ - DONE
-   - [x] `POST /projects/{id}/buckets` - CREATE SCHEMA
-   - [x] `GET /projects/{id}/buckets` - list schemat
-   - [x] `GET /projects/{id}/buckets/{name}` - info o bucketu
-   - [x] `DELETE /projects/{id}/buckets/{name}` - DROP SCHEMA
-   - [x] `POST /projects/{id}/buckets/{name}/share` - sdilet bucket
-   - [x] `DELETE /projects/{id}/buckets/{name}/share` - zrusit sdileni
-   - [x] `POST /projects/{id}/buckets/{name}/link` - propojit bucket (ATTACH + views)
-   - [x] `DELETE /projects/{id}/buckets/{name}/link` - odpojit bucket
-   - [x] `POST /projects/{id}/buckets/{name}/grant-readonly` - udelit readonly
-   - [x] `DELETE /projects/{id}/buckets/{name}/grant-readonly` - odebrat readonly
-   - [x] 69 pytest testu (vsechny PASS)
+4. **Implementovat Table Schema Operations** (P1)
+   - [ ] `POST /tables/{table}/columns` - AddColumn
+   - [ ] `DELETE /tables/{table}/columns/{name}` - DropColumn
+   - [ ] `PUT /tables/{table}/columns/{name}` - AlterColumn
+   - [ ] `POST /tables/{table}/primary-key` - AddPrimaryKey
+   - [ ] `DELETE /tables/{table}/primary-key` - DropPrimaryKey
+   - [ ] `DELETE /tables/{table}/rows` - DeleteTableRows
 
-5. ~~**Pridat Table CRUD do Python API**~~ - DONE
-   - [x] `POST /projects/{id}/buckets/{bucket}/tables` - CREATE TABLE
-   - [x] `GET /projects/{id}/buckets/{bucket}/tables/{table}` - ObjectInfo
-   - [x] `GET /projects/{id}/buckets/{bucket}/tables` - List tables
-   - [x] `DELETE /projects/{id}/buckets/{bucket}/tables/{table}` - DROP TABLE
-   - [x] `GET /projects/{id}/buckets/{bucket}/tables/{table}/preview` - SELECT LIMIT 1000
-   - [x] Primary key support (enforced in DuckDB unlike BigQuery)
-   - [x] 29 pytest testu pro tabulky
+5. **Dospecifikovat a implementovat Import/Export** (P0 - kriticke pro MVP)
+   - [x] Rozhodnout: Staging table strategy → **Temp schema `_staging_{uuid}`**
+   - [x] Rozhodnout: Dedup SQL → **INSERT ON CONFLICT**
+   - [x] Rozhodnout: Incremental mode → **Full MERGE** (INSERT/UPDATE/DELETE)
+   - [ ] Implementovat 3-stage pipeline
+   - [ ] CSV + Parquet podpora
+   - [ ] Sliced files (wildcards)
 
-6. **Implementovat PHP Driver Package** (NEXT)
+6. **Dospecifikovat a implementovat Files API** (P1)
+   - [ ] Rozhodnout: Upload mechanism (multipart vs filesystem)
+   - [ ] Rozhodnout: Staging cleanup policy (TTL)
+   - [ ] Implementovat endpoints
+   - [ ] File quotas per project
+
+7. **Implementovat Snapshots** (P2)
+   - [ ] Snapshot registry v metadata.duckdb
+   - [ ] Parquet export s ZSTD
+   - [ ] Retention policy
+   - [ ] Auto-snapshot pred DROP TABLE
+
+8. **PHP Driver Package** (LAST - az bude Python API hotove)
    - [ ] `DuckdbDriverClient` (implements `ClientInterface`)
    - [ ] `HandlerFactory` pro dispatch commands
-   - [ ] Prvni handlery: `InitBackend`, `CreateProject`
+   - [ ] Vsechny handlery
 
 ---
 
@@ -512,10 +537,9 @@ final class ImportTableFromFileHandler extends BaseHandler
 
 ### 1. DuckDB API Service (Python)
 
-**Aktualne implementovano:**
+**Aktualne implementovano (98 testu):**
 ```
 duckdb-api-service/
-├── pyproject.toml
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -527,41 +551,48 @@ duckdb-api-service/
 │   ├── database.py                # MetadataDB + ProjectDBManager [DONE]
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── backend.py             # /health, /backend/init, /backend/remove [DONE]
-│   │   └── projects.py            # /projects CRUD [DONE]
-│   ├── services/
-│   │   └── __init__.py
+│   │   ├── backend.py             # /health, /backend/* [DONE]
+│   │   ├── projects.py            # /projects CRUD [DONE]
+│   │   ├── buckets.py             # /buckets CRUD [DONE]
+│   │   ├── bucket_sharing.py      # share/link/readonly [DONE]
+│   │   └── tables.py              # /tables CRUD + preview [DONE]
 │   └── models/
 │       ├── __init__.py
-│       └── responses.py           # Pydantic response models [DONE]
+│       └── responses.py           # Pydantic models [DONE]
 └── tests/
-    ├── __init__.py
     ├── conftest.py                # Pytest fixtures [DONE]
-    ├── test_backend.py            # 12 testu [DONE]
-    └── test_projects.py           # 20 testu [DONE]
+    ├── test_backend.py            # 11 testu [DONE]
+    ├── test_projects.py           # 21 testu [DONE]
+    ├── test_buckets.py            # 37 testu [DONE]
+    ├── test_bucket_sharing.py     # [DONE]
+    └── test_tables.py             # 29 testu [DONE]
 ```
 
-**Planovana rozsireni:**
+**Chybejici komponenty (potreba implementovat):**
 ```
 ├── src/
-│   ├── write_queue.py             # Async write serialization
+│   ├── write_queue.py             # [TODO] Async write serialization
+│   ├── connection_pool.py         # [TODO] Per-project connection management
+│   ├── metrics.py                 # [TODO] Prometheus metrics
 │   ├── routers/
-│   │   ├── buckets.py             # /buckets CRUD + sharing
-│   │   ├── tables.py              # /tables CRUD + import/export
-│   │   ├── aliases.py             # /tables/.../alias
-│   │   ├── workspaces.py          # /workspaces CRUD
-│   │   ├── branches.py            # /branches CRUD + merge + pull
-│   │   ├── snapshots.py           # /snapshots CRUD + restore
-│   │   ├── files.py               # /files upload/download
-│   │   └── query.py               # /query execute
+│   │   ├── table_schema.py        # [TODO] AddColumn, DropColumn, etc.
+│   │   ├── table_import.py        # [TODO] Import/Export pipeline
+│   │   ├── aliases.py             # [TODO] Table aliases
+│   │   ├── workspaces.py          # [TODO] Workspace CRUD
+│   │   ├── branches.py            # [TODO] Dev branches
+│   │   ├── snapshots.py           # [TODO] Snapshot CRUD + restore
+│   │   ├── files.py               # [TODO] File upload/download
+│   │   └── query.py               # [TODO] Query execution
 │   └── services/
-│       ├── bucket_service.py
-│       ├── table_service.py
-│       └── ...
+│       ├── import_service.py      # [TODO] 3-stage import pipeline
+│       ├── snapshot_service.py    # [TODO] Parquet export/restore
+│       └── file_service.py        # [TODO] File lifecycle
 └── tests/
-    ├── test_buckets.py
-    ├── test_tables.py
-    └── ...
+    ├── test_table_schema.py       # [TODO]
+    ├── test_import_export.py      # [TODO]
+    ├── test_snapshots.py          # [TODO]
+    ├── test_files.py              # [TODO]
+    └── test_write_queue.py        # [TODO]
 ```
 
 ### 2. PHP Driver v Connection (StorageDriverDuckdb Package)
@@ -731,32 +762,8 @@ class DuckdbDriverClient implements ClientInterface
 
 ## Implementacni faze
 
-### Faze 0: PHP Driver Package Setup (NOVA - KRITICKA)
-> **Tato faze je nutna pro integraci do Connection!**
-
-> **POZOR na protobuf kontrakt:** Pred implementaci handleru zkontroluj skutecne
-> `storage-driver-common` definice. Implementuj pouze handlery pro commands,
-> ktere existuji v `Keboola\StorageDriver\Command\*` namespace.
-> Vyhni se generovani "mrtvych" handleru pro neexistujici commands.
-
-- [ ] Vytvorit `connection/Package/StorageDriverDuckdb/` strukturu
-- [ ] Vytvorit composer.json se zavislostmi:
-  ```json
-  {
-      "require": {
-          "php": "^8.2",
-          "google/protobuf": "^3.21",
-          "keboola/storage-driver-common": "^7.8.0",
-          "guzzlehttp/guzzle": "^7.0"
-      }
-  }
-  ```
-- [ ] Implementovat `DuckdbDriverClient` (implements ClientInterface)
-- [ ] Implementovat `DuckdbApiClient` (HTTP client pro Python API)
-- [ ] Implementovat `HandlerFactory` (dispatch commands na handlery)
-- [ ] Implementovat `BaseHttpHandler` (spolecna logika pro HTTP volani)
-- [ ] Registrovat driver v `DriverClientFactory` v Connection
-- [ ] Vytvorit services.yaml
+> **NOVA STRATEGIE:** Nejprve dokoncime Python API, pak PHP Driver.
+> PHP Driver je az Faze 10 - ceka na kompletni Python API.
 
 ### Faze 1: Zaklad API + Backend + Observability - DONE
 - [x] FastAPI app s healthcheck
@@ -765,16 +772,12 @@ class DuckdbDriverClient implements ClientInterface
 - [x] Zakladni konfigurace (ENV)
 - [x] Python: POST /backend/init
 - [x] Python: POST /backend/remove
-- [ ] PHP: InitBackendHandler
-- [ ] PHP: RemoveBackendHandler
-- [ ] E2E test: Connection -> Driver -> Python API
 - [x] **Observability zaklad:**
-  - [x] Structured logging (structlog) - JSON format pro parsovani
+  - [x] Structured logging (structlog) - JSON format
   - [x] Request ID middleware (X-Request-ID propagace)
   - [x] Request/response logging s timing
-  - [x] Error logging s full traceback
 
-### Faze 2: Project operace + Metrics + Security - DONE (Python cast)
+### Faze 2: Project operace - DONE
 - [x] POST /projects (vytvorit DuckDB soubor)
 - [x] PUT /projects/{id} (update metadata)
 - [x] DELETE /projects/{id} (smazat soubor)
@@ -784,112 +787,596 @@ class DuckdbDriverClient implements ClientInterface
 - [x] Centralni metadata databaze (ADR-008)
 - [x] Operations audit log
 - [x] 32 pytest testu
-- [ ] **Observability rozsireni:**
-  - [ ] Prometheus metrics endpoint (/metrics)
-  - [ ] Metriky: request_count, request_duration, queue_depth, active_connections
-  - [ ] DuckDB-specific metriky: db_size_bytes, table_count, query_duration
-- [ ] **Security PHP <-> Python:**
-  - [ ] API key autentizace (shared secret v ENV)
-  - [ ] Rate limiting per project (prevence DoS)
-  - [ ] Optional: mTLS pro produkci
 
-### Faze 3: Bucket operace
-- [ ] POST /buckets (CREATE SCHEMA)
-- [ ] DELETE /buckets/{name}
-- [ ] GET /buckets (list schemas)
-- [ ] POST /buckets/{name}/share (ATTACH + Views)
-- [ ] DELETE /buckets/{name}/share (DETACH)
-- [ ] POST /buckets/{name}/link (linked bucket)
-- [ ] DELETE /buckets/{name}/link
-- [ ] POST /buckets/{name}/grant-readonly
-- [ ] DELETE /buckets/{name}/grant-readonly
+### Faze 3: Bucket operace - DONE
+- [x] POST /buckets (CREATE SCHEMA)
+- [x] DELETE /buckets/{name}
+- [x] GET /buckets (list schemas)
+- [x] POST /buckets/{name}/share
+- [x] DELETE /buckets/{name}/share
+- [x] POST /buckets/{name}/link (ATTACH + views)
+- [x] DELETE /buckets/{name}/link
+- [x] POST /buckets/{name}/grant-readonly
+- [x] DELETE /buckets/{name}/grant-readonly
+- [x] 37 pytest testu
 
-### Faze 4: Table CRUD + Query
-- [ ] POST /tables (CREATE TABLE)
-- [ ] DELETE /tables/{schema}/{table}
-- [ ] GET /tables/{schema}/{table}/info (ObjectInfo)
-- [ ] GET /tables/{schema}/{table}/preview (LIMIT 1000)
-- [ ] POST /query (write queue integration)
-- [ ] Async write queue implementace
+### Faze 4: Table CRUD + Preview - DONE
+- [x] POST /tables (CREATE TABLE)
+- [x] DELETE /tables/{schema}/{table}
+- [x] GET /tables/{schema}/{table} (ObjectInfo)
+- [x] GET /tables (list)
+- [x] GET /tables/{schema}/{table}/preview (LIMIT)
+- [x] Primary key support (enforced)
+- [x] 29 pytest testu
 
-### Faze 5: Table Schema + Aliases + Profile
-- [ ] POST /tables/{schema}/{table}/columns (AddColumn)
-- [ ] DELETE /tables/{schema}/{table}/columns/{name} (DropColumn)
-- [ ] PUT /tables/{schema}/{table}/columns/{name} (AlterColumn)
-- [ ] POST /tables/{schema}/{table}/primary-key
-- [ ] DELETE /tables/{schema}/{table}/primary-key
-- [ ] DELETE /tables/{schema}/{table}/rows (DELETE WHERE)
-- [ ] POST /tables/{schema}/{table}/alias (CreateTableAlias)
-- [ ] PUT /tables/{schema}/{table}/alias-filter
-- [ ] DELETE /tables/{schema}/{table}/alias-filter
-- [ ] PUT /tables/{schema}/{table}/alias-columns-sync
-- [ ] POST /tables/{schema}/{table}/profile (ProfileTable)
+### Faze 5: Write Queue + Query - NOW (specifikace potrebuje doplnit)
+> **Viz sekce "Write Queue - Detailni specifikace" nize**
 
-### Faze 6: Import/Export
-- [ ] POST /tables/{schema}/{table}/import/file
-- [ ] POST /tables/{schema}/{table}/import/table
-- [ ] POST /tables/{schema}/{table}/export
-- [ ] Podpora CSV + Parquet
+- [ ] Implementovat `src/write_queue.py`
+- [ ] Connection pool per project
+- [ ] POST /projects/{id}/query endpoint
+- [ ] Read vs Write detection
+- [ ] Queue metrics (depth, wait_time)
+- [ ] Graceful shutdown
+- [ ] Pytest testy
+
+### Faze 6: Table Schema Operations
+- [ ] POST /tables/{table}/columns (AddColumn)
+- [ ] DELETE /tables/{table}/columns/{name} (DropColumn)
+- [ ] PUT /tables/{table}/columns/{name} (AlterColumn)
+- [ ] POST /tables/{table}/primary-key (AddPrimaryKey)
+- [ ] DELETE /tables/{table}/primary-key (DropPrimaryKey)
+- [ ] DELETE /tables/{table}/rows (DeleteTableRows with WHERE)
+- [ ] POST /tables/{table}/profile (ProfileTable - SUMMARIZE)
+- [ ] Pytest testy
+
+### Faze 7: Import/Export - KRITICKE PRO MVP
+> **Viz sekce "Import/Export - Detailni specifikace" nize**
+
+- [ ] Implementovat 3-stage import pipeline
+- [ ] POST /tables/{table}/import/file (COPY FROM)
+- [ ] POST /tables/{table}/import/table (INSERT SELECT)
+- [ ] POST /tables/{table}/export (COPY TO)
+- [ ] CSV + Parquet podpora
 - [ ] Sliced files (wildcards)
+- [ ] Deduplication s primary keys
+- [ ] Incremental import
+- [ ] Pytest testy
 
-### Faze 7: Snapshots
-- [ ] POST /snapshots (Parquet export)
+### Faze 8: Files API (on-prem)
+> **Viz sekce "Files API - Detailni specifikace" nize**
+
+- [ ] File metadata schema v metadata.duckdb
+- [ ] POST /files/prepare (staging path)
+- [ ] POST /files (register uploaded file)
+- [ ] GET /files/{id} (download/metadata)
+- [ ] DELETE /files/{id}
+- [ ] Staging cleanup (TTL 24h)
+- [ ] File quotas per project
+- [ ] SHA256 checksum validation
+- [ ] Pytest testy
+
+### Faze 9: Snapshots
+> **Viz sekce "Snapshots - Detailni specifikace" nize**
+
+- [ ] Snapshot registry v metadata.duckdb
+- [ ] POST /snapshots (Parquet export s ZSTD)
 - [ ] GET /snapshots (list)
 - [ ] GET /snapshots/{id}
 - [ ] DELETE /snapshots/{id}
-- [ ] POST /snapshots/{id}/restore (CreateTableFromTimeTravel)
+- [ ] POST /snapshots/{id}/restore
 - [ ] Auto-snapshot pred DROP TABLE
+- [ ] Retention policy (configurable)
+- [ ] Pytest testy
 
-### Faze 8: Dev Branches
-- [ ] POST /branches (create = copy file)
+### Faze 10: PHP Driver Package
+> **Ceka na Faze 5-9** - Python API musi byt kompletni
+
+- [ ] Vytvorit `connection/Package/StorageDriverDuckdb/`
+- [ ] `DuckdbDriverClient` (implements ClientInterface)
+- [ ] `DuckdbApiClient` (HTTP client)
+- [ ] `HandlerFactory` (dispatch)
+- [ ] Vsechny Handlers (33+)
+- [ ] Registrace v DriverClientFactory
+- [ ] E2E testy
+
+### Faze 11: Dev Branches (volitelne)
+- [ ] POST /branches (CoW branch creation)
 - [ ] DELETE /branches/{id}
-- [ ] GET /branches/{id}/info
 - [ ] POST /branches/{id}/merge
-- [ ] POST /branches/{id}/tables/{table}/pull (PullTableToBranch)
-- [ ] ATTACH pro cross-branch queries
+- [ ] POST /branches/{id}/tables/{table}/pull
+- [ ] Pytest testy
 
-### Faze 9: Workspaces
+### Faze 12: Workspaces (volitelne)
 - [ ] POST /workspaces (CREATE SCHEMA WORKSPACE_*)
 - [ ] DELETE /workspaces/{id}
 - [ ] POST /workspaces/{id}/clear
-- [ ] DELETE /workspaces/{id}/objects/{name}
-- [ ] POST /workspaces/{id}/load (import dat do workspace)
-- [ ] POST /branch/{branch_id}/workspaces (workspace v dev branch)
-- [ ] POST /workspaces/{id}/query (execute v workspace kontextu)
+- [ ] POST /workspaces/{id}/load
+- [ ] POST /workspaces/{id}/query
+- [ ] Pytest testy
 
-### Faze 10: Storage Files (on-prem) + Lifecycle
-- [ ] File metadata schema v DuckDB
-- [ ] POST /files/prepare (staging path)
-- [ ] POST /files/upload
-- [ ] GET /files/{id}
-- [ ] DELETE /files/{id}
-- [ ] Staging directory management
-- [ ] Cleanup stale staging files
-- [ ] **File Lifecycle Management:**
-  - [ ] Staging cleanup (auto-delete after 24h)
-  - [ ] Kvoty per projekt (max files, max size)
-  - [ ] Checksum validace (MD5/SHA256 pri uploadu)
-  - [ ] Optional encryption at rest (AES-256)
-- [ ] **Backup/DR:**
-  - [ ] Backup strategie pro /data/files/
-  - [ ] Point-in-time recovery plan
-  - [ ] Dokumentace DR procedur
-
-### Faze 11: PHP Integration
-- [ ] DuckdbDriverClient (implements ClientInterface)
-- [ ] DuckdbApiClient (HTTP klient)
-- [ ] Vsechny Handlers (viz struktura vyse)
-- [ ] Integration do DriverClientFactory
-- [ ] E2E testy
-
-### Faze 12: Production Readiness
-- [ ] Snapshot retention policy
-- [ ] Monitoring a metriky (Prometheus)
-- [ ] Logging (strukturovane)
-- [ ] Health checks
+### Faze 13: Production Readiness
+- [ ] Prometheus metrics endpoint (/metrics)
+- [ ] API key autentizace
+- [ ] Rate limiting
 - [ ] Graceful shutdown
 - [ ] Benchmark: 5000 tabulek / 500GB
-- [ ] Dokumentace API (OpenAPI)
+- [ ] OpenAPI dokumentace
+
+---
+
+## DETAILNI SPECIFIKACE - POTREBA DOPLNIT
+
+> **POZOR:** Nasledujici sekce obsahuji specifikace, ktere potrebuji rozhodnuti
+> pred implementaci. Kazda sekce obsahuje "Rozhodnuti k uceneni" a "Doporuceni".
+
+### Write Queue - Detailni specifikace
+
+**Ucel:** DuckDB je single-writer, multi-reader. Write Queue serializuje zapisy per projekt.
+
+**Architektura:**
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  HTTP Request   │────►│  Write Queue    │────►│  DuckDB File    │
+│  (concurrent)   │     │  (per project)  │     │  (single writer)│
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                              │
+                        asyncio.Queue
+                        + PriorityQueue
+```
+
+**Rozhodnuti k uceneni:**
+
+| Rozhodnuti | Moznosti | Doporuceni |
+|------------|----------|------------|
+| Queue durability | In-memory / Persistent (SQLite) | **In-memory** - jednodussi, restart = restart queue |
+| Batch support | Single SQL / Multi-statement | **Single SQL** - jednodussi error handling |
+| Priority levels | None / Low-Normal-High | **Normal + High** - system ops get priority |
+| Timeout strategy | Fixed / Adaptive | **Fixed** s konfigurovatelnym defaultem |
+| Max queue size | Fixed (1000) | **Konfigurovatelne** (default 1000) |
+
+**API Endpoint:**
+
+```
+POST /projects/{project_id}/query
+
+Request:
+{
+  "sql": "INSERT INTO bucket.table VALUES ...",
+  "priority": "normal",        # normal | high
+  "timeout_seconds": 300,      # max execution time
+  "is_write": true             # optional, auto-detected if not provided
+}
+
+Response (success):
+{
+  "result": [...],             # query results (for SELECT)
+  "rows_affected": 100,        # for INSERT/UPDATE/DELETE
+  "execution_time_ms": 45,
+  "queue_wait_time_ms": 12
+}
+
+Response (error):
+{
+  "error": "Queue full",
+  "error_type": "QueueOverflow",
+  "queue_depth": 1000
+}
+```
+
+**Write vs Read Detection:**
+```python
+WRITE_KEYWORDS = ['INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'TRUNCATE', 'COPY']
+
+def is_write_query(sql: str) -> bool:
+    sql_upper = sql.strip().upper()
+    # Handle CTEs: WITH ... AS (...) INSERT/SELECT
+    if sql_upper.startswith('WITH'):
+        # Find the main statement after CTEs
+        # Simplified: check if INSERT/UPDATE/DELETE appears
+        return any(kw in sql_upper for kw in ['INSERT', 'UPDATE', 'DELETE'])
+    return any(sql_upper.startswith(kw) for kw in WRITE_KEYWORDS)
+```
+
+**Connection Pool Strategy:**
+```python
+# Per-project connection management
+class ProjectConnectionManager:
+    def __init__(self, project_id: str, db_path: Path):
+        self.write_conn: duckdb.DuckDBPyConnection = None  # exclusive
+        self.read_pool: list[duckdb.DuckDBPyConnection] = []  # shared
+        self.max_read_connections = 10
+
+    async def get_write_connection(self) -> duckdb.DuckDBPyConnection:
+        # Single writer - return or wait
+        ...
+
+    async def get_read_connection(self) -> duckdb.DuckDBPyConnection:
+        # Pool of read-only connections
+        ...
+```
+
+**Graceful Shutdown:**
+1. Stop accepting new requests (return 503)
+2. Wait for in-flight operations (max 30s)
+3. Drain queue (max 60s)
+4. Close all connections
+
+---
+
+### Import/Export - Detailni specifikace
+
+**Ucel:** 3-stage pipeline pro import dat z CSV/Parquet s deduplikaci.
+
+**Pipeline:**
+```
+Stage 1: STAGING
+  - Vytvorit staging tabulku (temp schema)
+  - COPY FROM file do staging
+
+Stage 2: TRANSFORM
+  - Deduplikace podle PK (pokud existuje)
+  - INSERT INTO target FROM staging
+
+Stage 3: CLEANUP
+  - DROP staging tabulka
+  - Vratit statistiky
+```
+
+**Schvalena rozhodnuti:**
+
+| Rozhodnuti | Schvaleno |
+|------------|-----------|
+| Staging location | Temp schema `_staging_{uuid}` |
+| Dedup strategy | INSERT ON CONFLICT (DuckDB native) |
+| Incremental mode | **Full MERGE** (INSERT/UPDATE/DELETE) |
+| File source | File ID (z Files API) |
+
+**Deduplication SQL (s Primary Key) - pro full load:**
+```sql
+-- DuckDB podporuje INSERT ... ON CONFLICT
+INSERT INTO target_schema.target_table
+SELECT * FROM staging_schema.staging_table
+ON CONFLICT (pk_column1, pk_column2) DO UPDATE SET
+  col1 = EXCLUDED.col1,
+  col2 = EXCLUDED.col2,
+  ...
+```
+
+**Full MERGE SQL (pro incremental load):**
+```sql
+-- 1. UPDATE existujicich zaznamu
+UPDATE target_schema.target_table AS t
+SET col1 = s.col1, col2 = s.col2, ...
+FROM staging_schema.staging_table AS s
+WHERE t.pk_column = s.pk_column;
+
+-- 2. INSERT novych zaznamu
+INSERT INTO target_schema.target_table
+SELECT * FROM staging_schema.staging_table AS s
+WHERE NOT EXISTS (
+    SELECT 1 FROM target_schema.target_table AS t
+    WHERE t.pk_column = s.pk_column
+);
+
+-- 3. DELETE smazanych zaznamu (pokud je _deleted flag ve zdroji)
+DELETE FROM target_schema.target_table AS t
+WHERE EXISTS (
+    SELECT 1 FROM staging_schema.staging_table AS s
+    WHERE t.pk_column = s.pk_column AND s._deleted = true
+);
+```
+
+> **Poznamka:** Full MERGE je slozitejsi, ale umoznuje kompletni synchronizaci
+> vcetne mazani zaznamu. Vyzaduje `_deleted` flag ve zdrojovych datech.
+
+**API Endpoint - Import from File:**
+```
+POST /projects/{id}/buckets/{bucket}/tables/{table}/import/file
+
+Request:
+{
+  "file_id": "12345",                    # ID z Files API
+  "format": "csv",                       # csv | parquet
+  "csv_options": {                       # pouze pro CSV
+    "delimiter": ",",
+    "quote": "\"",
+    "escape": "\\",
+    "header": true,
+    "null_string": ""
+  },
+  "import_options": {
+    "incremental": false,                # false = TRUNCATE + INSERT
+    "dedup_mode": "update_duplicates",   # update_duplicates | insert_duplicates | fail_on_duplicates
+    "columns": ["col1", "col2"]          # optional column mapping
+  }
+}
+
+Response:
+{
+  "imported_rows": 5000,
+  "table_rows_after": 12500,
+  "table_size_bytes": 1048576,
+  "warnings": []
+}
+```
+
+**API Endpoint - Export to File:**
+```
+POST /projects/{id}/buckets/{bucket}/tables/{table}/export
+
+Request:
+{
+  "format": "csv",                       # csv | parquet
+  "compression": "gzip",                 # none | gzip | zstd (parquet only)
+  "columns": ["col1", "col2"],           # optional, default all
+  "where_filter": "created_at > '2024-01-01'",
+  "limit": 10000                         # optional
+}
+
+Response:
+{
+  "file_id": "67890",                    # ID pro stahnuti z Files API
+  "file_path": "/data/files/project_123/2024/12/15/export_xyz.csv",
+  "rows_exported": 5000,
+  "file_size_bytes": 524288
+}
+```
+
+---
+
+### Files API - Detailni specifikace
+
+**Ucel:** On-prem nahrada S3/GCS pro staging souboru pred importem.
+
+**Workflow:**
+```
+1. PREPARE: Ziskat staging path pro upload
+2. UPLOAD: Nahrat soubor na staging path
+3. REGISTER: Zaregistrovat soubor (move ze staging, compute checksum)
+4. USE: Import do tabulky
+5. CLEANUP: Smazat po pouziti (nebo po TTL)
+```
+
+**Rozhodnuti k uceneni:**
+
+| Rozhodnuti | Moznosti | Doporuceni |
+|------------|----------|------------|
+| Upload mechanism | Multipart POST / Direct filesystem | **Multipart POST** (bezpecnejsi) |
+| Staging TTL | 1h / 24h / 7d | **24h** |
+| Checksum algorithm | MD5 / SHA256 | **SHA256** |
+| Max file size | 1GB / 10GB / unlimited | **10GB** (konfigurovatelne) |
+| File quotas | Per project | **Max 10000 files, 1TB total** |
+
+**Directory Structure:**
+```
+/data/files/
+├── project_123/
+│   ├── staging/                    # Temporary uploads (TTL 24h)
+│   │   └── upload_abc123.csv       # Named by upload key
+│   └── 2024/12/15/                 # Permanent storage (date-organized)
+│       ├── file_001_data.csv
+│       └── file_002_export.parquet
+```
+
+**File Metadata Schema (v metadata.duckdb):**
+```sql
+CREATE TABLE files (
+    id VARCHAR PRIMARY KEY,           -- UUID
+    project_id VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,            -- original filename
+    path VARCHAR NOT NULL,            -- relative path in /data/files/
+    size_bytes BIGINT NOT NULL,
+    checksum_sha256 VARCHAR(64),
+    content_type VARCHAR(100),
+    is_staging BOOLEAN DEFAULT false, -- true = in staging, not yet registered
+    created_at TIMESTAMPTZ DEFAULT now(),
+    expires_at TIMESTAMPTZ,           -- for staging files
+    tags JSON,
+
+    -- Foreign key
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX idx_files_project ON files(project_id);
+CREATE INDEX idx_files_staging ON files(is_staging, expires_at);
+```
+
+**API Endpoints:**
+
+```
+POST /projects/{id}/files/prepare
+Request: { "filename": "data.csv", "content_type": "text/csv" }
+Response: {
+  "upload_key": "abc123",
+  "upload_url": "/projects/{id}/files/upload/abc123",
+  "expires_at": "2024-12-16T10:00:00Z"
+}
+
+POST /projects/{id}/files/upload/{upload_key}
+Content-Type: multipart/form-data
+Body: file content
+Response: { "staging_path": "/staging/upload_abc123.csv" }
+
+POST /projects/{id}/files
+Request: {
+  "upload_key": "abc123",
+  "name": "my_data.csv",
+  "tags": {"source": "manual"}
+}
+Response: {
+  "file_id": "file_xyz",
+  "path": "/2024/12/15/file_xyz_my_data.csv",
+  "size_bytes": 1048576,
+  "checksum_sha256": "abc123..."
+}
+
+GET /projects/{id}/files/{file_id}
+Response: {
+  "id": "file_xyz",
+  "name": "my_data.csv",
+  "path": "...",
+  "size_bytes": 1048576,
+  "download_url": "/projects/{id}/files/{file_id}/download"
+}
+
+DELETE /projects/{id}/files/{file_id}
+Response: { "deleted": true }
+```
+
+**Staging Cleanup Job:**
+```python
+async def cleanup_stale_staging_files():
+    """Run every hour - delete staging files older than TTL."""
+    expired = metadata_db.query("""
+        SELECT id, path FROM files
+        WHERE is_staging = true AND expires_at < now()
+    """)
+    for file in expired:
+        os.unlink(f"/data/files/{file.path}")
+        metadata_db.execute("DELETE FROM files WHERE id = ?", file.id)
+```
+
+---
+
+### Snapshots - Detailni specifikace
+
+**Ucel:** Point-in-time backup tabulky jako Parquet soubory.
+
+**Rozhodnuti k uceneni:**
+
+| Rozhodnuti | Moznosti | Doporuceni |
+|------------|----------|------------|
+| Snapshot ID format | UUID / timestamp_hash | **snap_{table}_{timestamp}** |
+| Retention - manual | Forever / 30d / 90d | **90 dni** |
+| Retention - auto | 7d / 30d | **7 dni** |
+| Auto-snapshot trigger | DROP TABLE only / + TRUNCATE | **DROP TABLE only** |
+
+**Snapshot Registry Schema (v metadata.duckdb):**
+```sql
+CREATE TABLE snapshots (
+    id VARCHAR PRIMARY KEY,           -- snap_orders_20241215_143022
+    project_id VARCHAR NOT NULL,
+    bucket_name VARCHAR NOT NULL,
+    table_name VARCHAR NOT NULL,
+    snapshot_type VARCHAR NOT NULL,   -- manual | auto_predrop
+
+    -- Snapshot data
+    parquet_path VARCHAR NOT NULL,    -- relative path to parquet file
+    row_count BIGINT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    schema_json JSON NOT NULL,        -- column definitions
+
+    -- Lifecycle
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR,
+    expires_at TIMESTAMPTZ,           -- based on retention policy
+    description TEXT,
+
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX idx_snapshots_project ON snapshots(project_id);
+CREATE INDEX idx_snapshots_table ON snapshots(project_id, bucket_name, table_name);
+CREATE INDEX idx_snapshots_expires ON snapshots(expires_at);
+```
+
+**Directory Structure:**
+```
+/data/snapshots/
+└── project_123/
+    ├── snap_orders_20241215_143022/
+    │   ├── metadata.json            # redundant copy for recovery
+    │   └── data.parquet             # actual data
+    └── snap_customers_20241214_091500/
+        ├── metadata.json
+        └── data.parquet
+```
+
+**API Endpoints:**
+
+```
+POST /projects/{id}/snapshots
+Request: {
+  "bucket": "in_c_sales",
+  "table": "orders",
+  "description": "Before major update"
+}
+Response: {
+  "snapshot_id": "snap_orders_20241215_143022",
+  "row_count": 50000,
+  "size_bytes": 10485760,
+  "expires_at": "2025-03-15T14:30:22Z"
+}
+
+GET /projects/{id}/snapshots
+Query: ?bucket=in_c_sales&table=orders&limit=10
+Response: {
+  "snapshots": [...],
+  "total": 15
+}
+
+GET /projects/{id}/snapshots/{snapshot_id}
+Response: {
+  "id": "snap_orders_20241215_143022",
+  "bucket": "in_c_sales",
+  "table": "orders",
+  "row_count": 50000,
+  "size_bytes": 10485760,
+  "schema": [
+    {"name": "id", "type": "BIGINT", "nullable": false},
+    {"name": "amount", "type": "DECIMAL(10,2)", "nullable": true}
+  ],
+  "created_at": "2024-12-15T14:30:22Z",
+  "expires_at": "2025-03-15T14:30:22Z"
+}
+
+POST /projects/{id}/snapshots/{snapshot_id}/restore
+Request: {
+  "target_bucket": "in_c_sales",      # optional, default = original
+  "target_table": "orders_restored"   # optional, default = original
+}
+Response: {
+  "restored_table": "in_c_sales.orders_restored",
+  "row_count": 50000
+}
+
+DELETE /projects/{id}/snapshots/{snapshot_id}
+Response: { "deleted": true }
+```
+
+**Auto-snapshot Implementation:**
+```python
+async def drop_table_with_snapshot(project_id: str, bucket: str, table: str):
+    """Always create auto-snapshot before DROP TABLE."""
+    # 1. Create snapshot
+    snapshot_id = f"auto_predrop_{table}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    await create_snapshot(project_id, bucket, table, snapshot_id,
+                         snapshot_type="auto_predrop")
+
+    # 2. Drop table
+    conn.execute(f"DROP TABLE {bucket}.{table}")
+
+    # 3. Log operation
+    metadata_db.log_operation(
+        project_id=project_id,
+        operation="drop_table",
+        details={"bucket": bucket, "table": table, "snapshot_id": snapshot_id}
+    )
+```
+
+**Retention Cleanup Job:**
+```python
+async def cleanup_expired_snapshots():
+    """Run daily - delete snapshots past retention."""
+    expired = metadata_db.query("""
+        SELECT id, project_id, parquet_path FROM snapshots
+        WHERE expires_at < now()
+    """)
+    for snap in expired:
+        shutil.rmtree(f"/data/snapshots/{snap.project_id}/{snap.id}")
+        metadata_db.execute("DELETE FROM snapshots WHERE id = ?", snap.id)
+```
 
 ---
 
@@ -1339,3 +1826,179 @@ docs/
 - [ ] Delta Lake / Iceberg integrace
 - [ ] Streaming import (Apache Arrow)
 - [ ] Horizontal scaling (sharding per project groups)
+
+---
+
+## PREHLED ROZHODNUTI K UCINENI
+
+> **Pred implementaci** je treba rozhodnout nasledujici body.
+> Doporuceni jsou uvedena v detailnich specifikacich vyse.
+
+### Kriticka rozhodnuti (blokuji implementaci)
+
+| Oblast | Rozhodnuti | Schvaleno | Status |
+|--------|------------|-----------|--------|
+| **Write Queue** | Queue durability | In-memory | **APPROVED** |
+| **Write Queue** | Max queue size | 1000 (konfigurovatelne) | **APPROVED** |
+| **Import/Export** | Staging table location | Temp schema `_staging_{uuid}` | **APPROVED** |
+| **Import/Export** | Deduplication strategy | INSERT ON CONFLICT | **APPROVED** |
+| **Files API** | Upload mechanism | Multipart POST | **APPROVED** |
+| **Files API** | Staging TTL | 24 hodin | **APPROVED** |
+| **Snapshots** | Retention policy - manual | 90 dni | **APPROVED** |
+| **Snapshots** | Retention policy - auto | 7 dni | **APPROVED** |
+
+### Dulezita rozhodnuti (ovlivnuji design)
+
+| Oblast | Rozhodnuti | Schvaleno | Status |
+|--------|------------|-----------|--------|
+| **Write Queue** | Priority levels | Normal + High | **APPROVED** |
+| **Import/Export** | Incremental mode | **Full MERGE** (INSERT/UPDATE/DELETE) | **APPROVED** |
+| **Files API** | Max file size | 10GB | **APPROVED** |
+| **Files API** | File quotas per project | 10000 files, 1TB | **APPROVED** |
+| **Snapshots** | Auto-snapshot trigger | **Per-projekt konfigurovatelne**, default pouze DROP TABLE | **APPROVED** |
+
+### Volitelna rozhodnuti (lze odlozit)
+
+| Oblast | Rozhodnuti | Schvaleno | Status |
+|--------|------------|-----------|--------|
+| **Security** | API key authentication | **Hierarchicky model** (viz nize) | **APPROVED** |
+| **Security** | Rate limiting | Per project | DEFERRED |
+| **Observability** | Metrics backend | Prometheus (od zacatku) | **APPROVED** |
+| **Files API** | Encryption at rest | Optional AES-256 | DEFERRED |
+
+### Autentizacni model (APPROVED)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    HIERARCHICKY API KEY MODEL                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ADMIN_API_KEY (v ENV - duckdb-api-service)                         │
+│  └── Opravneni: POST /projects (vytvorit projekt)                   │
+│  └── Ulozeni: Environment variable                                  │
+│                                                                      │
+│  PROJECT_ADMIN_API_KEY (vracen pri POST /projects)                  │
+│  └── Opravneni: VSE v ramci projektu                                │
+│  └── Ulozeni: Storage API (PHP) si ho ulozi                         │
+│  └── Format: proj_{project_id}_admin_{random}                       │
+│                                                                      │
+│  PROJECT_API_KEY (vytvoreno v projektu - budouci rozsireni)         │
+│  └── Opravneni: VSE v ramci projektu (zatim full access)            │
+│  └── Ulozeni: metadata.duckdb tabulka api_keys                      │
+│  └── Zaklad pro budouci RBAC (role-based access control)            │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+Autentizace flow:
+1. Request prijde s headerem: Authorization: Bearer <api_key>
+2. API parsuje key format:
+   - Zacina "admin_" → ADMIN_API_KEY (overit vuci ENV)
+   - Zacina "proj_" → PROJECT_API_KEY (overit vuci DB)
+3. Extrahuje project_id z URL a overi opravneni
+4. Pokud OK → pokracuj, jinak 401/403
+```
+
+### Auto-snapshot triggers (APPROVED - UPDATED)
+
+**Konfigurovatelna politika per-projekt:**
+
+```python
+# Default politika (konzervativni)
+default_snapshot_policy = {
+    "drop_table": True,      # Vzdy snapshot pred DROP TABLE
+    "truncate_table": False, # Volitelne
+    "delete_rows": False,    # Volitelne
+    "drop_column": False,    # Volitelne
+}
+
+# Agresivni politika (maximalni ochrana)
+aggressive_snapshot_policy = {
+    "drop_table": True,
+    "truncate_table": True,
+    "delete_rows": True,
+    "drop_column": True,
+}
+```
+
+**Default:** Snapshot pouze pred `DROP TABLE`
+
+**Volitelne triggery (lze zapnout per-projekt):**
+- `TRUNCATE TABLE`
+- `DELETE FROM table`
+- `ALTER TABLE DROP COLUMN`
+
+**Monitoring:**
+- Metrika: `snapshot_storage_bytes{project_id="X"}`
+- Alert: kdyz snapshot storage > 80% limitu
+- Dashboard: prehled snapshot storage per project
+
+> **Poznamka:** Snapshot se nevytvari pro: INSERT, UPDATE, SELECT, CREATE.
+
+### Akceptovana rizika MVP
+
+| Riziko | Popis | Mitigace | Status |
+|--------|-------|----------|--------|
+| **Cross-DB konzistence** | metadata.duckdb a project.duckdb nemohou byt v jedne transakci | Stats jsou jen cache, truth-of-existence je v project DB, prepocet on-demand | **ACCEPTED** |
+| **Write Queue volatilita** | In-memory fronta se ztrati pri padu | Klient ceka na odpoved, retry je na strane Keboola Storage API, pridame idempotency middleware | **ACCEPTED** |
+| **Single FastAPI instance** | DuckDB single-writer neumoznuje vice zapisovacu | MVP bezi na 1 instanci, HA reseni (leader election, sticky sessions) az pro enterprise | **ACCEPTED** |
+| **Jednoduchy auth model** | Staticke API keys bez rotace, per-user scopes, mTLS | Pro MVP staci hierarchicky model (ADMIN + PROJECT keys), rozsireni az pro enterprise | **ACCEPTED** |
+| **Bucket sharing bez DB-level ACL** | DuckDB nema per-schema pristupova prava | App-layer enforcement (API auth), filesystem permissions (700) na .duckdb soubory | **ACCEPTED** |
+| **Dev branches full copy** | Kazdy branch = plna kopie project DB | Pro MVP OK, CoW optimalizace (ADR-007) pozdeji | **ACCEPTED** |
+| **Bez DR/Backup v API** | Zadne backup/restore endpointy | Dokumentovat doporuceni (filesystem snapshots), implementace post-MVP | **ACCEPTED** |
+| **Bez encryption at rest** | DuckDB soubory nesifrovane | Filesystem-level sifrovani (LUKS), implementace post-MVP | **ACCEPTED** |
+| **Schema migrations** | metadata.duckdb schema se muze menit | Verzovani v DB (`schema_version` tabulka) + migrace pri startu FastAPI | **ACCEPTED** |
+
+**Cross-DB konzistence - detaily:**
+
+```
+metadata.duckdb obsahuje:
+├── projects          → KRITICKE (registr projektu)
+├── bucket_shares     → KRITICKE (sharing relace)
+├── bucket_links      → KRITICKE (linking relace)
+├── files             → KRITICKE (file registry)
+├── operations_log    → NEKRITRICKE (audit, ztrata = ok)
+└── stats (v projects)→ NEKRITRICKE (cache, prepocitat z project DB)
+
+Pokud zapis do project DB uspeje ale metadata selze:
+- Stats budou zastarale → prepocitat pri GET /projects/{id}/stats
+- Audit log bude chybet → akceptovatelne pro MVP
+```
+
+**Idempotency middleware - implementace:**
+
+```
+POST /query
+Headers:
+  X-Idempotency-Key: <uuid>
+
+- Ulozit vysledek operace pod klicem (TTL 5-10 min)
+- Pri retry vratit ulozeny vysledek
+- Ulozeni: in-memory dict nebo metadata.duckdb
+```
+
+### Jak postupovat
+
+1. **Schvalit doporuceni** - projdi tabulku a potvrdi/uprav doporuceni
+2. **Oznacit jako APPROVED** - zmenit status na APPROVED
+3. **Zacit implementaci** - implementovat podle schvalenych rozhodnuti
+
+### Priklad schvaleni
+
+```markdown
+| **Write Queue** | Queue durability | In-memory | **APPROVED** |
+```
+
+---
+
+## CHANGELOG
+
+| Verze | Datum | Zmeny |
+|-------|-------|-------|
+| v5.3 | 2024-12-16 | GPT-5 second opinion review - 11 bodu zpracovano, akceptovana rizika rozsirena, auto-snapshot policy zmenena na per-projekt konfigurovatelnou |
+| v5.2 | 2024-12-15 | Pridana sekce "Akceptovana rizika MVP" - cross-DB konzistence, idempotency middleware |
+| v5.1 | 2024-12-15 | Schvalena vsechna rozhodnuti, hierarchicky auth model, Full MERGE, auto-snapshots |
+| v5 | 2024-12-15 | Aktualizace stavu, nova strategie (Python first), detailni specifikace |
+| v4 | 2024-12-14 | Bucket/Table CRUD implementace |
+| v3 | 2024-12-13 | Project CRUD, ADR-008 |
+| v2 | 2024-12-12 | BigQuery driver research |
+| v1 | 2024-12-11 | Initial plan |

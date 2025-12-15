@@ -10,10 +10,10 @@ Build an **on-premise Keboola with DuckDB backend** - a lightweight, self-contai
 
 ```
 docs/                         # Project documentation
-  ├── local-connection.md    # Local Connection setup guide (COMPLETE)
-  ├── duckdb-driver-plan.md  # DuckDB driver implementation plan
+  ├── duckdb-driver-plan.md  # MAIN PLAN - implementation phases, decisions, specs
+  ├── local-connection.md    # Local Connection setup guide
   ├── bigquery-driver-research.md  # BigQuery driver analysis
-  └── adr/                   # Architecture Decision Records
+  └── adr/                   # Architecture Decision Records (001-008)
 
 duckdb-api-service/          # Python FastAPI service for DuckDB operations
   ├── src/
@@ -29,178 +29,168 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   └── tests/                 # pytest tests (98 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
-  └── vendor/keboola/storage-driver-bigquery/  # Reference driver
 ```
 
-## Current Status
+## Current Status (2024-12-16)
 
-1. **Local Connection**: Running at https://localhost:8700
-   - Snowflake backend: Working
-   - BigQuery backend: Working (creates GCP project per Keboola project)
-   - S3 file storage: Working
-   - GCS file storage: Working
+**Strategy: Python API first, PHP Driver last**
 
-2. **BigQuery Driver Research**: DONE (see `docs/bigquery-driver-research.md`)
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Project CRUD | DONE | 32 |
+| Bucket CRUD + Sharing | DONE | 37 |
+| Table CRUD + Preview | DONE | 29 |
+| Auth Middleware | TODO | - |
+| Idempotency Middleware | TODO | - |
+| Prometheus /metrics | TODO | - |
+| Write Queue | TODO | - |
+| Table Schema Ops | TODO | - |
+| Import/Export | TODO | - |
+| Files API | TODO | - |
+| Snapshots | TODO | - |
+| Dev Branches | TODO | - |
+| Schema Migrations | TODO | - |
+| PHP Driver | TODO (last) | - |
 
-3. **DuckDB API Service**: IN PROGRESS
-   - FastAPI skeleton: DONE
-   - Central metadata database: DONE (ADR-008)
-   - Project CRUD API: DONE (32 tests)
-   - Bucket CRUD API: DONE (37 tests) - includes share/link/readonly
-   - Table CRUD API: DONE (29 tests) - includes preview, primary keys
-   - Next: PHP Driver Package
+**Next implementation order:**
+1. Auth middleware (hierarchicky API keys)
+2. Idempotency middleware (X-Idempotency-Key)
+3. Prometheus /metrics endpoint
+4. Write Queue
+5. Table Schema Operations
+6. Files API
+7. Import/Export
+8. Snapshots
+9. Dev Branches (full copy, CoW later)
+10. PHP Driver
 
-4. **PHP Driver Package**: TODO (next step)
+## Key Decisions (APPROVED)
 
-## Key Learnings (BigQuery Driver)
+All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHODNUTI".
 
-- Each Keboola project creates a **separate GCP project** in a GCP Folder
-- Drivers communicate via **Protocol Buffers**, not REST
-- Driver code is in `vendor/keboola/storage-driver-bigquery/`
-- Implements `ClientInterface` from `storage-driver-common`
-- 27 handlers dispatched via `HandlerFactory` match expression
-- 3-stage import pipeline: staging -> transform/dedup -> cleanup
-- Primary keys are metadata-only in BigQuery (not enforced)
+| Area | Decision | Value |
+|------|----------|-------|
+| Write Queue | Durability | In-memory (klient ceka, Keboola retry) |
+| Write Queue | Max size | 1000 |
+| Write Queue | Priority | Normal + High |
+| Write Queue | Idempotency | X-Idempotency-Key header (TTL 5-10 min) |
+| Import/Export | Staging | Temp schema `_staging_{uuid}` |
+| Import/Export | Dedup | INSERT ON CONFLICT |
+| Import/Export | Incremental | Full MERGE |
+| Files API | Upload | Multipart POST |
+| Files API | Staging TTL | 24 hours |
+| Files API | Max size | 10GB |
+| Snapshots | Manual retention | 90 days |
+| Snapshots | Auto retention | 7 days |
+| Snapshots | Auto triggers | **Per-projekt konfigurovatelne**, default pouze DROP TABLE |
+| Security | Auth model | Hierarchical API keys |
+| Observability | Metrics | Prometheus from start |
+| Schema migrations | Strategy | Verzovani v DB + migrace pri startu |
+| Dev Branches | Strategy | Full copy pro MVP, CoW (ADR-007) post-MVP |
 
-## DuckDB vs BigQuery - Key Differences
+## Authentication Model (APPROVED)
 
-| Aspect | BigQuery | DuckDB |
-|--------|----------|--------|
-| Project | GCP project | `.duckdb` file |
-| Bucket | Dataset | Schema |
-| Primary Key | Metadata only | Enforced constraint |
-| Sharing | Analytics Hub | ATTACH (READ_ONLY) |
-| File formats | CSV only | CSV + Parquet |
+```
+ADMIN_API_KEY (ENV)
+└── Can: POST /projects
+
+PROJECT_ADMIN_API_KEY (returned on project creation)
+└── Can: Everything in project
+└── Format: proj_{project_id}_admin_{random}
+
+PROJECT_API_KEY (future extension)
+└── Can: Everything in project (full access for now)
+└── Foundation for future RBAC
+```
+
+## Auto-Snapshot Triggers (Per-projekt konfigurovatelne)
+
+**Default (konzervativni):** Snapshot pouze pred `DROP TABLE`
+
+**Volitelne (lze zapnout per-projekt):**
+- TRUNCATE TABLE
+- DELETE FROM (with or without WHERE)
+- ALTER TABLE DROP COLUMN
+
+## Accepted Risks for MVP
+
+| Risk | Mitigation |
+|------|------------|
+| Cross-DB konzistence | Stats = cache, prepocet on-demand |
+| Write Queue volatilita | Idempotency middleware |
+| Single FastAPI instance | HA post-MVP |
+| Jednoduchy auth model | Enterprise rozsireni post-MVP |
+| Bucket sharing bez ACL | App-layer enforcement |
+| Dev branches full copy | CoW (ADR-007) post-MVP |
+| Bez DR/Backup API | Dokumentace, post-MVP |
+| Bez encryption at rest | Filesystem-level (LUKS) |
 
 ## DuckDB API Service Quick Reference
 
 ```bash
-# Navigate to service
 cd duckdb-api-service
-
-# Setup (first time)
-python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-
-# Run tests
-source .venv/bin/activate
-pytest tests/ -v
-
-# Run server (development)
-source .venv/bin/activate
-python -m src.main
-
-# Docker
-docker compose up --build
+pytest tests/ -v           # Run tests
+python -m src.main         # Run server
+docker compose up --build  # Docker
 ```
 
-### Key Components
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| MetadataDB | `src/database.py` | Central metadata (projects, files, audit log) |
-| ProjectDBManager | `src/database.py` | Per-project DuckDB file management |
-| Settings | `src/config.py` | pydantic-settings configuration |
-
-### API Endpoints (implemented)
+### Implemented Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/backend/init` | POST | Initialize storage directories |
-| `/backend/remove` | POST | Remove backend (no-op) |
-| `/projects` | GET | List projects |
-| `/projects` | POST | Create project |
-| `/projects/{id}` | GET | Get project |
-| `/projects/{id}` | PUT | Update project |
-| `/projects/{id}` | DELETE | Delete project |
+| `/backend/init` | POST | Initialize storage |
+| `/backend/remove` | POST | Remove backend |
+| `/projects` | GET/POST | List/Create projects |
+| `/projects/{id}` | GET/PUT/DELETE | Project CRUD |
 | `/projects/{id}/stats` | GET | Live statistics |
-| `/projects/{id}/buckets` | GET | List buckets |
-| `/projects/{id}/buckets` | POST | Create bucket (CREATE SCHEMA) |
-| `/projects/{id}/buckets/{name}` | GET | Get bucket info |
-| `/projects/{id}/buckets/{name}` | DELETE | Delete bucket (DROP SCHEMA) |
-| `/projects/{id}/buckets/{name}/share` | POST | Share bucket |
-| `/projects/{id}/buckets/{name}/share` | DELETE | Unshare bucket |
-| `/projects/{id}/buckets/{name}/link` | POST | Link bucket (ATTACH + views) |
-| `/projects/{id}/buckets/{name}/link` | DELETE | Unlink bucket |
-| `/projects/{id}/buckets/{name}/grant-readonly` | POST | Grant readonly |
-| `/projects/{id}/buckets/{name}/grant-readonly` | DELETE | Revoke readonly |
-| `/projects/{id}/buckets/{bucket}/tables` | GET | List tables |
-| `/projects/{id}/buckets/{bucket}/tables` | POST | Create table (CREATE TABLE) |
-| `/projects/{id}/buckets/{bucket}/tables/{table}` | GET | Get table info (ObjectInfo) |
-| `/projects/{id}/buckets/{bucket}/tables/{table}` | DELETE | Delete table (DROP TABLE) |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/preview` | GET | Preview table data (LIMIT) |
+| `/projects/{id}/buckets` | GET/POST | List/Create buckets |
+| `/projects/{id}/buckets/{name}` | GET/DELETE | Bucket CRUD |
+| `/projects/{id}/buckets/{name}/share` | POST/DELETE | Share bucket |
+| `/projects/{id}/buckets/{name}/link` | POST/DELETE | Link bucket |
+| `/projects/{id}/buckets/{name}/grant-readonly` | POST/DELETE | Readonly |
+| `/projects/{id}/buckets/{bucket}/tables` | GET/POST | List/Create tables |
+| `/projects/{id}/buckets/{bucket}/tables/{table}` | GET/DELETE | Table CRUD |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/preview` | GET | Preview data |
 
-## Local Connection Quick Reference
+### TODO Endpoints (see duckdb-driver-plan.md for specs)
 
-```bash
-# Start Connection
-cd connection
-docker compose up apache supervisor
-
-# Access
-URL: https://localhost:8700/admin
-Login: dev@keboola.com / devdevdev
-
-# Get Manage API token
-# Go to: https://localhost:8700/admin/account/access-tokens
-```
-
-## API Endpoints (Manage API)
-
-| Operation | Endpoint | Method |
-|-----------|----------|--------|
-| List S3 storage | `/manage/file-storage-s3` | GET |
-| List GCS storage | `/manage/file-storage-gcs` | GET |
-| List backends | `/manage/storage-backend` | GET |
-| Create BigQuery backend | `/manage/storage-backend/bigquery` | POST |
-| Assign backend to project | `/manage/projects/{id}/storage-backend` | POST |
-
-## Documentation
-
-### Main Docs
-- `docs/README.md` - Documentation navigation guide
-- `docs/local-connection.md` - Complete local Connection setup with troubleshooting
-- `docs/duckdb-driver-plan.md` - DuckDB driver architecture and implementation plan
-- `docs/bigquery-driver-research.md` - BigQuery driver analysis (reference for DuckDB)
-
-### Research
-- `docs/duckdb-technical-research.md` - DuckDB capabilities analysis
-- `docs/duckdb-keboola-features.md` - Keboola feature mapping to DuckDB
-- `docs/duckdb-api-endpoints.md` - Storage API endpoints to implement
-
-### Architecture Decision Records (ADRs)
-- `docs/adr/001-duckdb-microservice-architecture.md` - Python microservice approach
-- `docs/adr/002-duckdb-file-organization.md` - File/directory structure
-- `docs/adr/003-duckdb-branch-strategy.md` - Dev branches implementation
-- `docs/adr/004-duckdb-snapshots.md` - Table snapshots design
-- `docs/adr/005-duckdb-write-serialization.md` - Concurrent write handling
-- `docs/adr/006-duckdb-on-prem-storage.md` - On-premise file storage
-- `docs/adr/007-duckdb-cow-branching.md` - Copy-on-Write branching strategy
-- `docs/adr/008-central-metadata-database.md` - Central metadata DB for projects/files
+- `/metrics` - Prometheus metrics
+- `POST /projects/{id}/query` - Write Queue
+- Table schema: columns, primary-key, rows
+- Import/Export: import/file, import/table, export
+- Files: prepare, upload, register, download, delete
+- Snapshots: create, list, get, restore, delete
+- Dev Branches: create, delete, merge
 
 ## Development Notes
 
 ### DuckDB + Python Tips
 
-1. **DuckDB requires `pytz`** for TIMESTAMPTZ columns - add to requirements.txt
-2. **JSON columns** are returned as strings - parse with `json.loads()` when reading
-3. **ATTACH is session-specific** - each connection needs its own ATTACH, so do all operations in one connection
-4. **Singleton pattern in tests** - use `@property` for paths to allow runtime override:
-   ```python
-   # BAD: path set at init time, can't override in tests
-   def __init__(self):
-       self._db_path = settings.metadata_db_path
-
-   # GOOD: path read from settings on each access
-   @property
-   def _db_path(self):
-       return settings.metadata_db_path
-   ```
+1. **DuckDB requires `pytz`** for TIMESTAMPTZ columns
+2. **JSON columns** returned as strings - parse with `json.loads()`
+3. **ATTACH is session-specific** - do all ops in one connection
+4. **Use `@property` for paths** in singletons (for test overrides)
+5. **Single-writer limitation** - use write queue for serialization
 
 ### Testing with pytest
 
-- Use `monkeypatch.setattr(settings, "path", new_path)` to override settings
-- Fixtures in `conftest.py` create temp directories for each test
-- Each test gets isolated metadata.duckdb and project files
+- Use `monkeypatch.setattr(settings, "path", new_path)`
+- Fixtures in `conftest.py` create temp directories
+- Each test gets isolated metadata.duckdb
+
+## Documentation
+
+- **Main plan**: `docs/duckdb-driver-plan.md` - phases, decisions, detailed specs
+- **ADRs**: `docs/adr/001-008` - architecture decisions
+- **Research**: `docs/duckdb-technical-research.md`, `docs/bigquery-driver-research.md`
+
+## Local Connection
+
+```bash
+cd connection
+docker compose up apache supervisor
+# URL: https://localhost:8700/admin
+# Login: dev@keboola.com / devdevdev
+```
