@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  duckdb-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: duckdb-api-service
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - DATA_DIR=/data
+      - DUCKDB_DIR=/data/duckdb
+      - FILES_DIR=/data/files
+      - SNAPSHOTS_DIR=/data/snapshots
+      - DUCKDB_THREADS=4
+      - DUCKDB_MEMORY_LIMIT=4GB
+    volumes:
+      # Persist data
+      - duckdb-data:/data
+      # Development: mount source for hot reload
+      - ./src:/app/src:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Development service with hot reload
+  duckdb-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: duckdb-api-dev
+    ports:
+      - "8001:8000"
+    environment:
+      - DEBUG=true
+      - DATA_DIR=/data
+      - DUCKDB_DIR=/data/duckdb
+      - FILES_DIR=/data/files
+      - SNAPSHOTS_DIR=/data/snapshots
+    volumes:
+      - duckdb-data-dev:/data
+      - ./src:/app/src
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    profiles:
+      - dev
+
+volumes:
+  duckdb-data:
+    driver: local
+  duckdb-data-dev:
+    driver: local

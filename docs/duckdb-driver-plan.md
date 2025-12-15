@@ -16,6 +16,7 @@
 | Snowflake Backend | DONE | `vceecnu-bz34672.snowflakecomputing.com` |
 | BigQuery Backend | DONE | GCP folder `393339196668` |
 | BigQuery driver studium | **DONE** | Viz `bigquery-driver-research.md` |
+| DuckDB API Service skeleton | **DONE** | `duckdb-api-service/` - FastAPI, Docker, testy |
 
 ### Kde jsme
 
@@ -26,7 +27,11 @@
        ↓
 [DONE] Prostudovat BigQuery driver kod
        ↓
-[NOW]  Implementovat DuckDB driver
+[DONE] Vytvorit DuckDB API Service skeleton
+       ↓
+[NOW]  Pridat Project CRUD do Python API
+       ↓
+[NEXT] Implementovat PHP Driver Package
 ```
 
 ### Dalsi kroky (prioritizovane)
@@ -38,12 +43,21 @@
    - [x] Jak funguje `ImportTableFromFileHandler` - 3-stage pipeline (staging->transform->cleanup)
    - Detaily viz `bigquery-driver-research.md`
 
-2. **Vytvorit DuckDB API Service skeleton** (NEXT)
-   - [ ] FastAPI app s `/health` endpoint
-   - [ ] Docker + docker-compose
-   - [ ] Zakladni projekt struktura
+2. ~~**Vytvorit DuckDB API Service skeleton**~~ - DONE
+   - [x] FastAPI app s `/health` endpoint
+   - [x] Docker + docker-compose
+   - [x] Zakladni projekt struktura
+   - [x] Endpointy: `/health`, `/backend/init`, `/backend/remove`
+   - [x] 12 pytest testu (vsechny PASS)
+   - [x] Structured logging (structlog), request ID middleware
 
-3. **Implementovat PHP Driver Package**
+3. **Pridat Project CRUD do Python API** (NEXT)
+   - [ ] `POST /projects` - vytvorit `.duckdb` soubor
+   - [ ] `GET /projects/{id}` - info o projektu
+   - [ ] `DELETE /projects/{id}` - smazat projekt
+   - [ ] DuckDB connection manager (`database.py`)
+
+4. **Implementovat PHP Driver Package**
    - [ ] `DuckdbDriverClient` (implements `ClientInterface`)
    - [ ] `HandlerFactory` pro dispatch commands
    - [ ] Prvni handlery: `InitBackend`, `CreateProject`
