@@ -27,6 +27,7 @@ def temp_data_dir(monkeypatch):
         duckdb_dir = data_dir / "duckdb"
         files_dir = data_dir / "files"
         snapshots_dir = data_dir / "snapshots"
+        metadata_db_path = data_dir / "metadata.duckdb"
 
         for dir_path in [data_dir, duckdb_dir, files_dir, snapshots_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -36,12 +37,14 @@ def temp_data_dir(monkeypatch):
         monkeypatch.setattr(settings, "duckdb_dir", duckdb_dir)
         monkeypatch.setattr(settings, "files_dir", files_dir)
         monkeypatch.setattr(settings, "snapshots_dir", snapshots_dir)
+        monkeypatch.setattr(settings, "metadata_db_path", metadata_db_path)
 
         yield {
             "data_dir": data_dir,
             "duckdb_dir": duckdb_dir,
             "files_dir": files_dir,
             "snapshots_dir": snapshots_dir,
+            "metadata_db_path": metadata_db_path,
         }
 
 
@@ -54,5 +57,18 @@ def missing_data_dir(monkeypatch):
     monkeypatch.setattr(settings, "duckdb_dir", nonexistent / "duckdb")
     monkeypatch.setattr(settings, "files_dir", nonexistent / "files")
     monkeypatch.setattr(settings, "snapshots_dir", nonexistent / "snapshots")
+    monkeypatch.setattr(settings, "metadata_db_path", nonexistent / "metadata.duckdb")
 
     yield nonexistent
+
+
+@pytest.fixture
+def initialized_backend(client, temp_data_dir):
+    """Initialize backend and metadata DB before tests."""
+    from src import database
+    database.metadata_db.initialize()
+
+    response = client.post("/backend/init")
+    assert response.status_code == 200
+
+    yield temp_data_dir

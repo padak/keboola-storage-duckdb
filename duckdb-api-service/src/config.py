@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     duckdb_dir: Path = Path("/data/duckdb")
     files_dir: Path = Path("/data/files")
     snapshots_dir: Path = Path("/data/snapshots")
+    metadata_db_path: Path = Path("/data/metadata.duckdb")
 
     # DuckDB settings
     duckdb_threads: int = 4

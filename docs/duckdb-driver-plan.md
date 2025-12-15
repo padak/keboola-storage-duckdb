@@ -17,6 +17,8 @@
 | BigQuery Backend | DONE | GCP folder `393339196668` |
 | BigQuery driver studium | **DONE** | Viz `bigquery-driver-research.md` |
 | DuckDB API Service skeleton | **DONE** | `duckdb-api-service/` - FastAPI, Docker, testy |
+| Centralni metadata databaze | **DONE** | ADR-008, `metadata.duckdb` |
+| Project CRUD API | **DONE** | 32 testu PASS |
 
 ### Kde jsme
 
@@ -29,7 +31,11 @@
        ↓
 [DONE] Vytvorit DuckDB API Service skeleton
        ↓
-[NOW]  Pridat Project CRUD do Python API
+[DONE] Pridat Centralni metadata databazi (ADR-008)
+       ↓
+[DONE] Pridat Project CRUD do Python API
+       ↓
+[NOW]  Pridat Bucket CRUD do Python API
        ↓
 [NEXT] Implementovat PHP Driver Package
 ```
@@ -51,13 +57,24 @@
    - [x] 12 pytest testu (vsechny PASS)
    - [x] Structured logging (structlog), request ID middleware
 
-3. **Pridat Project CRUD do Python API** (NEXT)
-   - [ ] `POST /projects` - vytvorit `.duckdb` soubor
-   - [ ] `GET /projects/{id}` - info o projektu
-   - [ ] `DELETE /projects/{id}` - smazat projekt
-   - [ ] DuckDB connection manager (`database.py`)
+3. ~~**Pridat Project CRUD do Python API**~~ - DONE
+   - [x] Centralni metadata databaze (ADR-008) - `metadata.duckdb`
+   - [x] `POST /projects` - vytvorit `.duckdb` soubor
+   - [x] `GET /projects/{id}` - info o projektu
+   - [x] `GET /projects` - list projektu s filtrovanim
+   - [x] `PUT /projects/{id}` - update projektu
+   - [x] `DELETE /projects/{id}` - smazat projekt (soft delete)
+   - [x] `GET /projects/{id}/stats` - live statistiky z DuckDB
+   - [x] MetadataDB + ProjectDBManager (`database.py`)
+   - [x] Operations audit log
+   - [x] 32 pytest testu (vsechny PASS)
 
-4. **Implementovat PHP Driver Package**
+4. **Pridat Bucket CRUD do Python API** (NEXT)
+   - [ ] `POST /projects/{id}/buckets` - CREATE SCHEMA
+   - [ ] `GET /projects/{id}/buckets` - list schemat
+   - [ ] `DELETE /projects/{id}/buckets/{name}` - DROP SCHEMA
+
+5. **Implementovat PHP Driver Package**
    - [ ] `DuckdbDriverClient` (implements `ClientInterface`)
    - [ ] `HandlerFactory` pro dispatch commands
    - [ ] Prvni handlery: `InitBackend`, `CreateProject`
@@ -347,6 +364,7 @@ final class ImportTableFromFileHandler extends BaseHandler
 | 005 | Write serialization = async fronta per projekt |
 | 006 | Storage Files = lokalni filesystem + metadata v DuckDB |
 | 007 | Copy-on-Write branching = lazy table-level copy |
+| 008 | Centralni metadata databaze (`metadata.duckdb`) |
 
 ---
 
@@ -354,10 +372,16 @@ final class ImportTableFromFileHandler extends BaseHandler
 
 ```
 /data/
+├── metadata.duckdb                            # Centralni metadata (ADR-008)
+│   ├── projects                               # Registry projektu
+│   ├── files                                  # File storage metadata
+│   ├── operations_log                         # Audit trail
+│   └── stats                                  # Agregovane statistiky
+│
 ├── duckdb/                                    # Storage Tables
-│   ├── project_123_main.duckdb                # Default branch
+│   ├── project_123.duckdb                     # Projekt data
 │   ├── project_123_branch_456.duckdb          # Dev branch
-│   └── project_124_main.duckdb
+│   └── project_124.duckdb
 │
 ├── files/                                     # Storage Files (nahrada S3)
 │   ├── project_123/
@@ -365,14 +389,11 @@ final class ImportTableFromFileHandler extends BaseHandler
 │   │   └── 2024/12/11/*.csv
 │   └── project_124/
 │
-├── snapshots/                                 # Table snapshots
-│   └── project_123/
-│       └── snap_001/
-│           ├── metadata.json
-│           └── *.parquet
-│
-└── metadata/
-    └── files.duckdb                           # File registry
+└── snapshots/                                 # Table snapshots
+    └── project_123/
+        └── snap_001/
+            ├── metadata.json
+            └── *.parquet
 ```
 
 ---
@@ -470,20 +491,40 @@ final class ImportTableFromFileHandler extends BaseHandler
 
 ### 1. DuckDB API Service (Python)
 
+**Aktualne implementovano:**
 ```
 duckdb-api-service/
 ├── pyproject.toml
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
+├── pytest.ini
 ├── src/
-│   ├── main.py                    # FastAPI app
-│   ├── config.py                  # ENV konfigurace
-│   ├── database.py                # DuckDB connection manager
+│   ├── __init__.py
+│   ├── main.py                    # FastAPI app [DONE]
+│   ├── config.py                  # ENV konfigurace [DONE]
+│   ├── database.py                # MetadataDB + ProjectDBManager [DONE]
+│   ├── routers/
+│   │   ├── __init__.py
+│   │   ├── backend.py             # /health, /backend/init, /backend/remove [DONE]
+│   │   └── projects.py            # /projects CRUD [DONE]
+│   ├── services/
+│   │   └── __init__.py
+│   └── models/
+│       ├── __init__.py
+│       └── responses.py           # Pydantic response models [DONE]
+└── tests/
+    ├── __init__.py
+    ├── conftest.py                # Pytest fixtures [DONE]
+    ├── test_backend.py            # 12 testu [DONE]
+    └── test_projects.py           # 20 testu [DONE]
+```
+
+**Planovana rozsireni:**
+```
+├── src/
 │   ├── write_queue.py             # Async write serialization
 │   ├── routers/
-│   │   ├── backend.py             # /backend/init, /backend/remove
-│   │   ├── project.py             # /projects CRUD
 │   │   ├── buckets.py             # /buckets CRUD + sharing
 │   │   ├── tables.py              # /tables CRUD + import/export
 │   │   ├── aliases.py             # /tables/.../alias
@@ -492,32 +533,14 @@ duckdb-api-service/
 │   │   ├── snapshots.py           # /snapshots CRUD + restore
 │   │   ├── files.py               # /files upload/download
 │   │   └── query.py               # /query execute
-│   ├── services/
-│   │   ├── project_service.py
-│   │   ├── bucket_service.py
-│   │   ├── table_service.py
-│   │   ├── alias_service.py
-│   │   ├── import_service.py
-│   │   ├── export_service.py
-│   │   ├── branch_service.py
-│   │   ├── snapshot_service.py
-│   │   ├── file_service.py
-│   │   └── workspace_service.py
-│   └── models/
-│       ├── requests.py            # Pydantic models
-│       └── responses.py
+│   └── services/
+│       ├── bucket_service.py
+│       ├── table_service.py
+│       └── ...
 └── tests/
-    ├── test_backend.py
-    ├── test_project.py
     ├── test_buckets.py
     ├── test_tables.py
-    ├── test_aliases.py
-    ├── test_import_export.py
-    ├── test_branches.py
-    ├── test_snapshots.py
-    ├── test_files.py
-    ├── test_workspaces.py
-    └── test_query.py
+    └── ...
 ```
 
 ### 2. PHP Driver v Connection (StorageDriverDuckdb Package)
@@ -714,27 +737,32 @@ class DuckdbDriverClient implements ClientInterface
 - [ ] Registrovat driver v `DriverClientFactory` v Connection
 - [ ] Vytvorit services.yaml
 
-### Faze 1: Zaklad API + Backend + Observability
-- [ ] FastAPI app s healthcheck
-- [ ] DuckDB connection manager
-- [ ] Docker + docker-compose
-- [ ] Zakladni konfigurace (ENV)
-- [ ] Python: POST /backend/init
-- [ ] Python: POST /backend/remove
+### Faze 1: Zaklad API + Backend + Observability - DONE
+- [x] FastAPI app s healthcheck
+- [x] DuckDB connection manager
+- [x] Docker + docker-compose
+- [x] Zakladni konfigurace (ENV)
+- [x] Python: POST /backend/init
+- [x] Python: POST /backend/remove
 - [ ] PHP: InitBackendHandler
 - [ ] PHP: RemoveBackendHandler
 - [ ] E2E test: Connection -> Driver -> Python API
-- [ ] **Observability zaklad:**
-  - [ ] Structured logging (structlog) - JSON format pro parsovani
-  - [ ] Request ID middleware (X-Request-ID propagace)
-  - [ ] Request/response logging s timing
-  - [ ] Error logging s full traceback
+- [x] **Observability zaklad:**
+  - [x] Structured logging (structlog) - JSON format pro parsovani
+  - [x] Request ID middleware (X-Request-ID propagace)
+  - [x] Request/response logging s timing
+  - [x] Error logging s full traceback
 
-### Faze 2: Project operace + Metrics + Security
-- [ ] POST /projects (vytvorit DuckDB soubor)
-- [ ] PUT /projects/{id} (update metadata)
-- [ ] DELETE /projects/{id} (smazat soubor)
-- [ ] GET /projects/{id}/info
+### Faze 2: Project operace + Metrics + Security - DONE (Python cast)
+- [x] POST /projects (vytvorit DuckDB soubor)
+- [x] PUT /projects/{id} (update metadata)
+- [x] DELETE /projects/{id} (smazat soubor)
+- [x] GET /projects/{id}/info
+- [x] GET /projects (list s filtrovanim a paginaci)
+- [x] GET /projects/{id}/stats (live statistiky)
+- [x] Centralni metadata databaze (ADR-008)
+- [x] Operations audit log
+- [x] 32 pytest testu
 - [ ] **Observability rozsireni:**
   - [ ] Prometheus metrics endpoint (/metrics)
   - [ ] Metriky: request_count, request_duration, queue_depth, active_connections
@@ -1268,6 +1296,7 @@ docs/
 ├── duckdb-technical-research.md    # Technicke detaily DuckDB
 ├── duckdb-keboola-features.md      # Mapovani Keboola features
 ├── duckdb-api-endpoints.md         # Storage API endpointy
+├── bigquery-driver-research.md     # BigQuery driver analyza
 ├── zajca.md                        # Puvodni pozadavky
 └── adr/
     ├── 001-duckdb-microservice-architecture.md
@@ -1275,57 +1304,10 @@ docs/
     ├── 003-duckdb-branch-strategy.md
     ├── 004-duckdb-snapshots.md
     ├── 005-duckdb-write-serialization.md
-    └── 006-duckdb-on-prem-storage.md
+    ├── 006-duckdb-on-prem-storage.md
+    ├── 007-duckdb-cow-branching.md
+    └── 008-central-metadata-database.md
 ```
-
----
-
-## Dalsi kroky
-
-### Faze A: Studium BigQuery driveru (AKTUALNE)
-
-> **Proc:** BigQuery driver je referencni implementace. Pochopenim jeho kodu
-> ziskame jasny vzor pro DuckDB driver.
-
-1. [ ] Prostudovat `InitBackendHandler` - jak driver validuje backend
-2. [ ] Prostudovat `CreateProjectHandler` - jak se vytvari projekt
-3. [ ] Prostudovat `CreateTableHandler` - jak se vytvari tabulka
-4. [ ] Prostudovat `ImportTableFromFileHandler` - jak funguje import
-5. [ ] Zdokumentovat klicove patterns a helpers
-
-**Kde hledat:**
-```
-vendor/keboola/storage-driver-bigquery/src/
-├── BigQueryDriverClient.php          # Entry point
-├── Handler/
-│   ├── Backend/Init/InitBackendHandler.php
-│   ├── Project/CreateProjectHandler.php
-│   ├── Table/CreateTableHandler.php
-│   └── Table/Import/ImportTableFromFileHandler.php
-└── ...
-```
-
-### Faze B: DuckDB API Service Skeleton
-
-1. [ ] Vytvorit `duckdb-api-service/` strukturu
-2. [ ] Implementovat FastAPI app + `/health` endpoint
-3. [ ] Docker + docker-compose
-4. [ ] Zakladni konfigurace (ENV)
-
-### Faze C: PHP Driver Package
-
-1. [ ] Vytvorit `connection/Package/StorageDriverDuckdb/`
-2. [ ] `DuckdbDriverClient` (implements `ClientInterface`)
-3. [ ] `DuckdbApiClient` (HTTP client)
-4. [ ] `HandlerFactory` pro dispatch
-5. [ ] Prvni handlery: `InitBackend`, `RemoveBackend`
-
-### Faze D: Zakladni funkcionalita
-
-1. [ ] Pridat DuckDB connection manager
-2. [ ] Implementovat write queue (ADR-005)
-3. [ ] Endpointy: `/backend/init`, `/projects`
-4. [ ] E2E test: Connection -> PHP Driver -> Python API -> DuckDB
 
 ---
 

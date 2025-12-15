@@ -10,7 +10,8 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend
+from src.routers import backend, projects
+from src.database import metadata_db
 
 
 def setup_logging() -> None:
@@ -43,6 +44,15 @@ async def lifespan(app: FastAPI):
         debug=settings.debug,
         data_dir=str(settings.data_dir),
     )
+
+    # Initialize metadata database
+    try:
+        metadata_db.initialize()
+        logger.info("metadata_db_initialized", path=str(settings.metadata_db_path))
+    except Exception as e:
+        logger.error("metadata_db_init_failed", error=str(e), exc_info=True)
+        raise
+
     yield
     logger.info("application_shutdown")
 
@@ -134,6 +144,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include routers
 app.include_router(backend.router)
+app.include_router(projects.router)
 
 # Root endpoint
 @app.get("/", include_in_schema=False)

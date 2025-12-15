@@ -12,12 +12,19 @@ Build an **on-premise Keboola with DuckDB backend** - a lightweight, self-contai
 docs/                         # Project documentation
   ├── local-connection.md    # Local Connection setup guide (COMPLETE)
   ├── duckdb-driver-plan.md  # DuckDB driver implementation plan
-  └── README.md              # Documentation navigation
+  ├── bigquery-driver-research.md  # BigQuery driver analysis
+  └── adr/                   # Architecture Decision Records
+
+duckdb-api-service/          # Python FastAPI service for DuckDB operations
+  ├── src/
+  │   ├── main.py            # FastAPI app
+  │   ├── config.py          # Settings (pydantic-settings)
+  │   ├── database.py        # MetadataDB + ProjectDBManager
+  │   └── routers/           # API endpoints
+  └── tests/                 # pytest tests (32 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
   └── vendor/keboola/storage-driver-bigquery/  # Reference driver
-
-php-storage-driver-bigquery/  # BigQuery driver source (for study)
 ```
 
 ## Current Status
@@ -30,7 +37,13 @@ php-storage-driver-bigquery/  # BigQuery driver source (for study)
 
 2. **BigQuery Driver Research**: DONE (see `docs/bigquery-driver-research.md`)
 
-3. **Next Step**: Implement DuckDB driver (Python API + PHP Driver)
+3. **DuckDB API Service**: IN PROGRESS
+   - FastAPI skeleton: DONE
+   - Central metadata database: DONE (ADR-008)
+   - Project CRUD API: DONE (32 tests passing)
+   - Next: Bucket CRUD API
+
+4. **PHP Driver Package**: TODO
 
 ## Key Learnings (BigQuery Driver)
 
@@ -51,6 +64,51 @@ php-storage-driver-bigquery/  # BigQuery driver source (for study)
 | Primary Key | Metadata only | Enforced constraint |
 | Sharing | Analytics Hub | ATTACH (READ_ONLY) |
 | File formats | CSV only | CSV + Parquet |
+
+## DuckDB API Service Quick Reference
+
+```bash
+# Navigate to service
+cd duckdb-api-service
+
+# Setup (first time)
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Run tests
+source .venv/bin/activate
+pytest tests/ -v
+
+# Run server (development)
+source .venv/bin/activate
+python -m src.main
+
+# Docker
+docker compose up --build
+```
+
+### Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| MetadataDB | `src/database.py` | Central metadata (projects, files, audit log) |
+| ProjectDBManager | `src/database.py` | Per-project DuckDB file management |
+| Settings | `src/config.py` | pydantic-settings configuration |
+
+### API Endpoints (implemented)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/backend/init` | POST | Initialize storage directories |
+| `/backend/remove` | POST | Remove backend (no-op) |
+| `/projects` | GET | List projects |
+| `/projects` | POST | Create project |
+| `/projects/{id}` | GET | Get project |
+| `/projects/{id}` | PUT | Update project |
+| `/projects/{id}` | DELETE | Delete project |
+| `/projects/{id}/stats` | GET | Live statistics |
 
 ## Local Connection Quick Reference
 
@@ -98,3 +156,28 @@ Login: dev@keboola.com / devdevdev
 - `docs/adr/005-duckdb-write-serialization.md` - Concurrent write handling
 - `docs/adr/006-duckdb-on-prem-storage.md` - On-premise file storage
 - `docs/adr/007-duckdb-cow-branching.md` - Copy-on-Write branching strategy
+- `docs/adr/008-central-metadata-database.md` - Central metadata DB for projects/files
+
+## Development Notes
+
+### DuckDB + Python Tips
+
+1. **DuckDB requires `pytz`** for TIMESTAMPTZ columns - add to requirements.txt
+2. **JSON columns** are returned as strings - parse with `json.loads()` when reading
+3. **Singleton pattern in tests** - use `@property` for paths to allow runtime override:
+   ```python
+   # BAD: path set at init time, can't override in tests
+   def __init__(self):
+       self._db_path = settings.metadata_db_path
+
+   # GOOD: path read from settings on each access
+   @property
+   def _db_path(self):
+       return settings.metadata_db_path
+   ```
+
+### Testing with pytest
+
+- Use `monkeypatch.setattr(settings, "path", new_path)` to override settings
+- Fixtures in `conftest.py` create temp directories for each test
+- Each test gets isolated metadata.duckdb and project files
