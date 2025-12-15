@@ -28,7 +28,9 @@ php-storage-driver-bigquery/  # BigQuery driver source (for study)
    - S3 file storage: Working
    - GCS file storage: Working
 
-2. **Next Step**: Study BigQuery driver as reference for DuckDB implementation
+2. **BigQuery Driver Research**: DONE (see `docs/bigquery-driver-research.md`)
+
+3. **Next Step**: Implement DuckDB driver (Python API + PHP Driver)
 
 ## Key Learnings (BigQuery Driver)
 
@@ -36,6 +38,19 @@ php-storage-driver-bigquery/  # BigQuery driver source (for study)
 - Drivers communicate via **Protocol Buffers**, not REST
 - Driver code is in `vendor/keboola/storage-driver-bigquery/`
 - Implements `ClientInterface` from `storage-driver-common`
+- 27 handlers dispatched via `HandlerFactory` match expression
+- 3-stage import pipeline: staging -> transform/dedup -> cleanup
+- Primary keys are metadata-only in BigQuery (not enforced)
+
+## DuckDB vs BigQuery - Key Differences
+
+| Aspect | BigQuery | DuckDB |
+|--------|----------|--------|
+| Project | GCP project | `.duckdb` file |
+| Bucket | Dataset | Schema |
+| Primary Key | Metadata only | Enforced constraint |
+| Sharing | Analytics Hub | ATTACH (READ_ONLY) |
+| File formats | CSV only | CSV + Parquet |
 
 ## Local Connection Quick Reference
 
@@ -68,6 +83,7 @@ Login: dev@keboola.com / devdevdev
 - `docs/README.md` - Documentation navigation guide
 - `docs/local-connection.md` - Complete local Connection setup with troubleshooting
 - `docs/duckdb-driver-plan.md` - DuckDB driver architecture and implementation plan
+- `docs/bigquery-driver-research.md` - BigQuery driver analysis (reference for DuckDB)
 
 ### Research
 - `docs/duckdb-technical-research.md` - DuckDB capabilities analysis

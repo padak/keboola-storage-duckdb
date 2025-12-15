@@ -15,7 +15,7 @@
 | GCS File Storage | DONE | `kbc-padak-files-storage` |
 | Snowflake Backend | DONE | `vceecnu-bz34672.snowflakecomputing.com` |
 | BigQuery Backend | DONE | GCP folder `393339196668` |
-| BigQuery driver studium | **IN PROGRESS** | Viz sekce "Poznatky z BigQuery driveru" |
+| BigQuery driver studium | **DONE** | Viz `bigquery-driver-research.md` |
 
 ### Kde jsme
 
@@ -24,20 +24,21 @@
        ↓
 [DONE] Pridat BigQuery backend (referencni implementace)
        ↓
-[NOW]  Studovat BigQuery driver kod
+[DONE] Prostudovat BigQuery driver kod
        ↓
-[NEXT] Implementovat DuckDB driver
+[NOW]  Implementovat DuckDB driver
 ```
 
 ### Dalsi kroky (prioritizovane)
 
-1. **Prostudovat BigQuery driver kod** (`vendor/keboola/storage-driver-bigquery/`)
-   - [ ] Jak funguje `InitBackendHandler`
-   - [ ] Jak funguje `CreateProjectHandler`
-   - [ ] Jak funguje `CreateTableHandler`
-   - [ ] Jak funguje `ImportTableFromFileHandler`
+1. ~~**Prostudovat BigQuery driver kod**~~ - DONE
+   - [x] Jak funguje `InitBackendHandler` - validuje 4 veci (folder, permissions, IAM, billing)
+   - [x] Jak funguje `CreateProjectHandler` - 11-step GCP project creation
+   - [x] Jak funguje `CreateTableHandler` - PK je metadata-only v BigQuery
+   - [x] Jak funguje `ImportTableFromFileHandler` - 3-stage pipeline (staging->transform->cleanup)
+   - Detaily viz `bigquery-driver-research.md`
 
-2. **Vytvorit DuckDB API Service skeleton**
+2. **Vytvorit DuckDB API Service skeleton** (NEXT)
    - [ ] FastAPI app s `/health` endpoint
    - [ ] Docker + docker-compose
    - [ ] Zakladni projekt struktura
@@ -51,55 +52,22 @@
 
 ## Poznatky z BigQuery driveru (2024-12-15)
 
-### Architektura BigQuery driveru
-
-BigQuery driver nam ukazuje jak Keboola drivery funguji:
-
-```
-Connection (PHP)
-    │
-    │ DriverClientFactory::getClientForBackend('bigquery')
-    ▼
-BigQueryDriverClient (implements ClientInterface)
-    │
-    │ runCommand(credentials, command, features, runtimeOptions)
-    │              ↑ Protocol Buffers messages ↑
-    ▼
-HandlerFactory::create($command)
-    │
-    ├── InitBackendCommand → InitBackendHandler
-    ├── CreateProjectCommand → CreateProjectHandler
-    ├── CreateTableCommand → CreateTableHandler
-    └── ... (33+ handlers)
-```
+> **Detailni dokumentace:** Viz `bigquery-driver-research.md`
 
 ### Klicove poznatky pro DuckDB
 
 | Aspekt | BigQuery | DuckDB (plan) |
 |--------|----------|---------------|
-| **Kde bezi driver** | PHP knihovna v Connection | PHP knihovna + Python microservice |
-| **Storage per projekt** | GCP projekt | DuckDB soubor |
-| **InitBackend validace** | GCP permissions, billing | Jen health check Python API |
-| **Cloud dependencies** | GCS, BigQuery API, IAM | Zadne |
-| **Komplexita** | Vysoka (GCP ekosystem) | Nizka (vse lokalne) |
-
-### BigQuery InitBackendHandler - co kontroluje
-
-```php
-// Z vendor/keboola/storage-driver-bigquery/src/Handler/Backend/Init/InitBackendHandler.php
-// Driver kontroluje:
-1. Folder access (folders.get, folders.list)
-2. Project creation (projects.create)
-3. IAM permissions (projects.getIamPolicy)
-4. Required roles (roles/owner, roles/storage.objectAdmin)
-5. Billing account (billing.user)
-```
-
-**Pro DuckDB:** Nas `InitBackendHandler` bude MNOHEM jednodussi - jen ping Python API.
+| **Project** | GCP project (cloud resource) | `.duckdb` soubor (local file) |
+| **Bucket** | BigQuery Dataset | DuckDB Schema |
+| **InitBackend** | 4 validace (folder, permissions, IAM, billing) | Ping Python API + check storage |
+| **CreateProject** | 11-step GCP setup | Vytvorit soubor |
+| **Primary Key** | Metadata only (not enforced) | Nativni constraint (enforced) |
+| **Import pipeline** | 3-stage (staging->transform->cleanup) | Stejny pattern |
+| **Sharing** | Analytics Hub Listings | ATTACH (READ_ONLY) + Views |
+| **File formats** | CSV only | CSV + Parquet nativne |
 
 ### Proc Python microservice misto pure PHP?
-
-BigQuery driver ukazuje, ze drivery mohou volat externi sluzby. Pro DuckDB:
 
 1. **DuckDB nema nativni PHP extension** (FFI je komplikovane)
 2. **Python ma oficialni DuckDB binding** (rychle, stabilni)
