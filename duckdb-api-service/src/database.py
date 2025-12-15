@@ -82,6 +82,37 @@ CREATE TABLE IF NOT EXISTS stats (
     value JSON NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Bucket sharing tracking
+-- TODO: Expand this with more detailed sharing permissions when needed
+CREATE TABLE IF NOT EXISTS bucket_shares (
+    id VARCHAR PRIMARY KEY,
+    source_project_id VARCHAR NOT NULL,
+    source_bucket_name VARCHAR NOT NULL,
+    target_project_id VARCHAR NOT NULL,
+    share_type VARCHAR DEFAULT 'readonly',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR,
+    UNIQUE(source_project_id, source_bucket_name, target_project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shares_source ON bucket_shares(source_project_id, source_bucket_name);
+CREATE INDEX IF NOT EXISTS idx_shares_target ON bucket_shares(target_project_id);
+
+-- Bucket links tracking (for ATTACH operations)
+CREATE TABLE IF NOT EXISTS bucket_links (
+    id VARCHAR PRIMARY KEY,
+    target_project_id VARCHAR NOT NULL,
+    target_bucket_name VARCHAR NOT NULL,
+    source_project_id VARCHAR NOT NULL,
+    source_bucket_name VARCHAR NOT NULL,
+    attached_db_alias VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(target_project_id, target_bucket_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_links_target ON bucket_links(target_project_id);
+CREATE INDEX IF NOT EXISTS idx_links_source ON bucket_links(source_project_id, source_bucket_name);
 """
 
 
@@ -364,6 +395,148 @@ class MetadataDB:
             ],
         )
 
+    # ========================================
+    # Bucket sharing operations
+    # ========================================
+
+    def create_bucket_share(
+        self,
+        source_project_id: str,
+        source_bucket_name: str,
+        target_project_id: str,
+        share_type: str = "readonly",
+        created_by: str | None = None,
+    ) -> str:
+        """Create a bucket share record."""
+        import uuid
+
+        share_id = str(uuid.uuid4())
+        self.execute_write(
+            """
+            INSERT INTO bucket_shares
+            (id, source_project_id, source_bucket_name, target_project_id, share_type, created_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [share_id, source_project_id, source_bucket_name, target_project_id, share_type, created_by],
+        )
+        logger.info(
+            "bucket_share_created",
+            share_id=share_id,
+            source_project=source_project_id,
+            source_bucket=source_bucket_name,
+            target_project=target_project_id,
+        )
+        return share_id
+
+    def delete_bucket_share(
+        self,
+        source_project_id: str,
+        source_bucket_name: str,
+        target_project_id: str,
+    ) -> bool:
+        """Delete a bucket share record."""
+        self.execute_write(
+            """
+            DELETE FROM bucket_shares
+            WHERE source_project_id = ? AND source_bucket_name = ? AND target_project_id = ?
+            """,
+            [source_project_id, source_bucket_name, target_project_id],
+        )
+        logger.info(
+            "bucket_share_deleted",
+            source_project=source_project_id,
+            source_bucket=source_bucket_name,
+            target_project=target_project_id,
+        )
+        return True
+
+    def get_bucket_shares(
+        self,
+        source_project_id: str,
+        source_bucket_name: str,
+    ) -> list[str]:
+        """Get list of project IDs this bucket is shared with."""
+        results = self.execute(
+            """
+            SELECT target_project_id FROM bucket_shares
+            WHERE source_project_id = ? AND source_bucket_name = ?
+            """,
+            [source_project_id, source_bucket_name],
+        )
+        return [row[0] for row in results]
+
+    def create_bucket_link(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+        source_project_id: str,
+        source_bucket_name: str,
+        attached_db_alias: str,
+    ) -> str:
+        """Create a bucket link record."""
+        import uuid
+
+        link_id = str(uuid.uuid4())
+        self.execute_write(
+            """
+            INSERT INTO bucket_links
+            (id, target_project_id, target_bucket_name, source_project_id, source_bucket_name, attached_db_alias)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [link_id, target_project_id, target_bucket_name, source_project_id, source_bucket_name, attached_db_alias],
+        )
+        logger.info(
+            "bucket_link_created",
+            link_id=link_id,
+            target_project=target_project_id,
+            target_bucket=target_bucket_name,
+            source_project=source_project_id,
+            source_bucket=source_bucket_name,
+        )
+        return link_id
+
+    def get_bucket_link(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+    ) -> dict[str, Any] | None:
+        """Get bucket link information."""
+        result = self.execute_one(
+            """
+            SELECT source_project_id, source_bucket_name, attached_db_alias
+            FROM bucket_links
+            WHERE target_project_id = ? AND target_bucket_name = ?
+            """,
+            [target_project_id, target_bucket_name],
+        )
+        if result:
+            return {
+                "source_project_id": result[0],
+                "source_bucket_name": result[1],
+                "attached_db_alias": result[2],
+            }
+        return None
+
+    def delete_bucket_link(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+    ) -> bool:
+        """Delete a bucket link record."""
+        self.execute_write(
+            """
+            DELETE FROM bucket_links
+            WHERE target_project_id = ? AND target_bucket_name = ?
+            """,
+            [target_project_id, target_bucket_name],
+        )
+        logger.info(
+            "bucket_link_deleted",
+            target_project=target_project_id,
+            target_bucket=target_bucket_name,
+        )
+        return True
+
 
 class ProjectDBManager:
     """
@@ -477,6 +650,389 @@ class ProjectDBManager:
                 "table_count": tables[0] if tables else 0,
                 "size_bytes": self.get_db_size(project_id),
             }
+
+    # ========================================
+    # Bucket operations
+    # ========================================
+
+    def create_bucket(
+        self, project_id: str, bucket_name: str, description: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Create a bucket (schema) in a project's database.
+
+        Returns bucket info dict with name and created status.
+        """
+        with self.connection(project_id) as conn:
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {bucket_name}")
+            conn.commit()
+
+        logger.info(
+            "bucket_created",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            description=description,
+        )
+
+        # Return bucket info (description not stored in DuckDB, just passed through)
+        return {"name": bucket_name, "table_count": 0, "description": description}
+
+    def delete_bucket(
+        self, project_id: str, bucket_name: str, cascade: bool = True
+    ) -> bool:
+        """
+        Delete a bucket (schema) from a project's database.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket/schema name
+            cascade: If True, drop all tables in the bucket
+
+        Returns True if successful.
+        """
+        cascade_clause = "CASCADE" if cascade else "RESTRICT"
+
+        with self.connection(project_id) as conn:
+            conn.execute(f"DROP SCHEMA IF EXISTS {bucket_name} {cascade_clause}")
+            conn.commit()
+
+        logger.info(
+            "bucket_deleted",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            cascade=cascade,
+        )
+        return True
+
+    def list_buckets(self, project_id: str) -> list[dict[str, Any]]:
+        """
+        List all buckets (schemas) in a project's database.
+
+        Excludes system schemas: information_schema, pg_catalog, main.
+
+        Returns list of dicts with bucket info.
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            # Get all non-system schemas
+            schemas = conn.execute(
+                """
+                SELECT schema_name
+                FROM information_schema.schemata
+                WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'main')
+                ORDER BY schema_name
+                """
+            ).fetchall()
+
+            buckets = []
+            for (schema_name,) in schemas:
+                # Count tables in this schema
+                table_count_result = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.tables
+                    WHERE table_schema = ?
+                    """,
+                    [schema_name],
+                ).fetchone()
+
+                table_count = table_count_result[0] if table_count_result else 0
+
+                buckets.append(
+                    {
+                        "name": schema_name,
+                        "table_count": table_count,
+                        "description": None,
+                    }
+                )
+
+        return buckets
+
+    def get_bucket(self, project_id: str, bucket_name: str) -> dict[str, Any] | None:
+        """
+        Get information about a specific bucket (schema).
+
+        Returns bucket info dict or None if bucket doesn't exist.
+        """
+        with self.connection(project_id, read_only=True) as conn:
+            # Check if schema exists
+            schema_result = conn.execute(
+                """
+                SELECT schema_name
+                FROM information_schema.schemata
+                WHERE schema_name = ?
+                """,
+                [bucket_name],
+            ).fetchone()
+
+            if not schema_result:
+                return None
+
+            # Count tables in this schema
+            table_count_result = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = ?
+                """,
+                [bucket_name],
+            ).fetchone()
+
+            table_count = table_count_result[0] if table_count_result else 0
+
+            return {"name": bucket_name, "table_count": table_count, "description": None}
+
+    def bucket_exists(self, project_id: str, bucket_name: str) -> bool:
+        """Check if a bucket (schema) exists in a project's database."""
+        with self.connection(project_id, read_only=True) as conn:
+            result = conn.execute(
+                """
+                SELECT 1
+                FROM information_schema.schemata
+                WHERE schema_name = ?
+                """,
+                [bucket_name],
+            ).fetchone()
+
+            return result is not None
+
+    # ========================================
+    # Bucket sharing - ATTACH/DETACH operations
+    # ========================================
+
+    def attach_database(
+        self,
+        target_project_id: str,
+        source_project_id: str,
+        alias: str,
+        read_only: bool = True,
+    ) -> None:
+        """
+        Attach a source project's database to a target project.
+
+        This allows the target project to access tables from the source project.
+        Used for bucket linking/sharing.
+
+        Args:
+            target_project_id: The project that will access the source
+            source_project_id: The project being attached
+            alias: The database alias to use (e.g., 'source_proj_123')
+            read_only: Whether to attach in READ_ONLY mode (default True)
+        """
+        source_db_path = self.get_db_path(source_project_id)
+
+        if not source_db_path.exists():
+            raise FileNotFoundError(
+                f"Source project database not found: {source_project_id}"
+            )
+
+        with self.connection(target_project_id) as conn:
+            # ATTACH the source database
+            read_only_clause = "READ_ONLY" if read_only else ""
+            conn.execute(
+                f"ATTACH DATABASE '{source_db_path}' AS {alias} ({read_only_clause})"
+            )
+            conn.commit()
+
+        logger.info(
+            "database_attached",
+            target_project=target_project_id,
+            source_project=source_project_id,
+            alias=alias,
+            read_only=read_only,
+        )
+
+    def detach_database(self, target_project_id: str, alias: str) -> None:
+        """
+        Detach a previously attached database.
+
+        Args:
+            target_project_id: The project with the attached database
+            alias: The database alias to detach
+        """
+        with self.connection(target_project_id) as conn:
+            conn.execute(f"DETACH DATABASE {alias}")
+            conn.commit()
+
+        logger.info(
+            "database_detached",
+            target_project=target_project_id,
+            alias=alias,
+        )
+
+    def link_bucket_with_views(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+        source_project_id: str,
+        source_bucket_name: str,
+        source_db_alias: str,
+    ) -> list[str]:
+        """
+        Link a bucket by ATTACHing source DB and creating views - all in one connection.
+
+        DuckDB ATTACH is session-specific, so we must do everything in one connection.
+
+        Args:
+            target_project_id: The project where views will be created
+            target_bucket_name: The schema name for the views
+            source_project_id: The source project ID
+            source_bucket_name: The schema name in the source database
+            source_db_alias: The alias for the attached database
+
+        Returns:
+            List of view names created
+        """
+        source_db_path = self.get_db_path(source_project_id)
+
+        if not source_db_path.exists():
+            raise FileNotFoundError(
+                f"Source project database not found: {source_project_id}"
+            )
+
+        # First, get list of tables from source database directly
+        with self.connection(source_project_id, read_only=True) as source_conn:
+            tables = source_conn.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_type = 'BASE TABLE'
+                """,
+                [source_bucket_name],
+            ).fetchall()
+
+        # Now work with target database
+        with self.connection(target_project_id) as conn:
+            # 1. ATTACH source database in READ_ONLY mode
+            conn.execute(
+                f"ATTACH DATABASE '{source_db_path}' AS {source_db_alias} (READ_ONLY)"
+            )
+
+            # 2. Create target schema if needed
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {target_bucket_name}")
+
+            # 3. Create views for each table
+            created_views = []
+            for (table_name,) in tables:
+                view_sql = f"""
+                CREATE OR REPLACE VIEW {target_bucket_name}.{table_name} AS
+                SELECT * FROM {source_db_alias}.{source_bucket_name}.{table_name}
+                """
+                conn.execute(view_sql)
+                created_views.append(table_name)
+
+            # 4. Detach the database (views will remain pointing to files)
+            # Note: We detach because ATTACH is session-specific anyway
+            # The views store the actual file path, not the alias
+            conn.execute(f"DETACH DATABASE {source_db_alias}")
+
+            conn.commit()
+
+        logger.info(
+            "bucket_linked_with_views",
+            target_project=target_project_id,
+            target_bucket=target_bucket_name,
+            source_project=source_project_id,
+            source_bucket=source_bucket_name,
+            view_count=len(created_views),
+        )
+
+        return created_views
+
+    def create_views_for_bucket(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+        source_db_alias: str,
+        source_bucket_name: str,
+    ) -> list[str]:
+        """
+        Create views in target bucket pointing to tables in source bucket.
+
+        DEPRECATED: Use link_bucket_with_views instead which handles ATTACH in same connection.
+
+        This is used when linking a bucket - views are created that reference
+        tables in the attached database.
+
+        Args:
+            target_project_id: The project where views will be created
+            target_bucket_name: The schema name for the views
+            source_db_alias: The alias of the attached database
+            source_bucket_name: The schema name in the source database
+
+        Returns:
+            List of view names created
+        """
+        with self.connection(target_project_id) as conn:
+            # First create the schema if it doesn't exist
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {target_bucket_name}")
+
+            # Get list of tables in source bucket
+            tables = conn.execute(
+                f"""
+                SELECT table_name
+                FROM {source_db_alias}.information_schema.tables
+                WHERE table_schema = ?
+                """,
+                [source_bucket_name],
+            ).fetchall()
+
+            created_views = []
+            for (table_name,) in tables:
+                # Create view: target_bucket.table -> source_db.source_bucket.table
+                view_sql = f"""
+                CREATE OR REPLACE VIEW {target_bucket_name}.{table_name} AS
+                SELECT * FROM {source_db_alias}.{source_bucket_name}.{table_name}
+                """
+                conn.execute(view_sql)
+                created_views.append(table_name)
+
+            conn.commit()
+
+        logger.info(
+            "bucket_views_created",
+            target_project=target_project_id,
+            target_bucket=target_bucket_name,
+            source_alias=source_db_alias,
+            source_bucket=source_bucket_name,
+            view_count=len(created_views),
+        )
+
+        return created_views
+
+    def drop_bucket_views(
+        self,
+        target_project_id: str,
+        target_bucket_name: str,
+    ) -> None:
+        """
+        Drop all views in a bucket (used when unlinking).
+
+        Args:
+            target_project_id: The project containing the views
+            target_bucket_name: The bucket/schema name
+        """
+        with self.connection(target_project_id) as conn:
+            # Get all views in the schema
+            views = conn.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = ? AND table_type = 'VIEW'
+                """,
+                [target_bucket_name],
+            ).fetchall()
+
+            for (view_name,) in views:
+                conn.execute(f"DROP VIEW IF EXISTS {target_bucket_name}.{view_name}")
+
+            conn.commit()
+
+        logger.info(
+            "bucket_views_dropped",
+            target_project=target_project_id,
+            target_bucket=target_bucket_name,
+            view_count=len(views),
+        )
 
 
 # Global instances

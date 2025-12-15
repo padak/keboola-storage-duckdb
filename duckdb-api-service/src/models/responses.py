@@ -88,3 +88,58 @@ class ProjectStatsResponse(BaseModel):
     size_bytes: int = Field(description="Database file size in bytes")
     table_count: int = Field(description="Number of tables")
     bucket_count: int = Field(description="Number of buckets/schemas")
+
+
+# ============================================
+# Bucket models
+# ============================================
+
+
+class BucketCreate(BaseModel):
+    """Request to create a new bucket."""
+
+    name: str = Field(description="Bucket name (will be used as DuckDB schema name)")
+    description: str | None = Field(default=None, description="Bucket description")
+
+
+class BucketResponse(BaseModel):
+    """Bucket information response."""
+
+    name: str = Field(description="Bucket name (schema name)")
+    table_count: int = Field(default=0, description="Number of tables in bucket")
+    description: str | None = Field(default=None, description="Bucket description")
+
+
+class BucketListResponse(BaseModel):
+    """List of buckets response."""
+
+    buckets: list[BucketResponse] = Field(description="List of buckets")
+    total: int = Field(description="Total number of buckets")
+
+
+class BucketShareRequest(BaseModel):
+    """Request to share a bucket."""
+
+    target_project_id: str = Field(description="ID of project to share with")
+
+
+class BucketLinkRequest(BaseModel):
+    """Request to link a bucket from another project."""
+
+    source_project_id: str = Field(description="ID of source project")
+    source_bucket_name: str = Field(description="Name of bucket in source project")
+
+
+class BucketShareInfo(BaseModel):
+    """Information about a shared bucket."""
+
+    shared_with: list[str] = Field(
+        default_factory=list, description="List of project IDs this bucket is shared with"
+    )
+    is_linked: bool = Field(default=False, description="Whether this is a linked bucket")
+    source_project_id: str | None = Field(
+        default=None, description="Source project ID if linked"
+    )
+    source_bucket_name: str | None = Field(
+        default=None, description="Source bucket name if linked"
+    )

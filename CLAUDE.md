@@ -21,7 +21,11 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── config.py          # Settings (pydantic-settings)
   │   ├── database.py        # MetadataDB + ProjectDBManager
   │   └── routers/           # API endpoints
-  └── tests/                 # pytest tests (32 tests)
+  │       ├── backend.py     # Health, init, remove
+  │       ├── projects.py    # Project CRUD
+  │       ├── buckets.py     # Bucket CRUD
+  │       └── bucket_sharing.py  # Share, link, readonly
+  └── tests/                 # pytest tests (69 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
   └── vendor/keboola/storage-driver-bigquery/  # Reference driver
@@ -40,8 +44,9 @@ connection/                   # Keboola Connection (git submodule/clone)
 3. **DuckDB API Service**: IN PROGRESS
    - FastAPI skeleton: DONE
    - Central metadata database: DONE (ADR-008)
-   - Project CRUD API: DONE (32 tests passing)
-   - Next: Bucket CRUD API
+   - Project CRUD API: DONE (32 tests)
+   - Bucket CRUD API: DONE (37 tests) - includes share/link/readonly
+   - Next: Table CRUD API
 
 4. **PHP Driver Package**: TODO
 
@@ -109,6 +114,16 @@ docker compose up --build
 | `/projects/{id}` | PUT | Update project |
 | `/projects/{id}` | DELETE | Delete project |
 | `/projects/{id}/stats` | GET | Live statistics |
+| `/projects/{id}/buckets` | GET | List buckets |
+| `/projects/{id}/buckets` | POST | Create bucket (CREATE SCHEMA) |
+| `/projects/{id}/buckets/{name}` | GET | Get bucket info |
+| `/projects/{id}/buckets/{name}` | DELETE | Delete bucket (DROP SCHEMA) |
+| `/projects/{id}/buckets/{name}/share` | POST | Share bucket |
+| `/projects/{id}/buckets/{name}/share` | DELETE | Unshare bucket |
+| `/projects/{id}/buckets/{name}/link` | POST | Link bucket (ATTACH + views) |
+| `/projects/{id}/buckets/{name}/link` | DELETE | Unlink bucket |
+| `/projects/{id}/buckets/{name}/grant-readonly` | POST | Grant readonly |
+| `/projects/{id}/buckets/{name}/grant-readonly` | DELETE | Revoke readonly |
 
 ## Local Connection Quick Reference
 
@@ -164,7 +179,8 @@ Login: dev@keboola.com / devdevdev
 
 1. **DuckDB requires `pytz`** for TIMESTAMPTZ columns - add to requirements.txt
 2. **JSON columns** are returned as strings - parse with `json.loads()` when reading
-3. **Singleton pattern in tests** - use `@property` for paths to allow runtime override:
+3. **ATTACH is session-specific** - each connection needs its own ATTACH, so do all operations in one connection
+4. **Singleton pattern in tests** - use `@property` for paths to allow runtime override:
    ```python
    # BAD: path set at init time, can't override in tests
    def __init__(self):

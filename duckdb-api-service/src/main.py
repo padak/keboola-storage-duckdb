@@ -10,7 +10,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, projects
+from src.routers import backend, buckets, bucket_sharing, projects
 from src.database import metadata_db
 
 
@@ -145,6 +145,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(backend.router)
 app.include_router(projects.router)
+app.include_router(buckets.router)
+app.include_router(bucket_sharing.router)
 
 # Root endpoint
 @app.get("/", include_in_schema=False)
