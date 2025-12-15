@@ -1,12 +1,13 @@
 # Local Connection (Storage API) Development Setup
 
-## AKTUALNI STAV (2024-12-14)
+## AKTUALNI STAV (2024-12-15)
 
-**Kde jsme:** Connection bezi lokalne a je funkcni pro zakladni operace.
+**Kde jsme:** Connection bezi lokalne a je funkcni pro zakladni operace s OBEMA backendy (Snowflake i BigQuery).
 
 **Co funguje:**
 - Vytvareni projektu (po uprave retention time - viz nize)
 - Vytvareni tabulek v Snowflake
+- BigQuery backend - pripraveny pro vytvareni BigQuery projektu
 - Upload souboru pres API (nikoliv pres UI - viz "Znama omezeni")
 - Storage API endpointy
 
@@ -26,8 +27,11 @@
 - Elasticsearch indexy vytvoreny
 - OAuth klice vygenerovany
 - S3 File Storage zaregistrovan (bucket: `padak-kbc-services-s3-files-storage-bucket`)
+- GCS File Storage zaregistrovan (bucket: `kbc-padak-files-storage`)
 - Snowflake backend zaregistrovan (host: `vceecnu-bz34672.snowflakecomputing.com`)
+- BigQuery backend zaregistrovan (folder: `393339196668`)
 - Snowflake retention time opraven na 1 den (pro Standard edition)
+- GCP IAM permissions nastaveny pro BigQuery driver
 
 **Jak pristoupit:**
 - URL: https://localhost:8700/admin
@@ -888,5 +892,356 @@ docker compose --env-file=.env.local build apache supervisor mysql-accounts elas
 - [x] Lokalni Connection bezi
 - [x] Snowflake backend funguje
 - [x] S3 file storage funguje (pres API)
+- [x] GCS file storage funguje
+- [x] BigQuery backend funguje
 - [ ] Studovat BigQuery driver jako referenci pro DuckDB
 - [ ] Implementovat DuckDB driver
+
+---
+
+## Co jsme se naucili (Session 2024-12-15) - BigQuery Backend
+
+### BigQuery Driver architektura
+
+1. **Driver bezi jako knihovna v Connection (ne externi service)**
+   - Kod: `vendor/keboola/storage-driver-bigquery/`
+   - Komunikuje pres Protocol Buffers (ne REST)
+   - Implementuje `ClientInterface` z `storage-driver-common`
+
+2. **InitBackendCommand validace**
+   BigQuery driver pri inicializaci kontroluje VSECHNY tyto veci:
+   ```
+   - Folder access (folders.get, folders.list)
+   - Project creation permissions (projects.create)
+   - IAM policy access (projects.getIamPolicy)
+   - Required roles (roles/owner, roles/storage.objectAdmin)
+   - Billing account access (billing.user)
+   ```
+
+3. **Proc BigQuery potrebuje tolik permissions?**
+   - Pri vytvoreni Keboola projektu vytvari NOVY GCP projekt v GCP Folderu
+   - Tento GCP projekt musi byt pripojen k billing accountu
+   - Data jsou izolovana per-projekt (kazdy ma vlastni GCP projekt)
+
+### API Endpointy - spravny format (kompletni prehled)
+
+#### File Storage
+
+| Operace | Endpoint | Metoda | Poznamka |
+|---------|----------|--------|----------|
+| List S3 | `/manage/file-storage-s3` | GET | S pomlckou! |
+| Create S3 | `/manage/file-storage-s3` | POST | |
+| Set S3 default | `/manage/file-storage-s3/{id}/default` | POST | |
+| List GCS | `/manage/file-storage-gcs` | GET | S pomlckou! |
+| Create GCS | `/manage/file-storage-gcs` | POST | |
+
+#### Storage Backend
+
+| Operace | Endpoint | Metoda | Poznamka |
+|---------|----------|--------|----------|
+| List all | `/manage/storage-backend` | GET | |
+| Create Snowflake | `/manage/storage-backend` | POST | Legacy generic |
+| Create BigQuery | `/manage/storage-backend/bigquery` | POST | Dedicated endpoint |
+
+#### Maintainer
+
+| Operace | Endpoint | Metoda | Poznamka |
+|---------|----------|--------|----------|
+| List | `/manage/maintainers` | GET | |
+| Create | `/manage/maintainers` | POST | |
+| Update | `/manage/maintainers/{id}` | PATCH | Pro nastaveni defaultu |
+| Create org | `/manage/maintainers/{id}/organizations` | POST | |
+
+#### Organization
+
+| Operace | Endpoint | Metoda | Poznamka |
+|---------|----------|--------|----------|
+| Get | `/manage/organizations/{id}` | GET | |
+| Update | `/manage/organizations/{id}` | PATCH | Pro zmenu maintainera |
+| Create project | `/manage/organizations/{id}/projects` | POST | |
+
+#### Project
+
+| Operace | Endpoint | Metoda | Poznamka |
+|---------|----------|--------|----------|
+| Get | `/manage/projects/{id}` | GET | |
+| **Assign backend** | `/manage/projects/{id}/storage-backend` | POST | **KRITICKE!** |
+
+> **DULEZITE:** Endpoint `/manage/projects/{id}/storage-backend` je NUTNY pro prirazeni backendu k projektu. Bez nej projekt nepouzije BigQuery!
+
+### Potrebne GCP IAM role pro BigQuery
+
+**Na GCP Folder:**
+- `roles/resourcemanager.folderAdmin`
+- `roles/resourcemanager.projectCreator`
+
+**Na GCP Project:**
+- `roles/owner`
+- `roles/storage.objectAdmin`
+- `roles/bigquery.admin`
+
+**Na Billing Account:**
+- `roles/billing.user`
+
+**Potrebna GCP API:**
+- `cloudbilling.googleapis.com`
+- `cloudresourcemanager.googleapis.com`
+- `bigquery.googleapis.com`
+
+### Implikace pro DuckDB driver
+
+| BigQuery | DuckDB (plan) |
+|----------|---------------|
+| GCP projekt per Keboola projekt | DuckDB soubor per Keboola projekt |
+| Billing account | Neni potreba |
+| GCS pro files | Lokalni filesystem |
+| Externi GCP sluzba | Lokalni Python microservice |
+| Rozsahle IAM permissions | Zadne cloud permissions |
+
+> **Klicovy poznatek:** DuckDB driver bude JEDNODUSSI nez BigQuery, protoze nebude potrebovat zadne cloud permissions. Vsechno bezi lokalne.
+
+### Vytvareni BigQuery projektu - Postup
+
+Pri vytvareni BigQuery projektu jsme zjistili dulezity poznatek:
+
+| Krok | API Endpoint | Poznamka |
+|------|--------------|----------|
+| 1. Vytvorit maintainera | `POST /manage/maintainers` | S `defaultConnectionBigqueryId` |
+| 2. Priradit organizaci | `PATCH /manage/organizations/{id}` | `maintainerId` = BigQuery maintainer |
+| 3. Vytvorit projekt | `POST /manage/organizations/{id}/projects` | Vytvori se s file storage |
+| 4. **Priradit backend** | `POST /manage/projects/{id}/storage-backend` | **KRITICKE!** |
+
+> **POZOR:** Krok 4 je NUTNY! I kdyz je na maintainerovi nastaven `defaultConnectionBigqueryId`, projekt se vytvori s `defaultBackend: "snowflake"`. Teprve po explicitnim prirazeni backendu pres API se projekt prepne na BigQuery.
+
+### Keboola hierarchie (upreseno)
+
+```
+Maintainer (vlastni infrastrukturu)
+    │
+    ├── defaultConnectionSnowflakeId: 1
+    ├── defaultConnectionBigqueryId: 2
+    └── defaultFileStorageId: 2
+         │
+         ▼
+    Organization (skupina projektu)
+         │
+         ▼
+    Project
+         │
+         ├── fileStorage: automaticky z maintainera
+         └── backends: MUSI se priradit explicitne!
+```
+
+---
+
+## Step 12: Register GCS File Storage (Optional)
+
+Pokud chces mit vedle S3 i GCS file storage pro BigQuery projekty.
+
+### Predpoklady
+
+GCS bucket `kbc-padak-files-storage` uz existuje z Terraform provisioningu.
+
+### Registrace GCS File Storage
+
+```bash
+# Extrahuj credentials z Terraform output
+cd connection/provisioning/local
+GCS_CREDS=$(jq -c '.gcsFileStorageKeyJson.value | fromjson' tfoutput.json)
+GCS_BUCKET=$(jq -r '.gcsFileStorageBackendBucket.value' tfoutput.json)
+
+# Registruj GCS file storage
+curl -X POST "http://localhost:8800/manage/file-storage-gcs" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"owner\": \"keboola\",
+    \"region\": \"us-central1\",
+    \"filesBucket\": \"$GCS_BUCKET\",
+    \"gcsCredentials\": $GCS_CREDS
+  }"
+```
+
+---
+
+## Step 13: Register BigQuery Backend (Optional)
+
+Pro vytvareni BigQuery Keboola projektu vedle Snowflake projektu.
+
+### Predpoklady
+
+1. **GCP Folder** - vytvor v GCP Console nebo pres gcloud:
+   ```bash
+   gcloud resource-manager folders create \
+     --display-name="keboola-bigquery-dev" \
+     --organization=YOUR_ORG_ID
+   ```
+
+2. **IAM Permissions** - service account potrebuje tyto role:
+
+   **Na Folder:**
+   ```bash
+   FOLDER_ID=393339196668  # tvoje folder ID
+   SA=padak-dev@padak-storage-v3-dev.iam.gserviceaccount.com
+
+   gcloud resource-manager folders add-iam-policy-binding $FOLDER_ID \
+     --member="serviceAccount:$SA" --role="roles/resourcemanager.folderAdmin"
+
+   gcloud resource-manager folders add-iam-policy-binding $FOLDER_ID \
+     --member="serviceAccount:$SA" --role="roles/resourcemanager.projectCreator"
+   ```
+
+   **Na Project:**
+   ```bash
+   PROJECT=padak-storage-v3-dev
+
+   gcloud projects add-iam-policy-binding $PROJECT \
+     --member="serviceAccount:$SA" --role="roles/owner"
+
+   gcloud projects add-iam-policy-binding $PROJECT \
+     --member="serviceAccount:$SA" --role="roles/storage.objectAdmin"
+
+   gcloud projects add-iam-policy-binding $PROJECT \
+     --member="serviceAccount:$SA" --role="roles/bigquery.admin"
+   ```
+
+   **Na Billing Account:**
+   ```bash
+   # Zjisti billing account ID
+   gcloud billing accounts list
+
+   # Pridej billing.user roli
+   gcloud billing accounts add-iam-policy-binding BILLING_ACCOUNT_ID \
+     --member="serviceAccount:$SA" --role="roles/billing.user"
+   ```
+
+3. **Povol potrebna API:**
+   ```bash
+   gcloud services enable cloudbilling.googleapis.com --project=$PROJECT
+   gcloud services enable cloudresourcemanager.googleapis.com --project=$PROJECT
+   gcloud services enable bigquery.googleapis.com --project=$PROJECT
+   ```
+
+### Registrace BigQuery Backend
+
+```bash
+cd connection/provisioning/local
+GCS_CREDS=$(jq -c '.gcsFileStorageKeyJson.value | fromjson' tfoutput.json)
+FOLDER_ID=393339196668  # tvoje folder ID
+
+curl -X POST "http://localhost:8800/manage/storage-backend/bigquery" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"owner\": \"keboola\",
+    \"technicalOwner\": \"keboola\",
+    \"region\": \"us-central1\",
+    \"folderId\": \"$FOLDER_ID\",
+    \"credentials\": $GCS_CREDS
+  }"
+```
+
+### Overeni
+
+```bash
+# Seznam file storages
+curl -s "http://localhost:8800/manage/file-storage-s3" -H "X-KBC-ManageApiToken: TOKEN"
+curl -s "http://localhost:8800/manage/file-storage-gcs" -H "X-KBC-ManageApiToken: TOKEN"
+
+# Seznam storage backends
+curl -s "http://localhost:8800/manage/storage-backend" -H "X-KBC-ManageApiToken: TOKEN"
+```
+
+### Vytvoreni BigQuery projektu
+
+> **DULEZITE:** Nestaci jen zaregistrovat BigQuery backend. Pro vytvoreni BigQuery projektu je potreba:
+> 1. Vytvorit maintainera s BigQuery jako default
+> 2. Vytvorit organizaci pod timto maintainerem
+> 3. Vytvorit projekt
+> 4. **Explicitne priradit BigQuery backend k projektu**
+
+#### Krok 1: Vytvorit BigQuery maintainera
+
+```bash
+# Vytvor maintainera
+curl -X POST "http://localhost:8800/manage/maintainers" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "BigQuery Services"}'
+
+# Nastav BigQuery a GCS jako defaulty (pouzij ID z predchozich kroku)
+# BigQuery backend ID: 2, GCS file storage ID: 2
+curl -X PATCH "http://localhost:8800/manage/maintainers/2" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"defaultConnectionBigqueryId": 2, "defaultFileStorageId": 2}'
+```
+
+#### Krok 2: Vytvorit nebo priradit organizaci
+
+```bash
+# Vytvor novou organizaci
+curl -X POST "http://localhost:8800/manage/maintainers/2/organizations" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "BigQuery Organization"}'
+
+# Nebo priradit existujici organizaci k BigQuery maintainerovi
+curl -X PATCH "http://localhost:8800/manage/organizations/ORGANIZATION_ID" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"maintainerId": 2}'
+```
+
+#### Krok 3: Vytvorit projekt v organizaci
+
+```bash
+curl -X POST "http://localhost:8800/manage/organizations/ORGANIZATION_ID/projects" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "BigQuery Test Project"}'
+```
+
+#### Krok 4: Priradit BigQuery backend k projektu (KRITICKE!)
+
+> **Bez tohoto kroku projekt nepouzije BigQuery!** Projekt se vytvori s `defaultBackend: "snowflake"` i kdyz je na maintainerovi nastaven BigQuery default.
+
+```bash
+# PROJECT_ID je ID projektu z predchoziho kroku
+curl -X POST "http://localhost:8800/manage/projects/PROJECT_ID/storage-backend" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"storageBackendId": 2}'
+```
+
+Po tomto kroku bude projekt mit:
+- `defaultBackend`: "bigquery"
+- `hasBigquery`: true
+- `assignedBackends`: ["bigquery"]
+- `fileStorageProvider`: "gcp"
+
+#### Overeni projektu
+
+```bash
+curl -s "http://localhost:8800/manage/projects/PROJECT_ID" \
+  -H "X-KBC-ManageApiToken: YOUR_MANAGE_TOKEN" | jq '{
+    id,
+    name,
+    defaultBackend,
+    hasBigquery,
+    assignedBackends,
+    fileStorageProvider
+  }'
+```
+
+Ocekavany vystup:
+```json
+{
+  "id": 4,
+  "name": "BigQuery Test Project",
+  "defaultBackend": "bigquery",
+  "hasBigquery": true,
+  "assignedBackends": ["bigquery"],
+  "fileStorageProvider": "gcp"
+}
+```

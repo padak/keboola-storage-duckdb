@@ -4,6 +4,110 @@
 
 ---
 
+## AKTUALNI STAV (2024-12-15)
+
+### Co je hotovo
+
+| Krok | Status | Poznamka |
+|------|--------|----------|
+| Lokalni Connection setup | DONE | Bezi na https://localhost:8700 |
+| S3 File Storage | DONE | `padak-kbc-services-s3-files-storage-bucket` |
+| GCS File Storage | DONE | `kbc-padak-files-storage` |
+| Snowflake Backend | DONE | `vceecnu-bz34672.snowflakecomputing.com` |
+| BigQuery Backend | DONE | GCP folder `393339196668` |
+| BigQuery driver studium | **IN PROGRESS** | Viz sekce "Poznatky z BigQuery driveru" |
+
+### Kde jsme
+
+```
+[DONE] Rozjet lokalni Connection
+       ↓
+[DONE] Pridat BigQuery backend (referencni implementace)
+       ↓
+[NOW]  Studovat BigQuery driver kod
+       ↓
+[NEXT] Implementovat DuckDB driver
+```
+
+### Dalsi kroky (prioritizovane)
+
+1. **Prostudovat BigQuery driver kod** (`vendor/keboola/storage-driver-bigquery/`)
+   - [ ] Jak funguje `InitBackendHandler`
+   - [ ] Jak funguje `CreateProjectHandler`
+   - [ ] Jak funguje `CreateTableHandler`
+   - [ ] Jak funguje `ImportTableFromFileHandler`
+
+2. **Vytvorit DuckDB API Service skeleton**
+   - [ ] FastAPI app s `/health` endpoint
+   - [ ] Docker + docker-compose
+   - [ ] Zakladni projekt struktura
+
+3. **Implementovat PHP Driver Package**
+   - [ ] `DuckdbDriverClient` (implements `ClientInterface`)
+   - [ ] `HandlerFactory` pro dispatch commands
+   - [ ] Prvni handlery: `InitBackend`, `CreateProject`
+
+---
+
+## Poznatky z BigQuery driveru (2024-12-15)
+
+### Architektura BigQuery driveru
+
+BigQuery driver nam ukazuje jak Keboola drivery funguji:
+
+```
+Connection (PHP)
+    │
+    │ DriverClientFactory::getClientForBackend('bigquery')
+    ▼
+BigQueryDriverClient (implements ClientInterface)
+    │
+    │ runCommand(credentials, command, features, runtimeOptions)
+    │              ↑ Protocol Buffers messages ↑
+    ▼
+HandlerFactory::create($command)
+    │
+    ├── InitBackendCommand → InitBackendHandler
+    ├── CreateProjectCommand → CreateProjectHandler
+    ├── CreateTableCommand → CreateTableHandler
+    └── ... (33+ handlers)
+```
+
+### Klicove poznatky pro DuckDB
+
+| Aspekt | BigQuery | DuckDB (plan) |
+|--------|----------|---------------|
+| **Kde bezi driver** | PHP knihovna v Connection | PHP knihovna + Python microservice |
+| **Storage per projekt** | GCP projekt | DuckDB soubor |
+| **InitBackend validace** | GCP permissions, billing | Jen health check Python API |
+| **Cloud dependencies** | GCS, BigQuery API, IAM | Zadne |
+| **Komplexita** | Vysoka (GCP ekosystem) | Nizka (vse lokalne) |
+
+### BigQuery InitBackendHandler - co kontroluje
+
+```php
+// Z vendor/keboola/storage-driver-bigquery/src/Handler/Backend/Init/InitBackendHandler.php
+// Driver kontroluje:
+1. Folder access (folders.get, folders.list)
+2. Project creation (projects.create)
+3. IAM permissions (projects.getIamPolicy)
+4. Required roles (roles/owner, roles/storage.objectAdmin)
+5. Billing account (billing.user)
+```
+
+**Pro DuckDB:** Nas `InitBackendHandler` bude MNOHEM jednodussi - jen ping Python API.
+
+### Proc Python microservice misto pure PHP?
+
+BigQuery driver ukazuje, ze drivery mohou volat externi sluzby. Pro DuckDB:
+
+1. **DuckDB nema nativni PHP extension** (FFI je komplikovane)
+2. **Python ma oficialni DuckDB binding** (rychle, stabilni)
+3. **FastAPI umoznuje snadny development** (hot reload, typing)
+4. **Oddeleni concerns** - PHP = protokol, Python = storage engine
+
+---
+
 ## KRITICKA KOMPONENTA: Protocol Buffers
 
 > **Toto je zaklad cele integrace driveru do Keboola Connection!**
@@ -1196,13 +1300,50 @@ docs/
 
 ## Dalsi kroky
 
+### Faze A: Studium BigQuery driveru (AKTUALNE)
+
+> **Proc:** BigQuery driver je referencni implementace. Pochopenim jeho kodu
+> ziskame jasny vzor pro DuckDB driver.
+
+1. [ ] Prostudovat `InitBackendHandler` - jak driver validuje backend
+2. [ ] Prostudovat `CreateProjectHandler` - jak se vytvari projekt
+3. [ ] Prostudovat `CreateTableHandler` - jak se vytvari tabulka
+4. [ ] Prostudovat `ImportTableFromFileHandler` - jak funguje import
+5. [ ] Zdokumentovat klicove patterns a helpers
+
+**Kde hledat:**
+```
+vendor/keboola/storage-driver-bigquery/src/
+├── BigQueryDriverClient.php          # Entry point
+├── Handler/
+│   ├── Backend/Init/InitBackendHandler.php
+│   ├── Project/CreateProjectHandler.php
+│   ├── Table/CreateTableHandler.php
+│   └── Table/Import/ImportTableFromFileHandler.php
+└── ...
+```
+
+### Faze B: DuckDB API Service Skeleton
+
 1. [ ] Vytvorit `duckdb-api-service/` strukturu
-2. [ ] Implementovat FastAPI skeleton + healthcheck
-3. [ ] Pridat DuckDB connection manager
-4. [ ] Implementovat write queue (ADR-005)
-5. [ ] Prvni endpointy: /backend/init, /projects
-6. [ ] Docker + docker-compose pro lokalni vyvoj
-7. [ ] Zakladni testy
+2. [ ] Implementovat FastAPI app + `/health` endpoint
+3. [ ] Docker + docker-compose
+4. [ ] Zakladni konfigurace (ENV)
+
+### Faze C: PHP Driver Package
+
+1. [ ] Vytvorit `connection/Package/StorageDriverDuckdb/`
+2. [ ] `DuckdbDriverClient` (implements `ClientInterface`)
+3. [ ] `DuckdbApiClient` (HTTP client)
+4. [ ] `HandlerFactory` pro dispatch
+5. [ ] Prvni handlery: `InitBackend`, `RemoveBackend`
+
+### Faze D: Zakladni funkcionalita
+
+1. [ ] Pridat DuckDB connection manager
+2. [ ] Implementovat write queue (ADR-005)
+3. [ ] Endpointy: `/backend/init`, `/projects`
+4. [ ] E2E test: Connection -> PHP Driver -> Python API -> DuckDB
 
 ---
 
