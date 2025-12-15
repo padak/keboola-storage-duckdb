@@ -64,5 +64,21 @@ Login: dev@keboola.com / devdevdev
 
 ## Documentation
 
-- `docs/local-connection.md` - Complete local setup guide with troubleshooting
+### Main Docs
+- `docs/README.md` - Documentation navigation guide
+- `docs/local-connection.md` - Complete local Connection setup with troubleshooting
 - `docs/duckdb-driver-plan.md` - DuckDB driver architecture and implementation plan
+
+### Research
+- `docs/duckdb-technical-research.md` - DuckDB capabilities analysis
+- `docs/duckdb-keboola-features.md` - Keboola feature mapping to DuckDB
+- `docs/duckdb-api-endpoints.md` - Storage API endpoints to implement
+
+### Architecture Decision Records (ADRs)
+- `docs/adr/001-duckdb-microservice-architecture.md` - Python microservice approach
+- `docs/adr/002-duckdb-file-organization.md` - File/directory structure
+- `docs/adr/003-duckdb-branch-strategy.md` - Dev branches implementation
+- `docs/adr/004-duckdb-snapshots.md` - Table snapshots design
+- `docs/adr/005-duckdb-write-serialization.md` - Concurrent write handling
+- `docs/adr/006-duckdb-on-prem-storage.md` - On-premise file storage
+- `docs/adr/007-duckdb-cow-branching.md` - Copy-on-Write branching strategy
