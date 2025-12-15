@@ -2,11 +2,15 @@
 
 ## Status
 
-Accepted
+**Superseded** by ADR-009 (2024-12-16)
+
+> **Pozor:** Toto rozhodnuti bylo nahrazeno ADR-009: 1 DuckDB soubor per tabulka.
+> Duvod: Lepsi paralelismus pri ETL importech, jednodussi dev branches (CoW),
+> validovano Codex GPT-5 analyzou a ATTACH testy (4096 soucasnych ATTACH OK).
 
 ## Datum
 
-2024-12-11
+2024-12-11 (accepted), 2024-12-16 (superseded)
 
 ## Kontext
 

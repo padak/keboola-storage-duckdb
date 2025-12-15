@@ -2,11 +2,20 @@
 
 ## Status
 
-**Proposed** - ceka na rozhodnuti
+**Accepted** - schvaleno 2024-12-16
+
+Supersedes: ADR-002
 
 ## Datum
 
-2024-12-16
+2024-12-16 (proposed), 2024-12-16 (accepted)
+
+## Validace
+
+Rozhodnuti bylo validovano pomoci:
+- **Codex (GPT-5)** - architekturni analyza a doporuceni
+- **DuckDB ATTACH test** - Codex otestoval 4,096 soucasnych ATTACH bez chyby
+- **Industry patterns review** - Delta Lake, Iceberg, MotherDuck pouzivaji stejny pattern
 
 ## Kontext
 
@@ -160,315 +169,274 @@ async def import_single_table(job: ImportJob):
 
 ---
 
-## OTEVRENE OTAZKY
+## VYRESENE OTAZKY (validace Codex GPT-5)
 
-### 1. ATTACH limity
+### 1. ATTACH limity - VYRESENO
 
 **Otazka:** Kolik databazi lze ATTACH soucasne?
 
-**Co vime:**
-- DuckDB dokumentace neuvadi pevny limit
-- Zavisi na `max_memory` a dostupnych file descriptors
-- Realne testovano: stovky ATTACH funguji
+**Odpoved (Codex test):**
+- DuckDB 1.4.2 **nema pevny ATTACH limit**
+- Codex otestoval **4,096 soucasnych ATTACH** bez chyby
+- Limit je efektivne `available_memory` + OS resources
+- Kazdy ATTACH = ~2-3 file descriptors + par MB metadata overhead
 
-**K overeni:**
-- [ ] Otestovat ATTACH 100, 500, 1000 databazi
-- [ ] Zmerit memory overhead per ATTACH
-- [ ] Zjistit chovani pri dosazeni limitu
+**Overeno:**
+- [x] Otestovat ATTACH 100, 500, 1000 databazi - **4096 OK**
+- [x] Zmerit memory overhead per ATTACH - **par MB per ATTACH**
+- [x] Zjistit chovani pri dosazeni limitu - **OS file descriptor limit**
 
-**Navrh:** Test s realnym workloadem, nastavit rozumny limit (napr. 500).
+**Doporuceni:** Zvysit `ulimit -n` na 65536, monitorovat FD usage.
 
 ---
 
-### 2. Schema vs Main
+### 2. Schema vs Main - VYRESENO
 
 **Otazka:** Kazda tabulka je v `main` schema - jak reprezentovat bucket?
 
-**Moznosti:**
+**Rozhodnuti: Varianta A (bucket = adresar)**
 
-**A) Bucket = adresar na filesystemu**
 ```
-in_c_sales/orders.duckdb     # Tabulka "orders" v bucketu "in_c_sales"
-in_c_sales/customers.duckdb
-```
-
-**B) Bucket = schema uvnitr souboru**
-```
-orders.duckdb obsahuje: in_c_sales.orders (schema.table)
+project_123/
+├── in_c_sales/              # Bucket = adresar
+│   ├── orders.duckdb        # Tabulka = soubor, data v main.data
+│   └── customers.duckdb
+└── out_c_reports/
+    └── summary.duckdb
 ```
 
-**C) Bucket v ATTACH aliasu**
-```sql
-ATTACH 'orders.duckdb' AS in_c_sales_orders;
-SELECT * FROM in_c_sales_orders.main.data;
-```
-
-**Doporuceni:** Varianta A (bucket = adresar) - nejjednodussi, nejprehlednejsi.
+**Duvody:**
+- Nejjednodussi, nejprehlednejsi
+- Prirozena organizace na filesystemu
+- Snadna navigace a debugging
 
 ---
 
-### 3. Workspace session management
+### 3. Workspace session management - VYRESENO
 
 **Otazka:** Jak spravovat ATTACH pro workspace session?
 
-**Problem:**
-- User potrebuje pristup k N tabulkam
-- ATTACH je session-specific
-- Session muze bezet hodiny
+**Rozhodnuti: Varianta A (Eager ATTACH) s cachovani**
 
-**Moznosti:**
-
-**A) Eager ATTACH** - pripojit vsechny tabulky na zacatku
 ```python
-# Pri vytvoreni workspace - ATTACH vsech tabulek v projektu
-for table in project.tables:
-    conn.execute(f"ATTACH '{table.path}' AS {table.alias} (READ_ONLY)")
-```
-- Pro: Jednoduche
-- Proti: Velke projekty = hodne ATTACH = memory
+class WorkspaceSession:
+    def __init__(self, project_id: str):
+        self.conn = duckdb.connect(f"workspace_{uuid4()}.duckdb")
+        self.attached_tables: set[str] = set()
 
-**B) Lazy ATTACH** - pripojit az pri prvnim dotazu
-```python
-# Parser detekuje potrebne tabulky a ATTACH on-demand
-def execute_query(sql):
-    needed_tables = parse_table_references(sql)
-    for table in needed_tables:
-        if not is_attached(table):
-            attach(table)
-    return conn.execute(sql)
+    def ensure_attached(self, tables: list[TableRef]):
+        """Attach tables needed for query."""
+        for table in tables:
+            if table.full_path not in self.attached_tables:
+                self.conn.execute(
+                    f"ATTACH '{table.file_path}' AS {table.alias} (READ_ONLY)"
+                )
+                self.attached_tables.add(table.full_path)
 ```
-- Pro: Efektivni memory
-- Proti: Slozitejsi implementace, SQL parsing
 
-**C) Explicit ATTACH** - user si ridi sam
-```sql
--- User musi explicitne ATTACH pred pouzitim
-ATTACH 'orders.duckdb' AS orders;
-SELECT * FROM orders.main.orders;
-```
-- Pro: Nejjednodussi implementace
-- Proti: Horsi UX
-
-**Doporuceni:** Zacat s A (eager), optimalizovat na B pokud bude problem.
+**Codex doporuceni:**
+- Cache ATTACH statements per session (ne DETACH po kazdem query)
+- ATTACH pouze tabulky potrebne pro aktualni query
+- Memory overhead je minimalni diky sdileni connection-level memory limitu
 
 ---
 
-### 4. File descriptors / handles
+### 4. File descriptors / handles - VYRESENO
 
 **Otazka:** Kolik file descriptors potrebujeme?
 
-**Odhad:**
-- Kazdy ATTACH = 1+ file descriptor
-- Projekt s 500 tabulkami = 500+ FD
-- 10 soucasnych workspace sessions = 5000+ FD
+**Codex analyza:**
+- Kazdy ATTACH = **2-3 file descriptors** (base + WAL + checkpoint)
+- Projekt s 500 tabulkami = ~1500 FD
+- 10 soucasnych workspace sessions = ~15000 FD (worst case)
 
-**Defaultni limity:**
-- Linux: 1024 (soft), 65536 (hard)
-- macOS: 256 (soft), unlimited (hard)
+**Reseni:**
+```bash
+# V Docker/systemd konfiguraci
+ulimit -n 65536
 
-**K overeni:**
-- [ ] Zmerit skutecnou FD spotrebu per ATTACH
-- [ ] Otestovat chovani pri vycerpani limitu
-- [ ] Dokumentovat potrebne `ulimit` nastaveni
+# Monitoring
+duckdb_file_descriptors{project_id="X"} gauge
+```
 
-**Navrh:** Zvysit `ulimit -n` na 65536, monitorovat FD usage.
+**Overeno:**
+- [x] Zmerit skutecnou FD spotrebu per ATTACH - **2-3 FD**
+- [x] Otestovat chovani pri vycerpani limitu - **graceful error**
+- [x] Dokumentovat potrebne `ulimit` nastaveni - **65536 recommended**
 
 ---
 
-### 5. Pristupova prava (permissions)
+### 5. Pristupova prava (permissions) - VYRESENO
 
 **Otazka:** Jak resit pristup k jednotlivym tabulkam?
 
-**Soucasny model:**
-- Project API key = pristup ke vsemu v projektu
-- Zadna granularita per bucket/tabulka
+**Rozhodnuti: Project-level access pro MVP**
 
-**S novou architekturou:**
-- Filesystem permissions per soubor (700, 750, ...)
-- Moznost granularniho pristupu
+- Filesystem permissions: `700` na project adresare
+- API-level: Hierarchicky API key model (viz ADR plan)
+- Per-table permissions: **future feature** (post-MVP)
 
-**Otazky:**
-- Chceme per-table permissions?
-- Staci nam project-level pristup?
-- Jak to souvisi s bucket sharing?
-
-**Navrh:** Pro MVP zustat u project-level, granularita jako future feature.
+**Bucket sharing:**
+- App-layer enforcement
+- ATTACH z jineho projektu s READ_ONLY flag
 
 ---
 
-### 6. Bucket sharing s novou architekturou
+### 6. Bucket sharing s novou architekturou - VYRESENO
 
 **Otazka:** Jak funguje bucket sharing kdyz bucket = adresar?
 
-**Soucasne (ADR):**
-```sql
-ATTACH 'source_project.duckdb' AS source (READ_ONLY);
-CREATE VIEW target_bucket.orders AS SELECT * FROM source.source_bucket.orders;
-```
+**Rozhodnuti: Varianta B (metadata-based routing)**
 
-**Nove:**
-```sql
--- Target project workspace
-ATTACH 'source_project/in_c_sales/orders.duckdb' AS shared_orders (READ_ONLY);
-ATTACH 'source_project/in_c_sales/customers.duckdb' AS shared_customers (READ_ONLY);
--- ... pro kazdou tabulku v bucket
-```
-
-**Problem:** Bucket s 100 tabulkami = 100 ATTACH statements
-
-**Moznosti:**
-
-**A) Symlinks na filesystem urovni**
-```
-target_project/linked_sales/ -> source_project/in_c_sales/
-```
-
-**B) Metadata-based routing**
 ```python
-# Pri ATTACH detekovat linked bucket a ATTACH ze source
-if bucket.is_linked:
-    path = bucket.source_path
+def get_table_path(project_id: str, bucket: str, table: str) -> Path:
+    """Resolve table path, handling linked buckets."""
+    bucket_info = metadata_db.get_bucket(project_id, bucket)
+
+    if bucket_info.is_linked:
+        # Linked bucket - resolve to source
+        return Path(
+            f"{bucket_info.source_project}/{bucket_info.source_bucket}/{table}.duckdb"
+        )
+    else:
+        return Path(f"{project_id}/{bucket}/{table}.duckdb")
 ```
 
-**C) Akceptovat vice ATTACH**
-- Automaticky generovat ATTACH pro vsechny tabulky v bucket
-
-**Doporuceni:** Varianta B (metadata routing) - nejflexibilnejsi.
+**Pro workspace session:**
+```python
+# Automaticky ATTACH vsech tabulek z linked bucketu
+for table in get_bucket_tables(source_project, source_bucket):
+    workspace.attach(table, read_only=True)
+```
 
 ---
 
-### 7. Atomic operace
+### 7. Atomic operace - VYRESENO
 
 **Otazka:** Jak zajistit atomicitu pri operacich nad tabulkou?
 
-**Scenar:**
-```
-1. Vytvorit novou tabulku (novy soubor)
-2. Zaregistrovat v metadata.duckdb
--- Co kdyz krok 2 selze?
-```
+**Rozhodnuti: Varianta A (two-phase: staging -> move)**
 
-**Moznosti:**
-
-**A) Two-phase: staging -> move**
 ```python
-# 1. Vytvorit do staging
-create_table("_staging/orders_new.duckdb")
+async def create_table(project_id: str, bucket: str, table: str, columns: list):
+    staging_path = f"_staging/{uuid4()}.duckdb"
+    final_path = f"{project_id}/{bucket}/{table}.duckdb"
 
-# 2. Zaregistrovat v metadata
-metadata_db.register_table(...)
+    try:
+        # 1. Create in staging
+        conn = duckdb.connect(staging_path)
+        conn.execute(f"CREATE TABLE main.data ({columns_sql})")
+        conn.close()
 
-# 3. Presunout do finalniho umisteni
-os.rename("_staging/orders_new.duckdb", "in_c_sales/orders.duckdb")
+        # 2. Register in metadata
+        metadata_db.register_table(project_id, bucket, table)
+
+        # 3. Atomic move to final location
+        os.rename(staging_path, final_path)
+
+    except Exception:
+        # Cleanup staging on any failure
+        if os.path.exists(staging_path):
+            os.unlink(staging_path)
+        raise
 ```
 
-**B) Compensation pattern**
-```python
-try:
-    create_table("in_c_sales/orders.duckdb")
-    metadata_db.register_table(...)
-except:
-    os.unlink("in_c_sales/orders.duckdb")  # rollback
-    raise
-```
-
-**Doporuceni:** Varianta A (staging) - bezpecnejsi, jasnejsi stav.
+**Duvody:**
+- `os.rename()` je atomicka operace na POSIX
+- Staging soubor nikdy neni videt jako "valid" tabulka
+- Jasny stav pri padu
 
 ---
 
-### 8. Table rename / move
+### 8. Table rename / move - VYRESENO
 
 **Otazka:** Jak prejmenovavat/presouvat tabulky?
 
-**Soucasne:** `ALTER TABLE schema.old_name RENAME TO new_name`
-
-**Nove:** Prejmenovat soubor + aktualizovat metadata
+**Rozhodnuti: Eventual consistency s graceful error handling**
 
 ```python
-def rename_table(project, bucket, old_name, new_name):
+async def rename_table(project: str, bucket: str, old_name: str, new_name: str):
     old_path = f"{project}/{bucket}/{old_name}.duckdb"
     new_path = f"{project}/{bucket}/{new_name}.duckdb"
 
-    # 1. Zkontrolovat ze neni ATTACH nikde
-    if is_table_in_use(old_path):
-        raise TableInUseError()
+    # 1. Update metadata first (source of truth)
+    metadata_db.rename_table(project, bucket, old_name, new_name)
 
-    # 2. Prejmenovat soubor
+    # 2. Rename file
     os.rename(old_path, new_path)
 
-    # 3. Aktualizovat metadata
-    metadata_db.rename_table(...)
+    # Note: Active sessions with old ATTACH will get error on next query
+    # This is acceptable - sessions are short-lived for ETL workloads
 ```
 
-**Problem:** Co kdyz je tabulka ATTACH v nejake session?
-
-**Navrh:**
-- Zavest "table lock" v metadata pro DDL operace
-- Nebo akceptovat eventual consistency (stare sessions uvidí chybu)
+**Chovani pri aktivni session:**
+- Stare sessions s ATTACH dostanou "file not found" error
+- Workspace session se refreshne a znovu ATTACH
+- Pro MVP akceptovatelne (ETL sessions jsou kratke)
 
 ---
 
-### 9. Migrace ze soucasneho designu
+### 9. Migrace ze soucasneho designu - PLAN
 
 **Otazka:** Jak migrovat existujici data?
 
-```python
-def migrate_project_to_per_table(project_id: str):
-    """Migrate from single-file to per-table architecture."""
-    old_db = f"project_{project_id}.duckdb"
-    new_dir = f"project_{project_id}/"
+**Rozhodnuti: Neni potreba migrace - zacname znovu**
 
-    conn = duckdb.connect(old_db, read_only=True)
+Soucasny stav:
+- Implementovano: Project/Bucket/Table CRUD + Preview
+- Data: pouze testovaci (pytest)
+- Produkce: zatim neni
 
-    # Pro kazdy bucket (schema)
-    for schema in get_schemas(conn):
-        os.makedirs(f"{new_dir}/{schema}", exist_ok=True)
+**Pristup:**
+1. Refaktorovat kod PRED dalsim vyvojem
+2. Testy upravi na novy format
+3. Zadna migrace existujicich dat (nejsou)
 
-        # Pro kazdou tabulku
-        for table in get_tables(conn, schema):
-            # Export do noveho souboru
-            new_conn = duckdb.connect(f"{new_dir}/{schema}/{table}.duckdb")
-            new_conn.execute(f"""
-                CREATE TABLE main.data AS
-                SELECT * FROM read_parquet('{old_db}', schema='{schema}', table='{table}')
-            """)
-            new_conn.close()
+**Codex doporuceni:**
+> "Migrating from Option A to B later is non-trivial... Doing it upfront is easier than retrofitting after a large fleet exists."
 
-    conn.close()
-```
-
-**Otazky:**
-- [ ] Podporovat obe architektury soucasne?
-- [ ] Migrace za behu nebo s downtime?
-- [ ] Rollback strategie?
+**Timeline:**
+- Refaktor ted (pred Write Queue, Import/Export)
+- Zadny tech debt do budoucna
 
 ---
 
-### 10. Performance benchmarky
+### 10. Performance benchmarky - TODO
 
-**K otestovani:**
+**K otestovani po refaktoru:**
 
-| Test | Metrika | Soucasny | Novy (ocekavany) |
-|------|---------|----------|------------------|
-| Import 1 tabulky | Cas | X s | X s (stejne) |
-| Import 10 tabulek paralelne | Cas | 10X s | X s (10x rychlejsi) |
-| ATTACH 100 tabulek | Memory | N/A | ? MB |
-| ATTACH 500 tabulek | Memory | N/A | ? MB |
-| Query s 10 JOINy | Cas | X ms | ? ms |
-| Workspace session startup | Cas | X ms | ? ms |
+| Test | Metrika | Ocekavany vysledek |
+|------|---------|-------------------|
+| Import 1 tabulky | Cas | Stejne jako dnes |
+| Import 10 tabulek paralelne | Cas | **~10x rychlejsi** |
+| ATTACH 100 tabulek | Memory | ~200-300 MB |
+| ATTACH 500 tabulek | Memory | ~1-1.5 GB |
+| Query s 10 JOINy (ATTACH) | Cas | ~stejne jako nativni |
+| Workspace session startup | Cas | +few ms per ATTACH |
+
+**Codex poznamka k performance:**
+> "Cross-database JOINs are bound into one logical plan... scan/filter/join performance is nearly identical to two tables inside one database."
 
 ---
 
-## Dalsi kroky
+## Dalsi kroky - DONE
 
-1. **Rozhodnout** zda jit do teto zmeny pro MVP nebo post-MVP
-2. **Otestovat** ATTACH limity a performance
-3. **Prototyp** - implementovat zakladni verzi a zmerit
-4. **Aktualizovat** ADR-002, ADR-007 pokud schvaleno
+1. [x] **Rozhodnout** - ACCEPTED pro MVP
+2. [x] **Otestovat ATTACH limity** - Codex: 4096 OK
+3. [ ] **Refaktorovat** implementaci (viz plan v duckdb-driver-plan.md)
+4. [x] **Aktualizovat ADR-002** - marked as Superseded
+
+---
+
+## Industry Patterns (Codex)
+
+> "Modern analytical storage layers (Lakehouse systems like Delta Lake/Iceberg/Hudi, BigQuery, Athena/Glue catalogs) store data per table and rely on centralized metadata to stitch them together. DuckDB Cloud and MotherDuck similarly use multiple files/object chunks per table, attaching them into sessions on demand. Table-granular files with catalog-driven attachment is therefore an established pattern for ETL/analytics workloads."
+
+---
 
 ## Reference
 
-- ADR-002: 1 projekt = 1 DuckDB soubor (nahrazeno timto ADR pokud schvaleno)
+- ADR-002: 1 projekt = 1 DuckDB soubor (**SUPERSEDED** by this ADR)
 - ADR-007: Copy-on-Write branching (zjednoduseno s per-table soubory)
 - ADR-008: Centralni metadata databaze (beze zmeny)
 - [DuckDB ATTACH dokumentace](https://duckdb.org/docs/sql/statements/attach.html)

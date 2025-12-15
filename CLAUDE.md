@@ -6,6 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Build an **on-premise Keboola with DuckDB backend** - a lightweight, self-contained version of Keboola Storage without cloud dependencies (no Snowflake, no S3).
 
+## Architecture (ADR-009)
+
+**1 DuckDB file per table** - validated by Codex GPT-5 (4096 ATTACH test OK)
+
+```
+/data/duckdb/
+├── project_123/                    # Project = directory
+│   ├── in_c_sales/                 # Bucket = directory
+│   │   ├── orders.duckdb           # Table = file
+│   │   └── customers.duckdb
+│   └── out_c_reports/
+│       └── summary.duckdb
+├── project_123_branch_456/         # Dev branch = directory copy
+└── _staging/                       # Atomic operations staging
+```
+
+**Benefits:**
+- Parallel writes to different tables (no project-level serialization)
+- Natural CoW for dev branches (copy directory)
+- Simplified Write Queue (per-table lock, not per-project queue)
+- Industry standard (Delta Lake, Iceberg, MotherDuck use same pattern)
+
 ## Repository Structure
 
 ```
@@ -13,7 +35,7 @@ docs/                         # Project documentation
   ├── duckdb-driver-plan.md  # MAIN PLAN - implementation phases, decisions, specs
   ├── local-connection.md    # Local Connection setup guide
   ├── bigquery-driver-research.md  # BigQuery driver analysis
-  └── adr/                   # Architecture Decision Records (001-008)
+  └── adr/                   # Architecture Decision Records (001-009)
 
 duckdb-api-service/          # Python FastAPI service for DuckDB operations
   ├── src/
@@ -40,10 +62,11 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Project CRUD | DONE | 32 |
 | Bucket CRUD + Sharing | DONE | 37 |
 | Table CRUD + Preview | DONE | 29 |
+| **ADR-009 Refactor** | **NOW** | - |
+| Write Queue (simplified) | TODO | - |
 | Auth Middleware | TODO | - |
 | Idempotency Middleware | TODO | - |
 | Prometheus /metrics | TODO | - |
-| Write Queue | TODO | - |
 | Table Schema Ops | TODO | - |
 | Import/Export | TODO | - |
 | Files API | TODO | - |
@@ -53,16 +76,17 @@ connection/                   # Keboola Connection (git submodule/clone)
 | PHP Driver | TODO (last) | - |
 
 **Next implementation order:**
-1. Auth middleware (hierarchicky API keys)
-2. Idempotency middleware (X-Idempotency-Key)
-3. Prometheus /metrics endpoint
-4. Write Queue
-5. Table Schema Operations
-6. Files API
-7. Import/Export
-8. Snapshots
-9. Dev Branches (full copy, CoW later)
-10. PHP Driver
+1. **REFACTOR to ADR-009** (per-table files) - CURRENT
+2. Write Queue (simplified with ADR-009)
+3. Auth middleware (hierarchical API keys)
+4. Idempotency middleware (X-Idempotency-Key)
+5. Prometheus /metrics endpoint
+6. Table Schema Operations
+7. Files API
+8. Import/Export
+9. Snapshots
+10. Dev Branches (simplified with ADR-009)
+11. PHP Driver
 
 ## Key Decisions (APPROVED)
 
@@ -70,11 +94,10 @@ All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHOD
 
 | Area | Decision | Value |
 |------|----------|-------|
-| Write Queue | Durability | In-memory (klient ceka, Keboola retry) |
-| Write Queue | Max size | 1000 |
-| Write Queue | Priority | Normal + High |
+| **Architecture** | **File organization** | **1 DuckDB file per table (ADR-009)** |
+| Write Queue | Simplified | Per-table lock (not per-project queue) |
 | Write Queue | Idempotency | X-Idempotency-Key header (TTL 5-10 min) |
-| Import/Export | Staging | Temp schema `_staging_{uuid}` |
+| Import/Export | Staging | `_staging/{uuid}.duckdb` |
 | Import/Export | Dedup | INSERT ON CONFLICT |
 | Import/Export | Incremental | Full MERGE |
 | Files API | Upload | Multipart POST |
@@ -82,11 +105,11 @@ All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHOD
 | Files API | Max size | 10GB |
 | Snapshots | Manual retention | 90 days |
 | Snapshots | Auto retention | 7 days |
-| Snapshots | Auto triggers | **Per-projekt konfigurovatelne**, default pouze DROP TABLE |
+| Snapshots | Auto triggers | Per-projekt konfigurovatelne, default DROP TABLE |
 | Security | Auth model | Hierarchical API keys |
 | Observability | Metrics | Prometheus from start |
 | Schema migrations | Strategy | Verzovani v DB + migrace pri startu |
-| Dev Branches | Strategy | Full copy pro MVP, CoW (ADR-007) post-MVP |
+| Dev Branches | Strategy | Directory copy (simplified by ADR-009) |
 
 ## Authentication Model (APPROVED)
 
@@ -166,13 +189,15 @@ docker compose up --build  # Docker
 
 ## Development Notes
 
-### DuckDB + Python Tips
+### DuckDB + Python Tips (ADR-009)
 
-1. **DuckDB requires `pytz`** for TIMESTAMPTZ columns
-2. **JSON columns** returned as strings - parse with `json.loads()`
-3. **ATTACH is session-specific** - do all ops in one connection
-4. **Use `@property` for paths** in singletons (for test overrides)
-5. **Single-writer limitation** - use write queue for serialization
+1. **Per-table files** - each table is its own `.duckdb` file
+2. **ATTACH for cross-table queries** - workspace sessions ATTACH needed tables
+3. **Parallel writes OK** - different tables can be written simultaneously
+4. **File descriptors** - set `ulimit -n 65536` for large projects
+5. **DuckDB requires `pytz`** for TIMESTAMPTZ columns
+6. **JSON columns** returned as strings - parse with `json.loads()`
+7. **Use `@property` for paths** in singletons (for test overrides)
 
 ### Testing with pytest
 
@@ -183,7 +208,8 @@ docker compose up --build  # Docker
 ## Documentation
 
 - **Main plan**: `docs/duckdb-driver-plan.md` - phases, decisions, detailed specs
-- **ADRs**: `docs/adr/001-008` - architecture decisions
+- **ADRs**: `docs/adr/001-009` - architecture decisions
+- **Key ADR**: `docs/adr/009-duckdb-file-per-table.md` - current architecture
 - **Research**: `docs/duckdb-technical-research.md`, `docs/bigquery-driver-research.md`
 
 ## Local Connection

@@ -49,9 +49,13 @@
        ↓
 [DONE] Pridat Table CRUD + Preview do Python API
        ↓
-[NOW]  Dotahnout Python API (Table Schema, Import/Export, Write Queue, Files, Snapshots)
+[DONE] ADR-009 schvaleno (Codex GPT-5 validace, 4096 ATTACH test OK)
        ↓
-[NEXT] Implementovat PHP Driver Package (az bude Python API kompletni)
+[NOW]  *** REFAKTOR NA ADR-009 (1 soubor per tabulka) ***
+       ↓
+[NEXT] Dotahnout Python API (Write Queue zjednodusena, Import/Export, Files, Snapshots)
+       ↓
+[LAST] Implementovat PHP Driver Package (az bude Python API kompletni)
 ```
 
 ### Stav implementace podle fazi
@@ -61,14 +65,16 @@
 | 1 | Backend + Observability | **90%** | Chybi Prometheus /metrics endpoint |
 | 2 | Projects | **100%** | Hotovo |
 | 3 | Buckets + Sharing | **100%** | Hotovo |
-| 4 | Table CRUD + Preview | **60%** | Chybi Write Queue, Query |
-| 5 | Table Schema + Aliases | **0%** | Specifikace hotova |
-| 6 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
-| 7 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
-| 8 | Dev Branches | **0%** | Specifikace hotova (ADR-007, full copy pro MVP) |
-| 9 | Workspaces | **0%** | Specifikace 30% |
-| 10 | Files (on-prem) | **0%** | Specifikace hotova |
-| 11 | PHP Driver | **0%** | Ceka na Python API |
+| 4 | Table CRUD + Preview | **100%** | Hotovo (98 testu) |
+| **4.5** | **REFAKTOR ADR-009** | **0% - NOW** | **Zmena na per-table soubory** |
+| 5 | Write Queue (zjednodusena) | **0%** | ADR-009 zjednodusuje |
+| 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
+| 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
+| 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
+| 9 | Dev Branches | **0%** | Zjednoduseno s ADR-009 |
+| 10 | Workspaces | **0%** | Specifikace 30% |
+| 11 | Files (on-prem) | **0%** | Specifikace hotova |
+| 12 | PHP Driver | **0%** | Ceka na Python API |
 
 ### Dalsi kroky (prioritizovane)
 
@@ -401,33 +407,54 @@ final class ImportTableFromFileHandler extends BaseHandler
 
 ## Architektonicka rozhodnuti (ADR)
 
-| ADR | Rozhodnuti |
-|-----|------------|
-| 001 | Python microservice misto PHP FFI driver |
-| 002 | 1 projekt = 1 DuckDB soubor, bucket = schema |
-| 003 | Dev branches = separate DuckDB files (nahrazeno ADR-007) |
-| 004 | Snapshoty = Parquet export |
-| 005 | Write serialization = async fronta per projekt |
-| 006 | Storage Files = lokalni filesystem + metadata v DuckDB |
-| 007 | Copy-on-Write branching = lazy table-level copy |
-| 008 | Centralni metadata databaze (`metadata.duckdb`) |
+| ADR | Rozhodnuti | Status |
+|-----|------------|--------|
+| 001 | Python microservice misto PHP FFI driver | Accepted |
+| 002 | ~~1 projekt = 1 DuckDB soubor, bucket = schema~~ | **Superseded by 009** |
+| 003 | Dev branches = separate DuckDB files | Superseded by 007 |
+| 004 | Snapshoty = Parquet export | Accepted |
+| 005 | ~~Write serialization = async fronta per projekt~~ | **Simplified by 009** |
+| 006 | Storage Files = lokalni filesystem + metadata v DuckDB | Accepted |
+| 007 | Copy-on-Write branching = lazy table-level copy | Accepted |
+| 008 | Centralni metadata databaze (`metadata.duckdb`) | Accepted |
+| **009** | **1 DuckDB soubor per tabulka** | **Accepted (2024-12-16)** |
+
+> **ADR-009 Impact:** Architektura zmenena na 1 soubor per tabulka. Paralelni zapis
+> do ruznych tabulek, zjednodusena Write Queue, prirozeny CoW pro dev branches.
+> Validovano Codex GPT-5 (4096 ATTACH test OK).
 
 ---
 
-## Struktura souboru
+## Struktura souboru (ADR-009)
 
 ```
 /data/
 ├── metadata.duckdb                            # Centralni metadata (ADR-008)
 │   ├── projects                               # Registry projektu
+│   ├── tables                                 # Registry tabulek (NOVE)
 │   ├── files                                  # File storage metadata
 │   ├── operations_log                         # Audit trail
 │   └── stats                                  # Agregovane statistiky
 │
-├── duckdb/                                    # Storage Tables
-│   ├── project_123.duckdb                     # Projekt data
-│   ├── project_123_branch_456.duckdb          # Dev branch
-│   └── project_124.duckdb
+├── duckdb/                                    # Storage Tables (ADR-009: per-table)
+│   ├── project_123/                           # Projekt = adresar
+│   │   ├── in_c_sales/                        # Bucket = adresar
+│   │   │   ├── orders.duckdb                  # Tabulka = soubor
+│   │   │   └── customers.duckdb
+│   │   ├── out_c_reports/
+│   │   │   └── summary.duckdb
+│   │   └── _workspaces/                       # Workspace soubory
+│   │       └── ws_789.duckdb
+│   │
+│   ├── project_123_branch_456/                # Dev branch = kopie adresare
+│   │   └── in_c_sales/
+│   │       └── orders.duckdb                  # Jen zmenene tabulky
+│   │
+│   ├── project_124/
+│   │   └── ...
+│   │
+│   └── _staging/                              # Staging pro atomicke operace
+│       └── {uuid}.duckdb
 │
 ├── files/                                     # Storage Files (nahrada S3)
 │   ├── project_123/
@@ -437,10 +464,13 @@ final class ImportTableFromFileHandler extends BaseHandler
 │
 └── snapshots/                                 # Table snapshots
     └── project_123/
-        └── snap_001/
+        └── snap_orders_20241216/
             ├── metadata.json
-            └── *.parquet
+            └── data.parquet
 ```
+
+> **Zmena oproti puvodnimu:** Misto `project_123.duckdb` (jeden soubor) mame
+> `project_123/bucket/table.duckdb` (adresar s per-table soubory).
 
 ---
 
@@ -809,16 +839,90 @@ class DuckdbDriverClient implements ClientInterface
 - [x] Primary key support (enforced)
 - [x] 29 pytest testu
 
-### Faze 5: Write Queue + Query - NOW (specifikace potrebuje doplnit)
-> **Viz sekce "Write Queue - Detailni specifikace" nize**
+### Faze 4.5: REFAKTOR NA ADR-009 - NOW (KRITICKE)
 
-- [ ] Implementovat `src/write_queue.py`
-- [ ] Connection pool per project
+> **Proc ted?** Codex GPT-5 doporucil: "Doing it upfront is easier than retrofitting
+> after a large fleet exists." Refaktor PRED Write Queue a Import/Export.
+
+**Zmeny v architekture:**
+- Projekt = adresar (`project_123/`)
+- Bucket = adresar (`project_123/in_c_sales/`)
+- Tabulka = soubor (`project_123/in_c_sales/orders.duckdb`)
+
+**Komponenty k refaktoru:**
+
+1. **database.py - ProjectDBManager**
+   - [ ] `get_project_path()` - vracet adresar misto souboru
+   - [ ] `get_bucket_path()` - vracet adresar
+   - [ ] `get_table_path()` - vracet cestu k .duckdb souboru
+   - [ ] `create_project()` - vytvorit adresar
+   - [ ] `delete_project()` - smazat adresar rekurzivne
+
+2. **routers/buckets.py**
+   - [ ] `create_bucket()` - vytvorit adresar v projektu
+   - [ ] `delete_bucket()` - smazat adresar s tabulkami
+   - [ ] `list_buckets()` - listovat adresare
+
+3. **routers/tables.py**
+   - [ ] `create_table()` - vytvorit .duckdb soubor v bucket adresari
+   - [ ] `delete_table()` - smazat .duckdb soubor
+   - [ ] `list_tables()` - listovat .duckdb soubory v bucket adresari
+   - [ ] `get_table_info()` - otevrit .duckdb a cist schema
+   - [ ] `preview_table()` - ATTACH + SELECT
+
+4. **routers/bucket_sharing.py**
+   - [ ] Metadata-based routing pro linked buckety
+   - [ ] ATTACH z jineho projektu s READ_ONLY
+
+5. **metadata.duckdb schema**
+   - [ ] Pridat `tables` tabulku (registry per-table souboru)
+   - [ ] Upravit `buckets` - bucket uz neni schema v DB
+
+6. **Testy**
+   - [ ] Upravit fixtures pro novou strukturu
+   - [ ] Prejit vsechny testy na novy format
+   - [ ] Pridat testy pro ATTACH cross-table queries
+
+**Odhad:**
+- Rozsah: ~500-800 radku kodu
+- Cas: 1-2 dny intenzivni prace
+- Testy: Vsechny musi projit po refaktoru
+
+**Benefity po refaktoru:**
+- Write Queue dramaticky zjednodusena (nebo zbytecna)
+- Paralelni import do ruznych tabulek
+- Dev branches = kopie adresare
+- Snapshots = kopie souboru
+
+### Faze 5: Write Queue + Query - AFTER REFACTOR (ZJEDNODUSENO ADR-009)
+
+> **ADR-009 impact:** S per-table soubory je Write Queue **dramaticky zjednodusena**.
+> Kazda tabulka ma vlastni soubor = vlastni writer. Fronta je potreba pouze pro
+> koordinaci zapisu do STEJNE tabulky, ne celeho projektu.
+
+**Zjednodusena architektura:**
+```
+BEFORE (ADR-002):                    AFTER (ADR-009):
+┌─────────────────────┐              ┌─────────────────────┐
+│ Import orders ──────┼──► QUEUE    │ Import orders ──────┼──► orders.duckdb
+│ Import customers ───┤     │        │ Import customers ───┼──► customers.duckdb
+│ Import products ────┘     ▼        │ Import products ────┼──► products.duckdb
+│                      project.duckdb│                     │
+│ (SERIALIZOVANO!)                   │ (PARALELNE!)        │
+└─────────────────────┘              └─────────────────────┘
+```
+
+**Co je jeste potreba:**
+- [ ] Per-table locking (simple mutex per file)
+- [ ] Connection per table (ne per project)
 - [ ] POST /projects/{id}/query endpoint
-- [ ] Read vs Write detection
-- [ ] Queue metrics (depth, wait_time)
 - [ ] Graceful shutdown
 - [ ] Pytest testy
+
+**Co uz NENI potreba:**
+- ~~Project-level write queue~~ (zbytecna)
+- ~~Priority queue~~ (zbytecna pro per-table)
+- ~~Complex queue management~~ (simple lock staci)
 
 ### Faze 6: Table Schema Operations
 - [ ] POST /tables/{table}/columns (AddColumn)
@@ -1994,6 +2098,7 @@ Headers:
 
 | Verze | Datum | Zmeny |
 |-------|-------|-------|
+| **v6.0** | **2024-12-16** | **ADR-009 ACCEPTED:** Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. Write Queue zjednodusena. Pridan refaktoring plan (Faze 4.5). |
 | v5.3 | 2024-12-16 | GPT-5 second opinion review - 11 bodu zpracovano, akceptovana rizika rozsirena, auto-snapshot policy zmenena na per-projekt konfigurovatelnou |
 | v5.2 | 2024-12-15 | Pridana sekce "Akceptovana rizika MVP" - cross-DB konzistence, idempotency middleware |
 | v5.1 | 2024-12-15 | Schvalena vsechna rozhodnuti, hierarchicky auth model, Full MERGE, auto-snapshots |
