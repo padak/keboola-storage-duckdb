@@ -3,9 +3,10 @@
 import time
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.database import metadata_db, project_db_manager
+from src.dependencies import require_project_access
 from src.models.responses import (
     BucketLinkRequest,
     BucketResponse,
@@ -39,6 +40,7 @@ def _get_request_id() -> str | None:
     },
     summary="Share bucket with another project",
     description="Share a bucket with another project (records the share, actual linking done on target side).",
+    dependencies=[Depends(require_project_access)],
 )
 async def share_bucket(
     project_id: str,
@@ -200,6 +202,7 @@ async def share_bucket(
     },
     summary="Unshare bucket",
     description="Remove bucket share with a specific project.",
+    dependencies=[Depends(require_project_access)],
 )
 async def unshare_bucket(
     project_id: str,
@@ -307,6 +310,7 @@ async def unshare_bucket(
     },
     summary="Link bucket from another project",
     description="Link (attach) a bucket from another project using DuckDB ATTACH and views.",
+    dependencies=[Depends(require_project_access)],
 )
 async def link_bucket(
     project_id: str,
@@ -509,6 +513,7 @@ async def link_bucket(
     },
     summary="Unlink bucket",
     description="Unlink a previously linked bucket (drop views and detach database).",
+    dependencies=[Depends(require_project_access)],
 )
 async def unlink_bucket(
     project_id: str,
@@ -649,6 +654,7 @@ async def unlink_bucket(
     },
     summary="Grant readonly access",
     description="Grant readonly access to a bucket (metadata operation for DuckDB).",
+    dependencies=[Depends(require_project_access)],
 )
 async def grant_readonly_access(
     project_id: str,
@@ -731,6 +737,7 @@ async def grant_readonly_access(
     },
     summary="Revoke readonly access",
     description="Revoke readonly access to a bucket (metadata operation for DuckDB).",
+    dependencies=[Depends(require_project_access)],
 )
 async def revoke_readonly_access(
     project_id: str,

@@ -1,15 +1,19 @@
 """Project management endpoints: CRUD operations for Keboola projects."""
 
 import time
+import uuid
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.auth import generate_api_key, get_key_prefix, hash_key
 from src.database import metadata_db, project_db_manager
+from src.dependencies import require_admin, require_project_access
 from src.models.responses import (
     ErrorResponse,
     ProjectCreate,
+    ProjectCreateResponse,
     ProjectListResponse,
     ProjectResponse,
     ProjectStatsResponse,
@@ -31,7 +35,7 @@ def _get_request_id() -> str | None:
 
 @router.post(
     "",
-    response_model=ProjectResponse,
+    response_model=ProjectCreateResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ErrorResponse},
@@ -40,8 +44,9 @@ def _get_request_id() -> str | None:
     },
     summary="Create project",
     description="Create a new Keboola project with its DuckDB database file.",
+    dependencies=[Depends(require_admin)],
 )
-async def create_project(project: ProjectCreate) -> ProjectResponse:
+async def create_project(project: ProjectCreate) -> ProjectCreateResponse:
     """
     Create a new project.
 
@@ -97,6 +102,21 @@ async def create_project(project: ProjectCreate) -> ProjectResponse:
             size_bytes=size_bytes,
         )
 
+        # 4. Generate API key for this project
+        api_key = generate_api_key(project.id)
+        key_id = str(uuid.uuid4())
+        key_hash = hash_key(api_key)
+        key_prefix = get_key_prefix(api_key)
+
+        # Store key in database
+        metadata_db.create_api_key(
+            key_id=key_id,
+            project_id=project.id,
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            description="Project admin key (created with project)",
+        )
+
         duration_ms = int((time.time() - start_time) * 1000)
 
         # Log operation
@@ -118,7 +138,7 @@ async def create_project(project: ProjectCreate) -> ProjectResponse:
             duration_ms=duration_ms,
         )
 
-        return ProjectResponse(**project_data)
+        return ProjectCreateResponse(**project_data, api_key=api_key)
 
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -165,6 +185,7 @@ async def create_project(project: ProjectCreate) -> ProjectResponse:
     responses={500: {"model": ErrorResponse}},
     summary="List projects",
     description="List all projects with optional filtering by status.",
+    dependencies=[Depends(require_admin)],
 )
 async def list_projects(
     status_filter: str | None = Query(
@@ -211,6 +232,7 @@ async def list_projects(
     responses={404: {"model": ErrorResponse}},
     summary="Get project",
     description="Get information about a specific project.",
+    dependencies=[Depends(require_project_access)],
 )
 async def get_project(project_id: str) -> ProjectResponse:
     """Get project by ID."""
@@ -236,6 +258,7 @@ async def get_project(project_id: str) -> ProjectResponse:
     responses={404: {"model": ErrorResponse}},
     summary="Get project statistics",
     description="Get live statistics from the project's DuckDB database.",
+    dependencies=[Depends(require_project_access)],
 )
 async def get_project_stats(project_id: str) -> ProjectStatsResponse:
     """
@@ -294,6 +317,7 @@ async def get_project_stats(project_id: str) -> ProjectStatsResponse:
     responses={404: {"model": ErrorResponse}},
     summary="Update project",
     description="Update project metadata (name, settings).",
+    dependencies=[Depends(require_project_access)],
 )
 async def update_project(project_id: str, update: ProjectUpdate) -> ProjectResponse:
     """Update project metadata."""
@@ -346,6 +370,7 @@ async def update_project(project_id: str, update: ProjectUpdate) -> ProjectRespo
     responses={404: {"model": ErrorResponse}},
     summary="Delete project",
     description="Delete a project and its DuckDB database file.",
+    dependencies=[Depends(require_project_access)],
 )
 async def delete_project(project_id: str) -> None:
     """
@@ -373,10 +398,13 @@ async def delete_project(project_id: str) -> None:
         )
 
     try:
-        # 1. Delete DB file
+        # 1. Delete API keys for this project
+        metadata_db.delete_project_api_keys(project_id)
+
+        # 2. Delete DB file
         project_db_manager.delete_project_db(project_id)
 
-        # 2. Mark as deleted in metadata (soft delete)
+        # 3. Mark as deleted in metadata (soft delete)
         metadata_db.delete_project(project_id)
 
         duration_ms = int((time.time() - start_time) * 1000)

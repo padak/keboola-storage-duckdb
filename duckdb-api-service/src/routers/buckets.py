@@ -4,9 +4,10 @@ import time
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.database import metadata_db, project_db_manager
+from src.dependencies import require_project_access
 from src.models.responses import (
     BucketCreate,
     BucketListResponse,
@@ -39,6 +40,7 @@ def _get_request_id() -> str | None:
     },
     summary="Create bucket",
     description="Create a new bucket (schema) in a project's DuckDB database.",
+    dependencies=[Depends(require_project_access)],
 )
 async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse:
     """
@@ -183,6 +185,7 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
     },
     summary="List buckets",
     description="List all buckets in a project.",
+    dependencies=[Depends(require_project_access)],
 )
 async def list_buckets(project_id: str) -> BucketListResponse:
     """List all buckets in a project."""
@@ -243,6 +246,7 @@ async def list_buckets(project_id: str) -> BucketListResponse:
     responses={404: {"model": ErrorResponse}},
     summary="Get bucket",
     description="Get information about a specific bucket.",
+    dependencies=[Depends(require_project_access)],
 )
 async def get_bucket(project_id: str, bucket_name: str) -> BucketResponse:
     """Get bucket information."""
@@ -292,6 +296,7 @@ async def get_bucket(project_id: str, bucket_name: str) -> BucketResponse:
     responses={404: {"model": ErrorResponse}},
     summary="Delete bucket",
     description="Delete a bucket and optionally all its tables.",
+    dependencies=[Depends(require_project_access)],
 )
 async def delete_bucket(
     project_id: str,

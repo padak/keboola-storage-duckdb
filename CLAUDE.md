@@ -42,13 +42,15 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── main.py            # FastAPI app
   │   ├── config.py          # Settings (pydantic-settings)
   │   ├── database.py        # MetadataDB + ProjectDBManager
+  │   ├── auth.py            # API key generation/verification
+  │   ├── dependencies.py    # FastAPI auth dependencies
   │   └── routers/           # API endpoints
   │       ├── backend.py     # Health, init, remove
   │       ├── projects.py    # Project CRUD
   │       ├── buckets.py     # Bucket CRUD
   │       ├── bucket_sharing.py  # Share, link, readonly
   │       └── tables.py      # Table CRUD + preview
-  └── tests/                 # pytest tests (98 tests)
+  └── tests/                 # pytest tests (144 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -59,12 +61,12 @@ connection/                   # Keboola Connection (git submodule/clone)
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| Project CRUD | DONE | 32 |
-| Bucket CRUD + Sharing | DONE | 37 |
-| Table CRUD + Preview | DONE | 29 |
-| **ADR-009 Refactor** | **DONE** | 98 |
-| Write Queue (simplified) | **NOW** | - |
-| Auth Middleware | TODO | - |
+| Project CRUD | DONE | 20 |
+| Bucket CRUD + Sharing | DONE | 40 |
+| Table CRUD + Preview | DONE | 34 |
+| ADR-009 Refactor | DONE | - |
+| Write Queue (mutex) | DONE | 14 |
+| **Auth Middleware** | **DONE** | 25 |
 | Idempotency Middleware | TODO | - |
 | Prometheus /metrics | TODO | - |
 | Table Schema Ops | TODO | - |
@@ -75,11 +77,13 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
+**Total: 144 tests PASS**
+
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
-2. **Write Queue (simplified with ADR-009)** - CURRENT
-3. Auth middleware (hierarchical API keys)
-4. Idempotency middleware (X-Idempotency-Key)
+2. ~~Write Queue (simplified with ADR-009)~~ - DONE
+3. ~~Auth middleware (hierarchical API keys)~~ - DONE
+4. **Idempotency middleware (X-Idempotency-Key)** - NEXT
 5. Prometheus /metrics endpoint
 6. Table Schema Operations
 7. Files API
@@ -111,19 +115,21 @@ All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHOD
 | Schema migrations | Strategy | Verzovani v DB + migrace pri startu |
 | Dev Branches | Strategy | Directory copy (simplified by ADR-009) |
 
-## Authentication Model (APPROVED)
+## Authentication Model (IMPLEMENTED)
 
 ```
-ADMIN_API_KEY (ENV)
-└── Can: POST /projects
+ADMIN_API_KEY (ENV variable)
+├── Endpoints: POST /projects, GET /projects, /backend/*
+└── Has access to ALL projects
 
-PROJECT_ADMIN_API_KEY (returned on project creation)
-└── Can: Everything in project
-└── Format: proj_{project_id}_admin_{random}
+PROJECT_ADMIN_API_KEY (returned on POST /projects - SAVE IT!)
+├── Format: proj_{project_id}_admin_{random_hex_32}
+├── Storage: SHA256 hash in metadata.duckdb
+└── Endpoints: Everything in /projects/{id}/*
 
-PROJECT_API_KEY (future extension)
-└── Can: Everything in project (full access for now)
-└── Foundation for future RBAC
+Usage:
+  curl -H "Authorization: Bearer $ADMIN_API_KEY" ...
+  curl -H "Authorization: Bearer $PROJECT_KEY" ...
 ```
 
 ## Auto-Snapshot Triggers (Per-projekt konfigurovatelne)
@@ -204,6 +210,20 @@ docker compose up --build  # Docker
 - Use `monkeypatch.setattr(settings, "path", new_path)`
 - Fixtures in `conftest.py` create temp directories
 - Each test gets isolated metadata.duckdb
+
+### Phase Completion Checklist
+
+When completing an implementation phase, ALWAYS:
+
+1. **Write tests** - both functional (API works) and structural (architecture verified)
+2. **Run all tests** - ensure 100% pass rate
+3. **Update docs/duckdb-driver-plan.md**:
+   - Change status to DONE
+   - Update test counts
+   - Add changelog entry with new version
+4. **Update CLAUDE.md** - refresh test counts and status table
+
+This ensures each phase has documented progress and test coverage for future sessions.
 
 ## Documentation
 

@@ -1,10 +1,11 @@
 """Backend management endpoints: health check and initialization."""
 
 import structlog
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pathlib import Path
 
 from src.config import settings
+from src.dependencies import require_admin
 from src.models.responses import HealthResponse, InitBackendResponse, ErrorResponse
 
 logger = structlog.get_logger()
@@ -86,6 +87,7 @@ async def health_check() -> HealthResponse:
     responses={500: {"model": ErrorResponse}},
     summary="Initialize backend",
     description="Initialize the DuckDB storage backend. Creates required directories if needed.",
+    dependencies=[Depends(require_admin)],
 )
 async def init_backend() -> InitBackendResponse:
     """
@@ -151,6 +153,7 @@ async def init_backend() -> InitBackendResponse:
     response_model=InitBackendResponse,
     summary="Remove backend",
     description="Remove/cleanup the storage backend. Currently a no-op (same as BigQuery).",
+    dependencies=[Depends(require_admin)],
 )
 async def remove_backend() -> InitBackendResponse:
     """

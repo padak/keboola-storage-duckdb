@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     debug: bool = True  # Default to True for development
 
+    # Authentication
+    admin_api_key: str | None = None
+
     # Server settings
     host: str = "0.0.0.0"
     port: int = 8000

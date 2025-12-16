@@ -4,9 +4,10 @@ import time
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.database import metadata_db, project_db_manager
+from src.dependencies import require_project_access
 from src.models.responses import (
     ColumnInfo,
     ErrorResponse,
@@ -90,6 +91,7 @@ def _validate_project_and_bucket(
     },
     summary="Create table",
     description="Create a new table in a bucket.",
+    dependencies=[Depends(require_project_access)],
 )
 async def create_table(
     project_id: str, bucket_name: str, table: TableCreate
@@ -269,6 +271,7 @@ async def create_table(
     },
     summary="List tables",
     description="List all tables in a bucket.",
+    dependencies=[Depends(require_project_access)],
 )
 async def list_tables(project_id: str, bucket_name: str) -> TableListResponse:
     """List all tables in a bucket."""
@@ -327,6 +330,7 @@ async def list_tables(project_id: str, bucket_name: str) -> TableListResponse:
     responses={404: {"model": ErrorResponse}},
     summary="Get table (ObjectInfo)",
     description="Get detailed information about a table.",
+    dependencies=[Depends(require_project_access)],
 )
 async def get_table(
     project_id: str, bucket_name: str, table_name: str
@@ -383,6 +387,7 @@ async def get_table(
     responses={404: {"model": ErrorResponse}},
     summary="Delete table",
     description="Delete a table from a bucket.",
+    dependencies=[Depends(require_project_access)],
 )
 async def delete_table(
     project_id: str,
@@ -513,6 +518,7 @@ async def delete_table(
     responses={404: {"model": ErrorResponse}},
     summary="Preview table",
     description="Get a preview of table data (first N rows).",
+    dependencies=[Depends(require_project_access)],
 )
 async def preview_table(
     project_id: str,

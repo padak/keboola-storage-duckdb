@@ -1,4 +1,4 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v6.1
+# DuckDB Storage Backend pro Keboola - Implementacni plan v6.4
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
 
@@ -21,13 +21,14 @@
 | Project CRUD API | **DONE** | 32 testu PASS |
 | Bucket CRUD API | **DONE** | 37 testu PASS (vcetne sharing/linking) |
 | Table CRUD + Preview | **DONE** | 29 testu PASS |
-| **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 98 testu PASS** |
+| **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 106 testu PASS** |
+| **Write Queue (mutex)** | **DONE** | **TableLockManager, 120 testu PASS** |
+| **Auth Middleware** | **DONE** | **Hierarchicky API key model, 144 testu PASS** |
+| Idempotency Middleware | TODO | X-Idempotency-Key header |
 | Table Schema Operations | TODO | Specifikace hotova |
 | Import/Export API | TODO | Specifikace hotova |
-| Write Queue | TODO | Specifikace hotova (in-memory + idempotency) |
 | Files API (on-prem) | TODO | Specifikace hotova |
 | Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
-| Auth Middleware | TODO | Hierarchicky API key model |
 | Prometheus /metrics | TODO | Metriky pro observability |
 | Schema Migrations | TODO | Verzovani v DB + migrace pri startu |
 
@@ -52,9 +53,13 @@
        ↓
 [DONE] ADR-009 schvaleno (Codex GPT-5 validace, 4096 ATTACH test OK)
        ↓
-[DONE] REFAKTOR NA ADR-009 (1 soubor per tabulka) - 98 testu PASS
+[DONE] REFAKTOR NA ADR-009 (1 soubor per tabulka) - 106 testu PASS
        ↓
-[NOW]  *** Write Queue (zjednodusena) + Auth Middleware ***
+[DONE] Write Queue (TableLockManager) - 120 testu PASS
+       ↓
+[DONE] Auth Middleware - 144 testu PASS
+       ↓
+[NOW]  *** Idempotency Middleware ***
        ↓
 [NEXT] Dotahnout Python API (Import/Export, Files, Snapshots)
        ↓
@@ -68,9 +73,10 @@
 | 1 | Backend + Observability | **90%** | Chybi Prometheus /metrics endpoint |
 | 2 | Projects | **100%** | Hotovo |
 | 3 | Buckets + Sharing | **100%** | Hotovo |
-| 4 | Table CRUD + Preview | **100%** | Hotovo (98 testu) |
+| 4 | Table CRUD + Preview | **100%** | Hotovo |
 | **4.5** | **REFAKTOR ADR-009** | **100% - DONE** | **Per-table soubory implementovany** |
-| 5 | Write Queue (zjednodusena) | **0% - NOW** | ADR-009 zjednodusuje |
+| **5** | **Write Queue (mutex)** | **100% - DONE** | **TableLockManager implementovan** |
+| **5.5** | **Auth Middleware** | **100% - DONE** | **144 testu PASS** |
 | 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
 | 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
 | 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
@@ -91,15 +97,22 @@
    - [x] Bucket sharing/linking
    - [x] Table preview s primary keys
 
-3. **Dospecifikovat a implementovat Write Queue** (NOW - P0)
+3. ~~**Dospecifikovat a implementovat Write Queue**~~ - DONE
    - [x] Rozhodnout: Queue durability → **In-memory** (klient ceka, retry na strane Keboola)
    - [x] Rozhodnout: Batch vs single statement → **Single SQL**
    - [x] Rozhodnout: Idempotency → **X-Idempotency-Key header** (TTL 5-10 min)
-   - [ ] Implementovat `src/write_queue.py`
-   - [ ] Implementovat idempotency middleware
+   - [x] TableLockManager implementovan (per-table mutex)
+   - [ ] Implementovat idempotency middleware (NEXT)
    - [ ] Endpoint `POST /projects/{id}/query`
    - [ ] Connection pooling per project
    - [ ] Metriky: queue_depth, wait_time
+
+3.5. ~~**Auth Middleware**~~ - DONE (144 testu PASS)
+   - [x] `ADMIN_API_KEY` v ENV pro vytvareni projektu
+   - [x] `PROJECT_ADMIN_API_KEY` generovan pri POST /projects
+   - [x] SHA256 hash klicu v metadata.duckdb
+   - [x] FastAPI dependencies: `require_admin`, `require_project_access`
+   - [x] Vsechny endpointy chraneny (krome /health)
 
 4. **Implementovat Table Schema Operations** (P1)
    - [ ] `POST /tables/{table}/columns` - AddColumn
@@ -594,11 +607,12 @@ duckdb-api-service/
 │       └── responses.py           # Pydantic models [DONE]
 └── tests/
     ├── conftest.py                # Pytest fixtures [DONE]
-    ├── test_backend.py            # 11 testu [DONE]
-    ├── test_projects.py           # 21 testu [DONE]
-    ├── test_buckets.py            # 37 testu [DONE]
-    ├── test_bucket_sharing.py     # [DONE]
-    └── test_tables.py             # 29 testu [DONE]
+    ├── test_backend.py            # 12 testu [DONE]
+    ├── test_projects.py           # 20 testu [DONE]
+    ├── test_buckets.py            # 20 testu [DONE] (vcetne ADR-009 filesystem)
+    ├── test_bucket_sharing.py     # 20 testu [DONE]
+    ├── test_tables.py             # 34 testu [DONE] (vcetne ADR-009 filesystem)
+    └── test_table_lock.py         # 14 testu [DONE] (TableLockManager + concurrency)
 ```
 
 **Chybejici komponenty (potreba implementovat):**
@@ -2101,7 +2115,9 @@ Headers:
 
 | Verze | Datum | Zmeny |
 |-------|-------|-------|
-| **v6.1** | **2024-12-16** | **ADR-009 IMPLEMENTED:** Refaktor dokoncen - projekt=adresar, bucket=adresar, tabulka=soubor. Vsech 98 testu PASS. Bucket sharing zjednoduseno. |
+| **v6.3** | **2024-12-16** | **Write Queue (mutex):** TableLockManager implementovan - per-table locking pro single-writer. Keboola serializuje na sve strane, mutex je safety net. 120 testu PASS (14 novych). |
+| v6.2 | 2024-12-16 | ADR-009 testy: Pridany explicitni testy pro filesystem strukturu (bucket=adresar, tabulka=.duckdb soubor). Celkem 106 testu PASS. |
+| v6.1 | 2024-12-16 | ADR-009 IMPLEMENTED: Refaktor dokoncen - projekt=adresar, bucket=adresar, tabulka=soubor. Bucket sharing zjednoduseno. |
 | v6.0 | 2024-12-16 | ADR-009 ACCEPTED: Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. Write Queue zjednodusena. Pridan refaktoring plan (Faze 4.5). |
 | v5.3 | 2024-12-16 | GPT-5 second opinion review - 11 bodu zpracovano, akceptovana rizika rozsirena, auto-snapshot policy zmenena na per-projekt konfigurovatelnou |
 | v5.2 | 2024-12-15 | Pridana sekce "Akceptovana rizika MVP" - cross-DB konzistence, idempotency middleware |

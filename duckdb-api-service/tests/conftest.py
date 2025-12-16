@@ -9,6 +9,9 @@ import shutil
 from src.main import app
 from src.config import settings
 
+# Test admin API key for authentication
+TEST_ADMIN_API_KEY = "test_admin_key_for_testing"
+
 
 @pytest.fixture
 def client():
@@ -38,6 +41,7 @@ def temp_data_dir(monkeypatch):
         monkeypatch.setattr(settings, "files_dir", files_dir)
         monkeypatch.setattr(settings, "snapshots_dir", snapshots_dir)
         monkeypatch.setattr(settings, "metadata_db_path", metadata_db_path)
+        monkeypatch.setattr(settings, "admin_api_key", TEST_ADMIN_API_KEY)
 
         yield {
             "data_dir": data_dir,
@@ -63,12 +67,18 @@ def missing_data_dir(monkeypatch):
 
 
 @pytest.fixture
-def initialized_backend(client, temp_data_dir):
+def admin_headers():
+    """Return headers with admin API key for authentication."""
+    return {"Authorization": f"Bearer {TEST_ADMIN_API_KEY}"}
+
+
+@pytest.fixture
+def initialized_backend(client, temp_data_dir, admin_headers):
     """Initialize backend and metadata DB before tests."""
     from src import database
     database.metadata_db.initialize()
 
-    response = client.post("/backend/init")
+    response = client.post("/backend/init", headers=admin_headers)
     assert response.status_code == 200
 
     yield temp_data_dir

@@ -74,6 +74,24 @@ class ProjectResponse(BaseModel):
     settings: dict[str, Any] | None = Field(default=None, description="Project settings")
 
 
+class ProjectCreateResponse(BaseModel):
+    """Response for project creation - includes API key (shown only once)."""
+
+    id: str = Field(description="Project identifier")
+    name: str | None = Field(default=None, description="Project name")
+    db_path: str = Field(description="Relative path to DuckDB file")
+    created_at: str | None = Field(default=None, description="Creation timestamp (ISO)")
+    updated_at: str | None = Field(default=None, description="Last update timestamp (ISO)")
+    size_bytes: int = Field(default=0, description="Database file size in bytes")
+    table_count: int = Field(default=0, description="Number of tables")
+    bucket_count: int = Field(default=0, description="Number of buckets/schemas")
+    status: str = Field(default="active", description="Project status")
+    settings: dict[str, Any] | None = Field(default=None, description="Project settings")
+    api_key: str = Field(
+        description="Project admin API key - SAVE THIS! It will not be shown again."
+    )
+
+
 class ProjectListResponse(BaseModel):
     """List of projects response."""
 

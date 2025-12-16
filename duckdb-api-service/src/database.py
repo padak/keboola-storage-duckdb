@@ -28,6 +28,120 @@ TABLE_DATA_NAME = "data"
 
 
 # ============================================
+# Table Lock Manager (Write Queue simplified)
+# ============================================
+
+
+class TableLockManager:
+    """
+    Per-table write lock manager for DuckDB single-writer constraint.
+
+    ADR-009 + Write Queue simplification:
+    - Each table has its own .duckdb file
+    - Each file can have only one writer at a time
+    - This manager provides per-table mutex locks
+
+    Note: Keboola Storage API serializes writes on their side,
+    so this is a safety net for standalone usage or future extensions.
+    """
+
+    def __init__(self):
+        self._locks: dict[str, threading.Lock] = {}
+        self._manager_lock = threading.Lock()  # Protects _locks dict
+
+    def _get_table_key(
+        self, project_id: str, bucket_name: str, table_name: str
+    ) -> str:
+        """Generate unique key for a table."""
+        return f"{project_id}/{bucket_name}/{table_name}"
+
+    def get_lock(
+        self, project_id: str, bucket_name: str, table_name: str
+    ) -> threading.Lock:
+        """
+        Get or create a lock for a specific table.
+
+        Thread-safe: uses internal lock to protect the locks dictionary.
+        """
+        key = self._get_table_key(project_id, bucket_name, table_name)
+
+        with self._manager_lock:
+            if key not in self._locks:
+                self._locks[key] = threading.Lock()
+                logger.debug("table_lock_created", table_key=key)
+            return self._locks[key]
+
+    @contextmanager
+    def acquire(
+        self, project_id: str, bucket_name: str, table_name: str
+    ) -> Generator[None, None, None]:
+        """
+        Context manager to acquire a table lock.
+
+        Usage:
+            with table_lock_manager.acquire("proj", "bucket", "table"):
+                # exclusive access to table
+                pass
+        """
+        lock = self.get_lock(project_id, bucket_name, table_name)
+        key = self._get_table_key(project_id, bucket_name, table_name)
+
+        logger.debug("table_lock_acquiring", table_key=key)
+        lock.acquire()
+        logger.debug("table_lock_acquired", table_key=key)
+
+        try:
+            yield
+        finally:
+            lock.release()
+            logger.debug("table_lock_released", table_key=key)
+
+    def remove_lock(
+        self, project_id: str, bucket_name: str, table_name: str
+    ) -> None:
+        """
+        Remove a lock for a deleted table.
+
+        Called when a table is deleted to clean up resources.
+        """
+        key = self._get_table_key(project_id, bucket_name, table_name)
+
+        with self._manager_lock:
+            if key in self._locks:
+                del self._locks[key]
+                logger.debug("table_lock_removed", table_key=key)
+
+    def clear_project_locks(self, project_id: str) -> None:
+        """
+        Remove all locks for a project.
+
+        Called when a project is deleted.
+        """
+        prefix = f"{project_id}/"
+
+        with self._manager_lock:
+            keys_to_remove = [k for k in self._locks if k.startswith(prefix)]
+            for key in keys_to_remove:
+                del self._locks[key]
+
+            if keys_to_remove:
+                logger.debug(
+                    "project_locks_cleared",
+                    project_id=project_id,
+                    count=len(keys_to_remove),
+                )
+
+    @property
+    def active_locks_count(self) -> int:
+        """Return count of tracked locks (for monitoring/debugging)."""
+        return len(self._locks)
+
+
+# Global singleton instance
+table_lock_manager = TableLockManager()
+
+
+# ============================================
 # Schema definitions
 # ============================================
 
@@ -126,6 +240,21 @@ CREATE TABLE IF NOT EXISTS bucket_links (
 
 CREATE INDEX IF NOT EXISTS idx_links_target ON bucket_links(target_project_id);
 CREATE INDEX IF NOT EXISTS idx_links_source ON bucket_links(source_project_id, source_bucket_name);
+
+-- API keys for authentication
+CREATE TABLE IF NOT EXISTS api_keys (
+    id VARCHAR PRIMARY KEY,
+    project_id VARCHAR NOT NULL,
+    key_hash VARCHAR(64) NOT NULL,
+    key_prefix VARCHAR(30) NOT NULL,
+    description VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    last_used_at TIMESTAMPTZ,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
 """
 
 
@@ -553,6 +682,192 @@ class MetadataDB:
         )
         return True
 
+    # ========================================
+    # API key operations
+    # ========================================
+
+    def create_api_key(
+        self,
+        key_id: str,
+        project_id: str,
+        key_hash: str,
+        key_prefix: str,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Store a new API key (hashed).
+
+        Args:
+            key_id: Unique identifier for the API key
+            project_id: The project this key belongs to
+            key_hash: SHA-256 hash of the full API key
+            key_prefix: First ~30 chars of the API key for lookup
+            description: Optional description
+
+        Returns:
+            Dict with the created API key record (without the hash)
+        """
+        now = datetime.now(timezone.utc)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO api_keys (id, project_id, key_hash, key_prefix, description, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [key_id, project_id, key_hash, key_prefix, description, now],
+            )
+            conn.commit()
+
+            result = conn.execute(
+                "SELECT id, project_id, key_prefix, description, created_at, last_used_at FROM api_keys WHERE id = ?",
+                [key_id],
+            ).fetchone()
+
+        logger.info(
+            "api_key_created",
+            key_id=key_id,
+            project_id=project_id,
+            key_prefix=key_prefix[:10] + "...",
+        )
+
+        if result:
+            return {
+                "id": result[0],
+                "project_id": result[1],
+                "key_prefix": result[2],
+                "description": result[3],
+                "created_at": result[4].isoformat() if result[4] else None,
+                "last_used_at": result[5].isoformat() if result[5] else None,
+            }
+
+        return {}
+
+    def get_api_key_by_prefix(self, key_prefix: str) -> dict[str, Any] | None:
+        """
+        Find API key by prefix for validation.
+
+        Args:
+            key_prefix: The key prefix to search for
+
+        Returns:
+            Dict with id, project_id, key_hash, key_prefix, etc. or None if not found
+        """
+        result = self.execute_one(
+            """
+            SELECT id, project_id, key_hash, key_prefix, description, created_at, last_used_at
+            FROM api_keys
+            WHERE key_prefix = ?
+            """,
+            [key_prefix],
+        )
+
+        if result:
+            return {
+                "id": result[0],
+                "project_id": result[1],
+                "key_hash": result[2],
+                "key_prefix": result[3],
+                "description": result[4],
+                "created_at": result[5].isoformat() if result[5] else None,
+                "last_used_at": result[6].isoformat() if result[6] else None,
+            }
+
+        return None
+
+    def get_api_keys_for_project(self, project_id: str) -> list[dict[str, Any]]:
+        """
+        List all API keys for a project.
+
+        Args:
+            project_id: The project ID
+
+        Returns:
+            List of API key dicts (without key_hash for security)
+        """
+        results = self.execute(
+            """
+            SELECT id, project_id, key_prefix, description, created_at, last_used_at
+            FROM api_keys
+            WHERE project_id = ?
+            ORDER BY created_at DESC
+            """,
+            [project_id],
+        )
+
+        return [
+            {
+                "id": row[0],
+                "project_id": row[1],
+                "key_prefix": row[2],
+                "description": row[3],
+                "created_at": row[4].isoformat() if row[4] else None,
+                "last_used_at": row[5].isoformat() if row[5] else None,
+            }
+            for row in results
+        ]
+
+    def update_api_key_last_used(self, key_id: str) -> None:
+        """
+        Update last_used_at timestamp for an API key.
+
+        Args:
+            key_id: The API key ID
+        """
+        now = datetime.now(timezone.utc)
+        self.execute_write(
+            "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+            [now, key_id],
+        )
+
+        logger.debug("api_key_last_used_updated", key_id=key_id)
+
+    def delete_api_key(self, key_id: str) -> bool:
+        """
+        Delete an API key.
+
+        Args:
+            key_id: The API key ID
+
+        Returns:
+            True if key was deleted
+        """
+        self.execute_write("DELETE FROM api_keys WHERE id = ?", [key_id])
+
+        logger.info("api_key_deleted", key_id=key_id)
+        return True
+
+    def delete_project_api_keys(self, project_id: str) -> int:
+        """
+        Delete all API keys for a project.
+
+        Args:
+            project_id: The project ID
+
+        Returns:
+            Count of deleted API keys
+        """
+        # Get count before deletion
+        count_result = self.execute_one(
+            "SELECT COUNT(*) FROM api_keys WHERE project_id = ?",
+            [project_id],
+        )
+        count = count_result[0] if count_result else 0
+
+        # Delete all keys
+        self.execute_write(
+            "DELETE FROM api_keys WHERE project_id = ?",
+            [project_id],
+        )
+
+        logger.info(
+            "project_api_keys_deleted",
+            project_id=project_id,
+            count=count,
+        )
+
+        return count
+
 
 class ProjectDBManager:
     """
@@ -629,10 +944,14 @@ class ProjectDBManager:
         Delete a project's directory and all its contents.
 
         ADR-009: Recursively deletes project directory with all buckets and tables.
+        Also cleans up all table locks for the project.
         """
         project_dir = self.get_project_dir(project_id)
 
         if project_dir.exists():
+            # Clean up all locks for this project
+            table_lock_manager.clear_project_locks(project_id)
+
             shutil.rmtree(project_dir)
             logger.info(
                 "project_dir_deleted", project_id=project_id, path=str(project_dir)
@@ -677,6 +996,9 @@ class ProjectDBManager:
 
         ADR-009: Each table has its own .duckdb file.
 
+        Write operations (read_only=False) acquire a table lock to ensure
+        single-writer access. Read operations can run concurrently.
+
         Usage:
             with project_db.table_connection("123", "bucket", "table") as conn:
                 conn.execute("SELECT * FROM main.data")
@@ -688,11 +1010,21 @@ class ProjectDBManager:
                 f"Table not found: {project_id}/{bucket_name}/{table_name}"
             )
 
-        conn = duckdb.connect(str(table_path), read_only=read_only)
-        try:
-            yield conn
-        finally:
-            conn.close()
+        # For write operations, acquire table lock
+        if not read_only:
+            with table_lock_manager.acquire(project_id, bucket_name, table_name):
+                conn = duckdb.connect(str(table_path), read_only=False)
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+        else:
+            # Read operations don't need lock
+            conn = duckdb.connect(str(table_path), read_only=True)
+            try:
+                yield conn
+            finally:
+                conn.close()
 
     @contextmanager
     def connection(
@@ -806,13 +1138,19 @@ class ProjectDBManager:
             )
             return True  # Idempotent - already deleted
 
+        # Get list of tables before deletion (for lock cleanup)
+        table_files = list(bucket_dir.glob("*.duckdb"))
+
         # Check if bucket has tables and cascade is False
-        if not cascade:
-            table_files = list(bucket_dir.glob("*.duckdb"))
-            if table_files:
-                raise ValueError(
-                    f"Bucket {bucket_name} is not empty and cascade=False"
-                )
+        if not cascade and table_files:
+            raise ValueError(
+                f"Bucket {bucket_name} is not empty and cascade=False"
+            )
+
+        # Clean up locks for all tables in bucket
+        for table_file in table_files:
+            table_name = table_file.stem  # Remove .duckdb extension
+            table_lock_manager.remove_lock(project_id, bucket_name, table_name)
 
         # Delete bucket directory and all contents
         shutil.rmtree(bucket_dir)
@@ -822,6 +1160,7 @@ class ProjectDBManager:
             project_id=project_id,
             bucket_name=bucket_name,
             cascade=cascade,
+            tables_removed=len(table_files),
         )
         return True
 
@@ -1156,6 +1495,8 @@ class ProjectDBManager:
 
         if table_path.exists():
             table_path.unlink()
+            # Clean up lock for deleted table
+            table_lock_manager.remove_lock(project_id, bucket_name, table_name)
             logger.info(
                 "table_deleted",
                 project_id=project_id,
