@@ -11,9 +11,11 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, buckets, bucket_sharing, projects, tables
+from src.routers import backend, buckets, bucket_sharing, projects, tables, metrics
 from src.database import metadata_db
 from src.middleware.idempotency import IdempotencyMiddleware
+from src.middleware.metrics import MetricsMiddleware, normalize_path
+from src.metrics import ERROR_COUNT
 
 
 def setup_logging() -> None:
@@ -127,6 +129,9 @@ app.add_middleware(
 # Add idempotency middleware (for POST/PUT/DELETE deduplication)
 app.add_middleware(IdempotencyMiddleware)
 
+# Add metrics middleware (for Prometheus request instrumentation)
+app.add_middleware(MetricsMiddleware)
+
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
@@ -162,11 +167,21 @@ async def request_logging_middleware(request: Request, call_next):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Handle uncaught exceptions."""
+    # Normalize path for metrics
+    endpoint = normalize_path(request.url.path)
+
+    # Determine error type
+    error_type = type(exc).__name__
+
+    # Record error metric
+    ERROR_COUNT.labels(type=error_type, endpoint=endpoint).inc()
+
     logger.error(
         "unhandled_exception",
         method=request.method,
         path=request.url.path,
         error=str(exc),
+        error_type=error_type,
         exc_info=True,
     )
     return JSONResponse(
@@ -184,6 +199,7 @@ app.include_router(projects.router)
 app.include_router(buckets.router)
 app.include_router(bucket_sharing.router)
 app.include_router(tables.router)
+app.include_router(metrics.router)
 
 # Root endpoint
 @app.get("/", include_in_schema=False)

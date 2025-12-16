@@ -44,13 +44,18 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── database.py        # MetadataDB + ProjectDBManager
   │   ├── auth.py            # API key generation/verification
   │   ├── dependencies.py    # FastAPI auth dependencies
+  │   ├── metrics.py         # Prometheus metrics definitions
+  │   ├── middleware/        # HTTP middleware
+  │   │   ├── idempotency.py # X-Idempotency-Key handling
+  │   │   └── metrics.py     # Request instrumentation
   │   └── routers/           # API endpoints
   │       ├── backend.py     # Health, init, remove
   │       ├── projects.py    # Project CRUD
   │       ├── buckets.py     # Bucket CRUD
   │       ├── bucket_sharing.py  # Share, link, readonly
-  │       └── tables.py      # Table CRUD + preview
-  └── tests/                 # pytest tests (165 tests)
+  │       ├── tables.py      # Table CRUD + preview
+  │       └── metrics.py     # Prometheus /metrics endpoint
+  └── tests/                 # pytest tests (180 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -67,8 +72,8 @@ connection/                   # Keboola Connection (git submodule/clone)
 | ADR-009 Refactor | DONE | - |
 | Write Queue (mutex) | DONE | 14 |
 | Auth Middleware | DONE | 25 |
-| **Idempotency Middleware** | **DONE** | 21 |
-| Prometheus /metrics | TODO | - |
+| Idempotency Middleware | DONE | 21 |
+| **Prometheus /metrics** | **DONE** | 15 |
 | Table Schema Ops | TODO | - |
 | Import/Export | TODO | - |
 | Files API | TODO | - |
@@ -77,15 +82,15 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 165 tests PASS**
+**Total: 180 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
 2. ~~Write Queue (simplified with ADR-009)~~ - DONE
 3. ~~Auth middleware (hierarchical API keys)~~ - DONE
 4. ~~Idempotency middleware (X-Idempotency-Key)~~ - DONE
-5. **Prometheus /metrics endpoint** - NEXT
-6. Table Schema Operations
+5. ~~Prometheus /metrics endpoint~~ - DONE
+6. **Table Schema Operations** - NEXT
 7. Files API
 8. Import/Export
 9. Snapshots
@@ -169,6 +174,7 @@ docker compose up --build  # Docker
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
+| `/metrics` | GET | Prometheus metrics (no auth) |
 | `/backend/init` | POST | Initialize storage |
 | `/backend/remove` | POST | Remove backend |
 | `/projects` | GET/POST | List/Create projects |
@@ -185,7 +191,6 @@ docker compose up --build  # Docker
 
 ### TODO Endpoints (see duckdb-driver-plan.md for specs)
 
-- `/metrics` - Prometheus metrics
 - `POST /projects/{id}/query` - Write Queue
 - Table schema: columns, primary-key, rows
 - Import/Export: import/file, import/table, export

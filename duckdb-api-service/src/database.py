@@ -11,6 +11,7 @@ Each table's data is stored in `main.data` table within its own .duckdb file.
 
 import shutil
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,17 +84,39 @@ class TableLockManager:
                 # exclusive access to table
                 pass
         """
+        # Import here to avoid circular import at module load time
+        from src.metrics import (
+            TABLE_LOCK_ACQUISITIONS,
+            TABLE_LOCK_WAIT_TIME,
+            TABLE_LOCKS_ACTIVE,
+        )
+
         lock = self.get_lock(project_id, bucket_name, table_name)
         key = self._get_table_key(project_id, bucket_name, table_name)
 
         logger.debug("table_lock_acquiring", table_key=key)
+
+        # Measure wait time
+        wait_start = time.perf_counter()
         lock.acquire()
-        logger.debug("table_lock_acquired", table_key=key)
+        wait_duration = time.perf_counter() - wait_start
+
+        # Record metrics
+        TABLE_LOCK_WAIT_TIME.observe(wait_duration)
+        TABLE_LOCK_ACQUISITIONS.labels(
+            project_id=project_id,
+            bucket=bucket_name,
+            table=table_name
+        ).inc()
+        TABLE_LOCKS_ACTIVE.inc()
+
+        logger.debug("table_lock_acquired", table_key=key, wait_ms=wait_duration * 1000)
 
         try:
             yield
         finally:
             lock.release()
+            TABLE_LOCKS_ACTIVE.dec()
             logger.debug("table_lock_released", table_key=key)
 
     def remove_lock(
@@ -516,6 +539,60 @@ class MetadataDB:
             "status": row[8],
             "settings": settings,
         }
+
+    # ========================================
+    # Count methods (for metrics)
+    # ========================================
+
+    def count_projects(self) -> int:
+        """Count total number of projects (excluding deleted)."""
+        result = self.execute_one(
+            "SELECT COUNT(*) FROM projects WHERE status != 'deleted'"
+        )
+        return result[0] if result else 0
+
+    def count_buckets(self) -> int:
+        """
+        Count total number of buckets across all projects.
+
+        ADR-009: Counts directories in all project directories.
+        """
+        from src.config import settings
+
+        total = 0
+        duckdb_dir = settings.duckdb_dir
+        if duckdb_dir.exists():
+            for project_dir in duckdb_dir.iterdir():
+                if project_dir.is_dir() and project_dir.name.startswith("project_"):
+                    for item in project_dir.iterdir():
+                        if item.is_dir() and not item.name.startswith("_"):
+                            total += 1
+        return total
+
+    def count_tables(self) -> int:
+        """
+        Count total number of tables across all projects.
+
+        ADR-009: Counts .duckdb files in all bucket directories.
+        """
+        from src.config import settings
+
+        total = 0
+        duckdb_dir = settings.duckdb_dir
+        if duckdb_dir.exists():
+            for project_dir in duckdb_dir.iterdir():
+                if project_dir.is_dir() and project_dir.name.startswith("project_"):
+                    for bucket_dir in project_dir.iterdir():
+                        if bucket_dir.is_dir() and not bucket_dir.name.startswith("_"):
+                            total += len(list(bucket_dir.glob("*.duckdb")))
+        return total
+
+    def count_idempotency_keys(self) -> int:
+        """Count current (non-expired) idempotency keys."""
+        result = self.execute_one(
+            "SELECT COUNT(*) FROM idempotency_keys WHERE expires_at > now()"
+        )
+        return result[0] if result else 0
 
     # ========================================
     # Operations logging

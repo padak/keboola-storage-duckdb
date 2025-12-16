@@ -15,6 +15,11 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.database import metadata_db
+from src.metrics import (
+    IDEMPOTENCY_CACHE_HITS,
+    IDEMPOTENCY_CACHE_MISSES,
+    IDEMPOTENCY_CACHE_CONFLICTS,
+)
 
 logger = structlog.get_logger()
 
@@ -79,6 +84,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     cached_method=cached["method"],
                     request_method=method,
                 )
+                IDEMPOTENCY_CACHE_CONFLICTS.inc()
                 return JSONResponse(
                     status_code=409,
                     content={
@@ -94,6 +100,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     cached_endpoint=cached["endpoint"],
                     request_endpoint=endpoint,
                 )
+                IDEMPOTENCY_CACHE_CONFLICTS.inc()
                 return JSONResponse(
                     status_code=409,
                     content={
@@ -108,6 +115,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                     "idempotency_body_mismatch",
                     key=idempotency_key[:20] + "...",
                 )
+                IDEMPOTENCY_CACHE_CONFLICTS.inc()
                 return JSONResponse(
                     status_code=409,
                     content={
@@ -123,6 +131,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 endpoint=endpoint,
                 method=method,
             )
+            IDEMPOTENCY_CACHE_HITS.inc()
 
             return JSONResponse(
                 status_code=cached["response_status"],
@@ -131,6 +140,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             )
 
         # No cached response - execute the request
+        # Record cache miss
+        IDEMPOTENCY_CACHE_MISSES.inc()
+
         # We need to restore the body for the actual handler
         # Create a new request with the body we already read
 

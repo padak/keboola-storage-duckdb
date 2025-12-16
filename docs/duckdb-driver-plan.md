@@ -25,11 +25,11 @@
 | **Write Queue (mutex)** | **DONE** | **TableLockManager, 120 testu PASS** |
 | **Auth Middleware** | **DONE** | **Hierarchicky API key model, 144 testu PASS** |
 | **Idempotency Middleware** | **DONE** | **X-Idempotency-Key header, 165 testu PASS** |
+| **Prometheus /metrics** | **DONE** | **180 testu PASS** |
 | Table Schema Operations | TODO | Specifikace hotova |
 | Import/Export API | TODO | Specifikace hotova |
 | Files API (on-prem) | TODO | Specifikace hotova |
 | Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
-| Prometheus /metrics | TODO | Metriky pro observability |
 | Schema Migrations | TODO | Verzovani v DB + migrace pri startu |
 
 ### Kde jsme
@@ -61,7 +61,9 @@
        ↓
 [DONE] Idempotency Middleware - 165 testu PASS
        ↓
-[NOW]  *** Prometheus /metrics endpoint ***
+[DONE] Prometheus /metrics endpoint - 180 testu PASS
+       ↓
+[NOW]  *** Table Schema Operations ***
        ↓
 [NEXT] Dotahnout Python API (Import/Export, Files, Snapshots)
        ↓
@@ -72,7 +74,7 @@
 
 | Faze | Popis | Stav | Pokryti |
 |------|-------|------|---------|
-| 1 | Backend + Observability | **90%** | Chybi Prometheus /metrics endpoint |
+| 1 | Backend + Observability | **100% - DONE** | **Prometheus /metrics implementovan** |
 | 2 | Projects | **100%** | Hotovo |
 | 3 | Buckets + Sharing | **100%** | Hotovo |
 | 4 | Table CRUD + Preview | **100%** | Hotovo |
@@ -80,6 +82,7 @@
 | **5** | **Write Queue (mutex)** | **100% - DONE** | **TableLockManager implementovan** |
 | **5.5** | **Auth Middleware** | **100% - DONE** | **144 testu PASS** |
 | **5.6** | **Idempotency Middleware** | **100% - DONE** | **165 testu PASS** |
+| **5.7** | **Prometheus /metrics** | **100% - DONE** | **180 testu PASS** |
 | 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
 | 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
 | 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
