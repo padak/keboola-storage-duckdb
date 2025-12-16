@@ -16,6 +16,7 @@ from src.models.responses import (
     TablePreviewResponse,
     TableResponse,
 )
+from src.snapshot_config import should_create_snapshot
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="", tags=["tables"])
@@ -433,6 +434,34 @@ async def delete_table(
         )
 
     try:
+        # Check if auto-snapshot should be created before deletion
+        if should_create_snapshot(project_id, bucket_name, table_name, "drop_table"):
+            from src.routers.snapshots import create_snapshot_internal
+
+            try:
+                await create_snapshot_internal(
+                    project_id=project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                    snapshot_type="auto_predrop",
+                    description=f"Auto-backup before DROP TABLE {bucket_name}.{table_name}",
+                )
+                logger.info(
+                    "auto_snapshot_created_before_drop",
+                    project_id=project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                )
+            except Exception as e:
+                # Log but don't fail the delete if snapshot fails
+                logger.warning(
+                    "auto_snapshot_failed_before_drop",
+                    project_id=project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                    error=str(e),
+                )
+
         # Delete table
         project_db_manager.delete_table(
             project_id=project_id,

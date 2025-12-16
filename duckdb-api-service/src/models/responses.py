@@ -473,3 +473,141 @@ class ExportResponse(BaseModel):
     file_path: str = Field(description="Relative path to exported file")
     rows_exported: int = Field(description="Number of rows exported")
     file_size_bytes: int = Field(description="Size of exported file")
+
+
+# ============================================
+# Snapshot Settings API models (ADR-004)
+# ============================================
+
+
+class SnapshotTriggersConfig(BaseModel):
+    """Configuration for automatic snapshot triggers."""
+
+    model_config = {"extra": "forbid"}
+
+    drop_table: bool | None = Field(
+        default=None, description="Create snapshot before DROP TABLE"
+    )
+    truncate_table: bool | None = Field(
+        default=None, description="Create snapshot before TRUNCATE"
+    )
+    delete_all_rows: bool | None = Field(
+        default=None, description="Create snapshot before DELETE FROM without WHERE"
+    )
+    drop_column: bool | None = Field(
+        default=None, description="Create snapshot before ALTER TABLE DROP COLUMN"
+    )
+
+
+class SnapshotRetentionConfig(BaseModel):
+    """Configuration for snapshot retention periods."""
+
+    manual_days: int | None = Field(
+        default=None, description="Retention period for manual snapshots (days)"
+    )
+    auto_days: int | None = Field(
+        default=None, description="Retention period for automatic snapshots (days)"
+    )
+
+
+class SnapshotConfigRequest(BaseModel):
+    """Request to update snapshot configuration."""
+
+    auto_snapshot_triggers: SnapshotTriggersConfig | None = Field(
+        default=None, description="Automatic snapshot trigger settings"
+    )
+    retention: SnapshotRetentionConfig | None = Field(
+        default=None, description="Retention period settings"
+    )
+    enabled: bool | None = Field(
+        default=None, description="Master switch to enable/disable snapshots"
+    )
+
+
+class SnapshotSettingsResponse(BaseModel):
+    """Response with effective snapshot settings and inheritance info."""
+
+    effective_config: dict[str, Any] = Field(
+        description="Merged configuration after applying inheritance"
+    )
+    inheritance: dict[str, str] = Field(
+        description="Source of each config value ('system', 'project', 'bucket', 'table')"
+    )
+    local_config: dict[str, Any] | None = Field(
+        default=None, description="Only the locally set configuration (without inheritance)"
+    )
+
+
+# ============================================
+# Snapshots API models (ADR-004)
+# ============================================
+
+
+class SnapshotCreateRequest(BaseModel):
+    """Request to create a manual snapshot."""
+
+    bucket: str = Field(description="Bucket containing the table")
+    table: str = Field(description="Table name to snapshot")
+    description: str | None = Field(default=None, description="Optional description")
+
+
+class SnapshotRestoreRequest(BaseModel):
+    """Request to restore from a snapshot."""
+
+    target_bucket: str | None = Field(
+        default=None, description="Target bucket (defaults to original)"
+    )
+    target_table: str | None = Field(
+        default=None, description="Target table name (defaults to original)"
+    )
+
+
+class SnapshotSchemaColumn(BaseModel):
+    """Column definition in snapshot schema."""
+
+    name: str = Field(description="Column name")
+    type: str = Field(description="Column data type")
+    nullable: bool = Field(description="Whether column allows NULL")
+
+
+class SnapshotResponse(BaseModel):
+    """Snapshot information response."""
+
+    id: str = Field(description="Snapshot identifier")
+    project_id: str = Field(description="Project ID")
+    bucket_name: str = Field(description="Source bucket name")
+    table_name: str = Field(description="Source table name")
+    snapshot_type: str = Field(description="'manual' or 'auto_*' type")
+    row_count: int = Field(description="Number of rows in snapshot")
+    size_bytes: int = Field(description="Parquet file size")
+    created_at: str = Field(description="Creation timestamp (ISO)")
+    created_by: str | None = Field(default=None, description="Who created the snapshot")
+    expires_at: str | None = Field(default=None, description="Expiration timestamp (ISO)")
+    description: str | None = Field(default=None, description="Optional description")
+
+
+class SnapshotDetailResponse(SnapshotResponse):
+    """Detailed snapshot information including schema."""
+
+    schema_columns: list[SnapshotSchemaColumn] = Field(
+        description="Column definitions for restore"
+    )
+    primary_key: list[str] = Field(
+        default_factory=list, description="Primary key columns"
+    )
+
+
+class SnapshotListResponse(BaseModel):
+    """List of snapshots response."""
+
+    snapshots: list[SnapshotResponse] = Field(description="List of snapshots")
+    total: int = Field(description="Total number of snapshots matching filter")
+
+
+class SnapshotRestoreResponse(BaseModel):
+    """Response for snapshot restore operation."""
+
+    restored_to: dict[str, str] = Field(
+        description="Target location {'bucket': '...', 'table': '...'}"
+    )
+    row_count: int = Field(description="Number of rows restored")

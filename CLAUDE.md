@@ -45,6 +45,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── auth.py            # API key generation/verification
   │   ├── dependencies.py    # FastAPI auth dependencies
   │   ├── metrics.py         # Prometheus metrics definitions
+  │   ├── snapshot_config.py # Hierarchical snapshot config resolver
   │   ├── middleware/        # HTTP middleware
   │   │   ├── idempotency.py # X-Idempotency-Key handling
   │   │   └── metrics.py     # Request instrumentation
@@ -57,8 +58,10 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── table_schema.py    # Column/PK operations
   │       ├── table_import.py    # Import/Export
   │       ├── files.py       # Files API (on-prem S3)
+  │       ├── snapshots.py       # Snapshots CRUD + restore
+  │       ├── snapshot_settings.py  # Hierarchical snapshot config
   │       └── metrics.py     # Prometheus /metrics endpoint
-  └── tests/                 # pytest tests (250 tests)
+  └── tests/                 # pytest tests (284 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -81,12 +84,12 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Table Schema Ops | DONE | 33 |
 | Files API | DONE | 20 |
 | Import/Export | DONE | 17 |
-| **Snapshots** | **TODO - NEXT** | - |
+| **Snapshots + Settings** | **DONE** | 34 |
 | Dev Branches | TODO | - |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 250 tests PASS**
+**Total: 284 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -97,8 +100,8 @@ connection/                   # Keboola Connection (git submodule/clone)
 6. ~~Table Schema Operations~~ - DONE
 7. ~~Files API~~ - DONE
 8. ~~Import/Export~~ - DONE
-9. **Snapshots** - NEXT
-10. Dev Branches (simplified with ADR-009)
+9. ~~Snapshots + Settings~~ - DONE
+10. **Dev Branches** - NEXT
 11. PHP Driver
 
 ## Key Decisions (APPROVED)
@@ -141,14 +144,20 @@ Usage:
   curl -H "Authorization: Bearer $PROJECT_KEY" ...
 ```
 
-## Auto-Snapshot Triggers (Per-projekt konfigurovatelne)
+## Auto-Snapshot Triggers (Hierarchical Configuration - ADR-004)
 
-**Default (konzervativni):** Snapshot pouze pred `DROP TABLE`
+**Inheritance:** System -> Project -> Bucket -> Table (each level can override)
 
-**Volitelne (lze zapnout per-projekt):**
-- TRUNCATE TABLE
-- DELETE FROM (with or without WHERE)
-- ALTER TABLE DROP COLUMN
+**System Defaults (konzervativni):**
+- `enabled`: true
+- `drop_table`: true (creates snapshot before DROP TABLE)
+- `truncate_table`: false
+- `delete_all_rows`: false
+- `drop_column`: false
+- `retention.manual_days`: 90
+- `retention.auto_days`: 7
+
+**Configuration API:** `GET/PUT/DELETE /settings/snapshots` at each level
 
 ## Accepted Risks for MVP
 
@@ -204,10 +213,15 @@ docker compose up --build  # Docker
 | `/projects/{id}/files` | GET/POST | List/Register files |
 | `/projects/{id}/files/{id}` | GET/DELETE | Get/Delete file |
 | `/projects/{id}/files/{id}/download` | GET | Download file |
+| `/projects/{id}/settings/snapshots` | GET/PUT/DELETE | Project snapshot config |
+| `/projects/{id}/buckets/{bucket}/settings/snapshots` | GET/PUT/DELETE | Bucket snapshot config |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/settings/snapshots` | GET/PUT/DELETE | Table snapshot config |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots` | GET/POST | List/Create snapshots |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}/restore` | POST | Restore from snapshot |
 
 ### TODO Endpoints (see duckdb-driver-plan.md for specs)
 
-- Snapshots: create, list, get, restore, delete
 - Dev Branches: create, delete, merge
 
 ## Development Notes

@@ -28,7 +28,7 @@
 | **Table Schema Operations** | **DONE** | **33 novych testu (213 total)** |
 | **Import/Export API** | **DONE** | **17 novych testu (230 total)** |
 | **Files API (on-prem)** | **DONE** | **20 novych testu (250 total)** |
-| Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
+| **Snapshots API** | **DONE** | **34 novych testu (284 total), hierarchicka konfigurace** |
 | Schema Migrations | TODO | Verzovani v DB + migrace pri startu |
 
 ### Kde jsme
@@ -66,9 +66,11 @@
        ↓
 [DONE] Import/Export API - 250 testu PASS
        ↓
-[NOW]  *** Snapshots API ***
+[DONE] Snapshots API (hierarchicka konfigurace) - 284 testu PASS
        ↓
-[NEXT] Dev Branches
+[NOW]  *** Dev Branches ***
+       ↓
+[NEXT] Workspaces
        ↓
 [LAST] PHP Driver Package (az bude Python API kompletni)
 ```
@@ -88,7 +90,7 @@
 | **6** | **Table Schema Operations** | **100% - DONE** | **33 testu, 213 total** |
 | **7** | **Import/Export** | **100% - DONE** | **17 testu, 230 total** |
 | **8** | **Files API (on-prem)** | **100% - DONE** | **20 testu, 250 total** |
-| 9 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
+| **9** | **Snapshots + Settings** | **100% - DONE** | **34 testu, 284 total** |
 | 10 | Dev Branches | **0%** | Zjednoduseno s ADR-009 |
 | 11 | Workspaces | **0%** | Specifikace 30% |
 | 12 | PHP Driver | **0%** | Ceka na Python API |
@@ -1003,18 +1005,23 @@ BEFORE (ADR-002):                    AFTER (ADR-009):
 - [x] 3-stage workflow: prepare -> upload -> register
 - [x] Pytest testy (20 novych testu, 250 total)
 
-### Faze 9: Snapshots
-> **Viz sekce "Snapshots - Detailni specifikace" nize**
+### Faze 9: Snapshots + Settings - DONE
+> **Implementovano 2024-12-16**
+> **Viz ADR-004 pro detailni specifikaci hierarchicke konfigurace**
 
-- [ ] Snapshot registry v metadata.duckdb
-- [ ] POST /snapshots (Parquet export s ZSTD)
-- [ ] GET /snapshots (list)
-- [ ] GET /snapshots/{id}
-- [ ] DELETE /snapshots/{id}
-- [ ] POST /snapshots/{id}/restore
-- [ ] Auto-snapshot pred DROP TABLE
-- [ ] Retention policy (configurable)
-- [ ] Pytest testy
+- [x] Snapshot registry v metadata.duckdb (`snapshots` tabulka)
+- [x] Snapshot settings registry (`snapshot_settings` tabulka)
+- [x] Hierarchicka konfigurace (System -> Project -> Bucket -> Table)
+- [x] POST /snapshots (Parquet export s ZSTD)
+- [x] GET /snapshots (list s filtry)
+- [x] GET /snapshots/{id} (vcetne schema)
+- [x] DELETE /snapshots/{id}
+- [x] POST /snapshots/{id}/restore
+- [x] Auto-snapshot pred DROP TABLE (default enabled)
+- [x] Auto-snapshot pred DROP COLUMN (konfigurovatelne)
+- [x] Konfigurovatelna retention policy (per-project/bucket/table)
+- [x] GET/PUT/DELETE /settings/snapshots na vsech urovnich
+- [x] Pytest testy (34 novych testu, 284 total)
 
 ### Faze 10: PHP Driver Package
 > **Ceka na Faze 5-9** - Python API musi byt kompletni

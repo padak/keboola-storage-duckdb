@@ -292,6 +292,45 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
+
+-- Snapshot settings (hierarchical configuration: project -> bucket -> table)
+-- ADR-004 extension: Per-entity snapshot configuration with inheritance
+CREATE TABLE IF NOT EXISTS snapshot_settings (
+    id VARCHAR PRIMARY KEY,
+    entity_type VARCHAR NOT NULL,        -- 'project' | 'bucket' | 'table'
+    entity_id VARCHAR NOT NULL,          -- project_id | project_id/bucket | project_id/bucket/table
+    project_id VARCHAR NOT NULL,         -- Always filled (for FK and queries)
+    config JSON NOT NULL,                -- Partial config (only explicit values)
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(entity_type, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshot_settings_entity ON snapshot_settings(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_settings_project ON snapshot_settings(project_id);
+
+-- Snapshots registry (point-in-time backups as Parquet files)
+-- ADR-004: Snapshots stored as Parquet with ZSTD compression
+CREATE TABLE IF NOT EXISTS snapshots (
+    id VARCHAR PRIMARY KEY,              -- snap_{table}_{timestamp}
+    project_id VARCHAR NOT NULL,
+    bucket_name VARCHAR NOT NULL,
+    table_name VARCHAR NOT NULL,
+    snapshot_type VARCHAR NOT NULL,      -- 'manual' | 'auto_predrop' | 'auto_pretruncate' | ...
+    parquet_path VARCHAR NOT NULL,       -- Relative path to snapshot directory
+    row_count BIGINT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    schema_json JSON NOT NULL,           -- Column definitions for restore
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR,
+    expires_at TIMESTAMPTZ,
+    description TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_project ON snapshots(project_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_table ON snapshots(project_id, bucket_name, table_name);
+CREATE INDEX IF NOT EXISTS idx_snapshots_expires ON snapshots(expires_at);
+CREATE INDEX IF NOT EXISTS idx_snapshots_type ON snapshots(snapshot_type);
 """
 
 
@@ -1340,6 +1379,423 @@ class MetadataDB:
             "created_at": row[9].isoformat() if row[9] else None,
             "expires_at": row[10].isoformat() if row[10] else None,
             "tags": tags,
+        }
+
+    # ========================================
+    # Snapshot settings operations (ADR-004)
+    # ========================================
+
+    def get_snapshot_settings(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> dict[str, Any] | None:
+        """
+        Get snapshot settings for an entity.
+
+        Args:
+            entity_type: 'project', 'bucket', or 'table'
+            entity_id: Entity identifier
+
+        Returns:
+            Config dict or None if not found
+        """
+        import json
+
+        result = self.execute_one(
+            """
+            SELECT id, entity_type, entity_id, project_id, config, created_at, updated_at
+            FROM snapshot_settings
+            WHERE entity_type = ? AND entity_id = ?
+            """,
+            [entity_type, entity_id],
+        )
+
+        if result:
+            config = result[4]
+            if isinstance(config, str):
+                try:
+                    config = json.loads(config)
+                except (json.JSONDecodeError, TypeError):
+                    config = {}
+
+            return {
+                "id": result[0],
+                "entity_type": result[1],
+                "entity_id": result[2],
+                "project_id": result[3],
+                "config": config,
+                "created_at": result[5].isoformat() if result[5] else None,
+                "updated_at": result[6].isoformat() if result[6] else None,
+            }
+
+        return None
+
+    def set_snapshot_settings(
+        self,
+        entity_type: str,
+        entity_id: str,
+        project_id: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Set snapshot settings for an entity (upsert).
+
+        Args:
+            entity_type: 'project', 'bucket', or 'table'
+            entity_id: Entity identifier
+            project_id: Project ID (always required)
+            config: Partial config dict
+
+        Returns:
+            Updated settings dict
+        """
+        import json
+        import uuid
+
+        now = datetime.now(timezone.utc)
+        settings_id = str(uuid.uuid4())
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO snapshot_settings (id, entity_type, entity_id, project_id, config, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+                    config = EXCLUDED.config,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                [settings_id, entity_type, entity_id, project_id, json.dumps(config), now, now],
+            )
+            conn.commit()
+
+        logger.info(
+            "snapshot_settings_updated",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            project_id=project_id,
+        )
+
+        return self.get_snapshot_settings(entity_type, entity_id)
+
+    def delete_snapshot_settings(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> bool:
+        """
+        Delete snapshot settings for an entity.
+
+        Args:
+            entity_type: 'project', 'bucket', or 'table'
+            entity_id: Entity identifier
+
+        Returns:
+            True if deleted
+        """
+        self.execute_write(
+            """
+            DELETE FROM snapshot_settings
+            WHERE entity_type = ? AND entity_id = ?
+            """,
+            [entity_type, entity_id],
+        )
+
+        logger.info(
+            "snapshot_settings_deleted",
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        return True
+
+    def delete_project_snapshot_settings(self, project_id: str) -> int:
+        """
+        Delete all snapshot settings for a project (cascading delete).
+
+        Args:
+            project_id: Project ID
+
+        Returns:
+            Count of deleted settings
+        """
+        count_result = self.execute_one(
+            "SELECT COUNT(*) FROM snapshot_settings WHERE project_id = ?",
+            [project_id]
+        )
+        count = count_result[0] if count_result else 0
+
+        self.execute_write(
+            "DELETE FROM snapshot_settings WHERE project_id = ?",
+            [project_id]
+        )
+
+        logger.info(
+            "project_snapshot_settings_deleted",
+            project_id=project_id,
+            count=count,
+        )
+        return count
+
+    # ========================================
+    # Snapshots operations (ADR-004)
+    # ========================================
+
+    def create_snapshot(
+        self,
+        snapshot_id: str,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        snapshot_type: str,
+        parquet_path: str,
+        row_count: int,
+        size_bytes: int,
+        schema_json: dict[str, Any],
+        expires_at: datetime | None = None,
+        created_by: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a snapshot record in metadata database.
+
+        Args:
+            snapshot_id: Unique snapshot identifier
+            project_id: Project the snapshot belongs to
+            bucket_name: Source bucket name
+            table_name: Source table name
+            snapshot_type: 'manual', 'auto_predrop', etc.
+            parquet_path: Relative path to snapshot directory
+            row_count: Number of rows in snapshot
+            size_bytes: Parquet file size
+            schema_json: Column definitions for restore
+            expires_at: When snapshot expires
+            created_by: Who created the snapshot
+            description: Optional description
+
+        Returns:
+            Created snapshot record dict
+        """
+        import json
+
+        now = datetime.now(timezone.utc)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO snapshots (
+                    id, project_id, bucket_name, table_name, snapshot_type,
+                    parquet_path, row_count, size_bytes, schema_json,
+                    created_at, created_by, expires_at, description
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    snapshot_id, project_id, bucket_name, table_name, snapshot_type,
+                    parquet_path, row_count, size_bytes, json.dumps(schema_json),
+                    now, created_by, expires_at, description
+                ],
+            )
+            conn.commit()
+
+            result = conn.execute(
+                "SELECT * FROM snapshots WHERE id = ?", [snapshot_id]
+            ).fetchone()
+
+        logger.info(
+            "snapshot_created",
+            snapshot_id=snapshot_id,
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            snapshot_type=snapshot_type,
+            row_count=row_count,
+        )
+
+        return self._row_to_snapshot_dict(result)
+
+    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Get snapshot by ID."""
+        result = self.execute_one(
+            "SELECT * FROM snapshots WHERE id = ?", [snapshot_id]
+        )
+        return self._row_to_snapshot_dict(result) if result else None
+
+    def get_snapshot_by_project(
+        self, project_id: str, snapshot_id: str
+    ) -> dict[str, Any] | None:
+        """Get snapshot by ID, ensuring it belongs to project."""
+        result = self.execute_one(
+            "SELECT * FROM snapshots WHERE id = ? AND project_id = ?",
+            [snapshot_id, project_id]
+        )
+        return self._row_to_snapshot_dict(result) if result else None
+
+    def list_snapshots(
+        self,
+        project_id: str,
+        bucket_name: str | None = None,
+        table_name: str | None = None,
+        snapshot_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """
+        List snapshots for a project with optional filtering.
+
+        Args:
+            project_id: Project ID
+            bucket_name: Filter by bucket
+            table_name: Filter by table (requires bucket_name)
+            snapshot_type: Filter by type ('manual', 'auto_predrop', etc.)
+            limit: Maximum results
+            offset: Offset for pagination
+
+        Returns:
+            List of snapshot record dicts
+        """
+        conditions = ["project_id = ?"]
+        params = [project_id]
+
+        if bucket_name:
+            conditions.append("bucket_name = ?")
+            params.append(bucket_name)
+
+        if table_name:
+            conditions.append("table_name = ?")
+            params.append(table_name)
+
+        if snapshot_type:
+            conditions.append("snapshot_type = ?")
+            params.append(snapshot_type)
+
+        where_clause = " AND ".join(conditions)
+        params.extend([limit, offset])
+
+        results = self.execute(
+            f"""
+            SELECT * FROM snapshots
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        )
+
+        return [self._row_to_snapshot_dict(row) for row in results]
+
+    def count_snapshots(
+        self,
+        project_id: str,
+        bucket_name: str | None = None,
+        table_name: str | None = None,
+        snapshot_type: str | None = None,
+    ) -> int:
+        """Count snapshots matching filters."""
+        conditions = ["project_id = ?"]
+        params = [project_id]
+
+        if bucket_name:
+            conditions.append("bucket_name = ?")
+            params.append(bucket_name)
+
+        if table_name:
+            conditions.append("table_name = ?")
+            params.append(table_name)
+
+        if snapshot_type:
+            conditions.append("snapshot_type = ?")
+            params.append(snapshot_type)
+
+        where_clause = " AND ".join(conditions)
+
+        result = self.execute_one(
+            f"SELECT COUNT(*) FROM snapshots WHERE {where_clause}",
+            params
+        )
+        return result[0] if result else 0
+
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        """Delete a snapshot record (caller should delete files)."""
+        self.execute_write("DELETE FROM snapshots WHERE id = ?", [snapshot_id])
+        logger.info("snapshot_deleted", snapshot_id=snapshot_id)
+        return True
+
+    def delete_project_snapshots(self, project_id: str) -> int:
+        """Delete all snapshot records for a project."""
+        count_result = self.execute_one(
+            "SELECT COUNT(*) FROM snapshots WHERE project_id = ?",
+            [project_id]
+        )
+        count = count_result[0] if count_result else 0
+
+        self.execute_write(
+            "DELETE FROM snapshots WHERE project_id = ?",
+            [project_id]
+        )
+
+        logger.info("project_snapshots_deleted", project_id=project_id, count=count)
+        return count
+
+    def cleanup_expired_snapshots(self) -> list[dict[str, Any]]:
+        """
+        Find and return expired snapshots for cleanup.
+
+        Returns:
+            List of expired snapshot records (caller should delete actual files)
+        """
+        results = self.execute(
+            """
+            SELECT * FROM snapshots
+            WHERE expires_at IS NOT NULL AND expires_at <= now()
+            """
+        )
+
+        expired_snapshots = [self._row_to_snapshot_dict(row) for row in results]
+
+        if expired_snapshots:
+            # Delete records
+            self.execute_write(
+                "DELETE FROM snapshots WHERE expires_at IS NOT NULL AND expires_at <= now()"
+            )
+            logger.info("expired_snapshots_cleaned", count=len(expired_snapshots))
+
+        return expired_snapshots
+
+    def _row_to_snapshot_dict(self, row: tuple | None) -> dict[str, Any] | None:
+        """
+        Convert database row to snapshot dictionary.
+
+        Schema: id(0), project_id(1), bucket_name(2), table_name(3), snapshot_type(4),
+                parquet_path(5), row_count(6), size_bytes(7), schema_json(8),
+                created_at(9), created_by(10), expires_at(11), description(12)
+        """
+        import json
+
+        if row is None:
+            return None
+
+        # Parse schema JSON if it's a string
+        schema_json = row[8]
+        if isinstance(schema_json, str):
+            try:
+                schema_json = json.loads(schema_json)
+            except (json.JSONDecodeError, TypeError):
+                schema_json = {}
+
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "bucket_name": row[2],
+            "table_name": row[3],
+            "snapshot_type": row[4],
+            "parquet_path": row[5],
+            "row_count": row[6],
+            "size_bytes": row[7],
+            "schema_json": schema_json,
+            "created_at": row[9].isoformat() if row[9] else None,
+            "created_by": row[10],
+            "expires_at": row[11].isoformat() if row[11] else None,
+            "description": row[12],
         }
 
 

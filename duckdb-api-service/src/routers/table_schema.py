@@ -20,6 +20,7 @@ from src.models.responses import (
     TableProfileResponse,
     TableResponse,
 )
+from src.snapshot_config import should_create_snapshot
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="", tags=["table-schema"])
@@ -314,6 +315,36 @@ async def drop_column(
                 "details": {"primary_key": table_info["primary_key"]},
             },
         )
+
+    # Check if auto-snapshot should be created before dropping column
+    if should_create_snapshot(project_id, bucket_name, table_name, "drop_column"):
+        from src.routers.snapshots import create_snapshot_internal
+
+        try:
+            await create_snapshot_internal(
+                project_id=project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+                snapshot_type="auto_predrop_column",
+                description=f"Auto-backup before DROP COLUMN {bucket_name}.{table_name}.{column_name}",
+            )
+            logger.info(
+                "auto_snapshot_created_before_drop_column",
+                project_id=project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+                column_name=column_name,
+            )
+        except Exception as e:
+            # Log but don't fail the drop if snapshot fails
+            logger.warning(
+                "auto_snapshot_failed_before_drop_column",
+                project_id=project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+                column_name=column_name,
+                error=str(e),
+            )
 
     try:
         table_data = project_db_manager.drop_column(
