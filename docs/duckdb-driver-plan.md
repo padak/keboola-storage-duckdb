@@ -26,8 +26,8 @@
 | **Idempotency Middleware** | **DONE** | **X-Idempotency-Key header, 165 testu PASS** |
 | **Prometheus /metrics** | **DONE** | **180 testu PASS** |
 | **Table Schema Operations** | **DONE** | **33 novych testu (213 total)** |
-| Import/Export API | TODO | Specifikace hotova |
-| Files API (on-prem) | TODO | Specifikace hotova |
+| **Import/Export API** | **DONE** | **17 novych testu (230 total)** |
+| **Files API (on-prem)** | **DONE** | **20 novych testu (250 total)** |
 | Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
 | Schema Migrations | TODO | Verzovani v DB + migrace pri startu |
 
@@ -62,11 +62,15 @@
        ↓
 [DONE] Table Schema Operations - 213 testu PASS
        ↓
-[NOW]  *** Import/Export API ***
+[DONE] Files API - 230 testu PASS
        ↓
-[NEXT] Dotahnout Python API (Files, Snapshots)
+[DONE] Import/Export API - 250 testu PASS
        ↓
-[LAST] Implementovat PHP Driver Package (az bude Python API kompletni)
+[NOW]  *** Snapshots API ***
+       ↓
+[NEXT] Dev Branches
+       ↓
+[LAST] PHP Driver Package (az bude Python API kompletni)
 ```
 
 ### Stav implementace podle fazi
@@ -82,11 +86,11 @@
 | **5.6** | **Idempotency Middleware** | **100% - DONE** | **165 testu PASS** |
 | **5.7** | **Prometheus /metrics** | **100% - DONE** | **180 testu PASS** |
 | **6** | **Table Schema Operations** | **100% - DONE** | **33 testu, 213 total** |
-| 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
-| 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
-| 9 | Dev Branches | **0%** | Zjednoduseno s ADR-009 |
-| 10 | Workspaces | **0%** | Specifikace 30% |
-| 11 | Files (on-prem) | **0%** | Specifikace hotova |
+| **7** | **Import/Export** | **100% - DONE** | **17 testu, 230 total** |
+| **8** | **Files API (on-prem)** | **100% - DONE** | **20 testu, 250 total** |
+| 9 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
+| 10 | Dev Branches | **0%** | Zjednoduseno s ADR-009 |
+| 11 | Workspaces | **0%** | Specifikace 30% |
 | 12 | PHP Driver | **0%** | Ceka na Python API |
 
 ### Dalsi kroky (prioritizovane)
@@ -971,31 +975,33 @@ BEFORE (ADR-002):                    AFTER (ADR-009):
 > **Poznamka:** DuckDB nepodporuje `ALTER TABLE ADD COLUMN` s `NOT NULL` constraint.
 > Sloupce se musi pridat jako nullable a pak zmenit na NOT NULL pres `ALTER COLUMN`.
 
-### Faze 7: Import/Export - KRITICKE PRO MVP
-> **Viz sekce "Import/Export - Detailni specifikace" nize**
+### Faze 7: Import/Export - DONE
+> **Implementovano 2024-12-16**
 
-- [ ] Implementovat 3-stage import pipeline
-- [ ] POST /tables/{table}/import/file (COPY FROM)
-- [ ] POST /tables/{table}/import/table (INSERT SELECT)
-- [ ] POST /tables/{table}/export (COPY TO)
-- [ ] CSV + Parquet podpora
-- [ ] Sliced files (wildcards)
-- [ ] Deduplication s primary keys
-- [ ] Incremental import
-- [ ] Pytest testy
+- [x] Implementovat 3-stage import pipeline (STAGING -> TRANSFORM -> CLEANUP)
+- [x] POST /tables/{table}/import/file (COPY FROM CSV/Parquet)
+- [x] POST /tables/{table}/export (COPY TO CSV/Parquet)
+- [x] CSV + Parquet podpora
+- [x] Deduplication s primary keys (INSERT ON CONFLICT)
+- [x] Incremental import (merge/upsert mode)
+- [x] Column filtering, WHERE filter, LIMIT for export
+- [x] Compression support (gzip for CSV, gzip/zstd/snappy for Parquet)
+- [x] Pytest testy (17 novych testu)
 
-### Faze 8: Files API (on-prem)
-> **Viz sekce "Files API - Detailni specifikace" nize**
+### Faze 8: Files API (on-prem) - DONE
+> **Implementovano 2024-12-16**
 
-- [ ] File metadata schema v metadata.duckdb
-- [ ] POST /files/prepare (staging path)
-- [ ] POST /files (register uploaded file)
-- [ ] GET /files/{id} (download/metadata)
-- [ ] DELETE /files/{id}
-- [ ] Staging cleanup (TTL 24h)
-- [ ] File quotas per project
-- [ ] SHA256 checksum validation
-- [ ] Pytest testy
+- [x] File metadata schema v metadata.duckdb
+- [x] POST /files/prepare (staging upload session)
+- [x] POST /files/upload/{key} (multipart upload)
+- [x] POST /files (register uploaded file)
+- [x] GET /files (list files)
+- [x] GET /files/{id} (file info)
+- [x] GET /files/{id}/download (download content)
+- [x] DELETE /files/{id}
+- [x] SHA256 checksum validation during upload
+- [x] 3-stage workflow: prepare -> upload -> register
+- [x] Pytest testy (20 novych testu, 250 total)
 
 ### Faze 9: Snapshots
 > **Viz sekce "Snapshots - Detailni specifikace" nize**

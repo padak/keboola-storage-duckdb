@@ -54,8 +54,11 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── buckets.py     # Bucket CRUD
   │       ├── bucket_sharing.py  # Share, link, readonly
   │       ├── tables.py      # Table CRUD + preview
+  │       ├── table_schema.py    # Column/PK operations
+  │       ├── table_import.py    # Import/Export
+  │       ├── files.py       # Files API (on-prem S3)
   │       └── metrics.py     # Prometheus /metrics endpoint
-  └── tests/                 # pytest tests (180 tests)
+  └── tests/                 # pytest tests (250 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -76,14 +79,14 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Idempotency Middleware | DONE | 21 |
 | Prometheus /metrics | DONE | 15 |
 | Table Schema Ops | DONE | 33 |
-| **Import/Export** | **TODO - NEXT** | - |
-| Files API | TODO | - |
-| Snapshots | TODO | - |
+| Files API | DONE | 20 |
+| Import/Export | DONE | 17 |
+| **Snapshots** | **TODO - NEXT** | - |
 | Dev Branches | TODO | - |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 213 tests PASS**
+**Total: 250 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -92,9 +95,9 @@ connection/                   # Keboola Connection (git submodule/clone)
 4. ~~Idempotency middleware (X-Idempotency-Key)~~ - DONE
 5. ~~Prometheus /metrics endpoint~~ - DONE
 6. ~~Table Schema Operations~~ - DONE
-7. **Import/Export** - NEXT
-8. Files API
-9. Snapshots
+7. ~~Files API~~ - DONE
+8. ~~Import/Export~~ - DONE
+9. **Snapshots** - NEXT
 10. Dev Branches (simplified with ADR-009)
 11. PHP Driver
 
@@ -194,12 +197,16 @@ docker compose up --build  # Docker
 | `/projects/{id}/buckets/{bucket}/tables/{table}/primary-key` | POST/DELETE | Add/Drop PK |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/rows` | DELETE | Delete rows (WHERE) |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/profile` | POST | Table profiling |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/import/file` | POST | Import from file |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/export` | POST | Export to file |
+| `/projects/{id}/files/prepare` | POST | Prepare file upload |
+| `/projects/{id}/files/upload/{key}` | POST | Upload file |
+| `/projects/{id}/files` | GET/POST | List/Register files |
+| `/projects/{id}/files/{id}` | GET/DELETE | Get/Delete file |
+| `/projects/{id}/files/{id}/download` | GET | Download file |
 
 ### TODO Endpoints (see duckdb-driver-plan.md for specs)
 
-- `POST /projects/{id}/query` - Write Queue
-- Import/Export: import/file, import/table, export
-- Files: prepare, upload, register, download, delete
 - Snapshots: create, list, get, restore, delete
 - Dev Branches: create, delete, merge
 

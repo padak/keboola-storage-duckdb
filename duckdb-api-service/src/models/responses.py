@@ -308,3 +308,168 @@ class TableProfileResponse(BaseModel):
     row_count: int = Field(description="Total rows in table")
     column_count: int = Field(description="Number of columns")
     statistics: list[ColumnStatistics] = Field(description="Per-column statistics")
+
+
+# ============================================
+# Files API models
+# ============================================
+
+
+class FilePrepareRequest(BaseModel):
+    """Request to prepare a file upload."""
+
+    filename: str = Field(description="Original filename")
+    content_type: str | None = Field(
+        default=None, description="MIME type (e.g., 'text/csv', 'application/x-parquet')"
+    )
+    size_bytes: int | None = Field(
+        default=None, description="Expected file size in bytes (optional, for validation)"
+    )
+    tags: dict[str, str] | None = Field(
+        default=None, description="Optional tags/metadata for the file"
+    )
+
+
+class FilePrepareResponse(BaseModel):
+    """Response for file upload preparation."""
+
+    upload_key: str = Field(description="Unique key for the upload session")
+    upload_url: str = Field(description="URL to upload the file to")
+    expires_at: str = Field(description="When the upload session expires (ISO timestamp)")
+
+
+class FileRegisterRequest(BaseModel):
+    """Request to register an uploaded file."""
+
+    upload_key: str = Field(description="The upload key from prepare step")
+    name: str | None = Field(
+        default=None, description="Final filename (defaults to original filename)"
+    )
+    tags: dict[str, str] | None = Field(
+        default=None, description="Optional tags/metadata for the file"
+    )
+
+
+class FileResponse(BaseModel):
+    """File information response."""
+
+    id: str = Field(description="Unique file identifier")
+    project_id: str = Field(description="Project the file belongs to")
+    name: str = Field(description="Filename")
+    path: str = Field(description="Relative path in storage")
+    size_bytes: int = Field(description="File size in bytes")
+    content_type: str | None = Field(default=None, description="MIME type")
+    checksum_sha256: str | None = Field(default=None, description="SHA256 checksum")
+    is_staged: bool = Field(description="Whether file is still in staging")
+    created_at: str = Field(description="Creation timestamp (ISO)")
+    expires_at: str | None = Field(
+        default=None, description="Expiration timestamp for staging files (ISO)"
+    )
+    tags: dict[str, str] | None = Field(default=None, description="File tags/metadata")
+
+
+class FileListResponse(BaseModel):
+    """List of files response."""
+
+    files: list[FileResponse] = Field(description="List of files")
+    total: int = Field(description="Total number of files")
+
+
+class FileUploadResponse(BaseModel):
+    """Response after successful file upload."""
+
+    upload_key: str = Field(description="Upload key for registration")
+    staging_path: str = Field(description="Path in staging area")
+    size_bytes: int = Field(description="Uploaded file size")
+    checksum_sha256: str = Field(description="SHA256 checksum of uploaded file")
+
+
+# ============================================
+# Import/Export API models
+# ============================================
+
+
+class CsvOptions(BaseModel):
+    """CSV format options for import/export."""
+
+    delimiter: str = Field(default=",", description="Field delimiter character")
+    quote: str = Field(default='"', description="Quote character")
+    escape: str = Field(default="\\", description="Escape character")
+    header: bool = Field(default=True, description="Whether CSV has header row")
+    null_string: str = Field(default="", description="String representing NULL values")
+
+
+class ImportOptions(BaseModel):
+    """Options for table import."""
+
+    incremental: bool = Field(
+        default=False,
+        description="If False, truncate table before import. If True, merge/upsert."
+    )
+    dedup_mode: str = Field(
+        default="update_duplicates",
+        description="How to handle duplicates: 'update_duplicates', 'insert_duplicates', 'fail_on_duplicates'"
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description="Specific columns to import (None = all columns)"
+    )
+
+
+class ImportFromFileRequest(BaseModel):
+    """Request to import data from a file into a table."""
+
+    file_id: str = Field(description="ID of file to import (from Files API)")
+    format: str = Field(
+        default="csv",
+        description="File format: 'csv' or 'parquet'"
+    )
+    csv_options: CsvOptions | None = Field(
+        default=None, description="CSV-specific options (only for CSV format)"
+    )
+    import_options: ImportOptions = Field(
+        default_factory=ImportOptions, description="Import behavior options"
+    )
+
+
+class ImportResponse(BaseModel):
+    """Response for import operation."""
+
+    imported_rows: int = Field(description="Number of rows imported")
+    table_rows_after: int = Field(description="Total rows in table after import")
+    table_size_bytes: int = Field(description="Table size after import")
+    warnings: list[str] = Field(default_factory=list, description="Any warnings during import")
+
+
+class ExportRequest(BaseModel):
+    """Request to export table data to a file."""
+
+    format: str = Field(
+        default="csv",
+        description="Export format: 'csv' or 'parquet'"
+    )
+    compression: str | None = Field(
+        default=None,
+        description="Compression: 'gzip' for CSV, 'gzip'/'zstd'/'snappy' for Parquet"
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description="Specific columns to export (None = all columns)"
+    )
+    where_filter: str | None = Field(
+        default=None,
+        description="SQL WHERE clause to filter rows (without 'WHERE' keyword)"
+    )
+    limit: int | None = Field(
+        default=None,
+        description="Maximum number of rows to export"
+    )
+
+
+class ExportResponse(BaseModel):
+    """Response for export operation."""
+
+    file_id: str = Field(description="ID of the exported file (use Files API to download)")
+    file_path: str = Field(description="Relative path to exported file")
+    rows_exported: int = Field(description="Number of rows exported")
+    file_size_bytes: int = Field(description="Size of exported file")

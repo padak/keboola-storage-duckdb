@@ -1066,6 +1066,282 @@ class MetadataDB:
 
         return count
 
+    # ========================================
+    # Files operations (on-prem S3 replacement)
+    # ========================================
+
+    def create_file_record(
+        self,
+        file_id: str,
+        project_id: str,
+        name: str,
+        path: str,
+        size_bytes: int,
+        content_type: str | None = None,
+        checksum_sha256: str | None = None,
+        is_staged: bool = True,
+        expires_at: datetime | None = None,
+        tags: dict | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a file record in metadata database.
+
+        Args:
+            file_id: Unique file identifier
+            project_id: Project the file belongs to
+            name: Original filename
+            path: Relative path in storage
+            size_bytes: File size in bytes
+            content_type: MIME type
+            checksum_sha256: SHA256 hash of file content
+            is_staged: True if file is in staging (not yet registered)
+            expires_at: When staging file expires
+            tags: Optional tags/metadata
+
+        Returns:
+            Created file record dict
+        """
+        import json
+
+        now = datetime.now(timezone.utc)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO files (
+                    id, project_id, name, path, size_bytes, content_type,
+                    checksum_sha256, is_staged, created_at, expires_at, tags
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    file_id, project_id, name, path, size_bytes, content_type,
+                    checksum_sha256, is_staged, now, expires_at,
+                    json.dumps(tags) if tags else None
+                ],
+            )
+            conn.commit()
+
+            result = conn.execute(
+                "SELECT * FROM files WHERE id = ?", [file_id]
+            ).fetchone()
+
+        logger.info(
+            "file_record_created",
+            file_id=file_id,
+            project_id=project_id,
+            name=name,
+            is_staged=is_staged,
+        )
+
+        return self._row_to_file_dict(result)
+
+    def get_file(self, file_id: str) -> dict[str, Any] | None:
+        """Get file by ID."""
+        result = self.execute_one(
+            "SELECT * FROM files WHERE id = ?", [file_id]
+        )
+        return self._row_to_file_dict(result) if result else None
+
+    def get_file_by_project(
+        self, project_id: str, file_id: str
+    ) -> dict[str, Any] | None:
+        """Get file by ID, ensuring it belongs to project."""
+        result = self.execute_one(
+            "SELECT * FROM files WHERE id = ? AND project_id = ?",
+            [file_id, project_id]
+        )
+        return self._row_to_file_dict(result) if result else None
+
+    def list_files(
+        self,
+        project_id: str,
+        include_staged: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """
+        List files for a project.
+
+        Args:
+            project_id: Project ID
+            include_staged: If True, include staging files
+            limit: Maximum number of files to return
+            offset: Offset for pagination
+
+        Returns:
+            List of file record dicts
+        """
+        if include_staged:
+            results = self.execute(
+                """
+                SELECT * FROM files
+                WHERE project_id = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                [project_id, limit, offset],
+            )
+        else:
+            results = self.execute(
+                """
+                SELECT * FROM files
+                WHERE project_id = ? AND is_staged = false
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                [project_id, limit, offset],
+            )
+
+        return [self._row_to_file_dict(row) for row in results]
+
+    def count_files(self, project_id: str, include_staged: bool = False) -> int:
+        """Count files for a project."""
+        if include_staged:
+            result = self.execute_one(
+                "SELECT COUNT(*) FROM files WHERE project_id = ?",
+                [project_id]
+            )
+        else:
+            result = self.execute_one(
+                "SELECT COUNT(*) FROM files WHERE project_id = ? AND is_staged = false",
+                [project_id]
+            )
+        return result[0] if result else 0
+
+    def update_file(
+        self,
+        file_id: str,
+        name: str | None = None,
+        path: str | None = None,
+        size_bytes: int | None = None,
+        checksum_sha256: str | None = None,
+        is_staged: bool | None = None,
+        expires_at: datetime | None = None,
+        tags: dict | None = None,
+    ) -> dict[str, Any] | None:
+        """Update a file record."""
+        import json
+
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if path is not None:
+            updates.append("path = ?")
+            params.append(path)
+        if size_bytes is not None:
+            updates.append("size_bytes = ?")
+            params.append(size_bytes)
+        if checksum_sha256 is not None:
+            updates.append("checksum_sha256 = ?")
+            params.append(checksum_sha256)
+        if is_staged is not None:
+            updates.append("is_staged = ?")
+            params.append(is_staged)
+        if expires_at is not None:
+            updates.append("expires_at = ?")
+            params.append(expires_at)
+        if tags is not None:
+            updates.append("tags = ?")
+            params.append(json.dumps(tags))
+
+        if not updates:
+            return self.get_file(file_id)
+
+        params.append(file_id)
+
+        query = f"UPDATE files SET {', '.join(updates)} WHERE id = ?"
+        self.execute_write(query, params)
+
+        logger.info("file_updated", file_id=file_id)
+        return self.get_file(file_id)
+
+    def delete_file(self, file_id: str) -> bool:
+        """Delete a file record."""
+        self.execute_write("DELETE FROM files WHERE id = ?", [file_id])
+        logger.info("file_deleted", file_id=file_id)
+        return True
+
+    def delete_project_files(self, project_id: str) -> int:
+        """Delete all file records for a project."""
+        count_result = self.execute_one(
+            "SELECT COUNT(*) FROM files WHERE project_id = ?",
+            [project_id]
+        )
+        count = count_result[0] if count_result else 0
+
+        self.execute_write(
+            "DELETE FROM files WHERE project_id = ?",
+            [project_id]
+        )
+
+        logger.info("project_files_deleted", project_id=project_id, count=count)
+        return count
+
+    def cleanup_expired_files(self) -> list[dict[str, Any]]:
+        """
+        Find and return expired staging files for cleanup.
+
+        Returns:
+            List of expired file records (caller should delete actual files)
+        """
+        results = self.execute(
+            """
+            SELECT * FROM files
+            WHERE is_staged = true AND expires_at <= now()
+            """
+        )
+
+        expired_files = [self._row_to_file_dict(row) for row in results]
+
+        if expired_files:
+            # Delete records
+            self.execute_write(
+                "DELETE FROM files WHERE is_staged = true AND expires_at <= now()"
+            )
+            logger.info("expired_files_cleaned", count=len(expired_files))
+
+        return expired_files
+
+    def _row_to_file_dict(self, row: tuple | None) -> dict[str, Any] | None:
+        """
+        Convert database row to file dictionary.
+
+        Schema: id(0), project_id(1), name(2), path(3), size_bytes(4),
+                content_type(5), checksum_md5(6), checksum_sha256(7),
+                is_staged(8), created_at(9), expires_at(10), tags(11)
+        """
+        import json
+
+        if row is None:
+            return None
+
+        # Parse tags JSON if it's a string
+        tags = row[11] if len(row) > 11 else None
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except (json.JSONDecodeError, TypeError):
+                tags = None
+
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "name": row[2],
+            "path": row[3],
+            "size_bytes": row[4],
+            "content_type": row[5],
+            "checksum_md5": row[6],
+            "checksum_sha256": row[7],
+            "is_staged": row[8],
+            "created_at": row[9].isoformat() if row[9] else None,
+            "expires_at": row[10].isoformat() if row[10] else None,
+            "tags": tags,
+        }
+
 
 class ProjectDBManager:
     """
