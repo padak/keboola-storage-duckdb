@@ -508,10 +508,12 @@ class TestPreviewTable:
             },
         )
 
-        # Insert some data directly
-        with project_db_manager.connection("preview_table_2") as conn:
+        # ADR-009: Insert data using table_connection() and main.data
+        with project_db_manager.table_connection(
+            "preview_table_2", "test_bucket", "data_table"
+        ) as conn:
             conn.execute(
-                "INSERT INTO test_bucket.data_table VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')"
+                "INSERT INTO main.data VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')"
             )
             conn.commit()
 
@@ -544,10 +546,12 @@ class TestPreviewTable:
             },
         )
 
-        # Insert 100 rows
-        with project_db_manager.connection("preview_table_3") as conn:
+        # ADR-009: Insert 100 rows using table_connection() and main.data
+        with project_db_manager.table_connection(
+            "preview_table_3", "test_bucket", "big_table"
+        ) as conn:
             for i in range(100):
-                conn.execute(f"INSERT INTO test_bucket.big_table VALUES ({i})")
+                conn.execute(f"INSERT INTO main.data VALUES ({i})")
             conn.commit()
 
         # Preview with limit=10

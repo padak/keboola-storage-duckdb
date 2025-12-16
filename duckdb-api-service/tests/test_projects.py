@@ -19,8 +19,10 @@ class TestCreateProject:
         assert data["id"] == "123"
         assert data["name"] == "Test Project"
         assert data["status"] == "active"
-        assert data["db_path"] == "project_123.duckdb"
-        assert data["size_bytes"] > 0  # DuckDB file created
+        # ADR-009: db_path is now directory, not file
+        assert data["db_path"] == "project_123"
+        # ADR-009: Empty project has no tables, so size is 0
+        assert data["size_bytes"] == 0
 
     def test_create_project_minimal(self, client: TestClient, initialized_backend):
         """Test creating project with only ID (name optional)."""
@@ -53,7 +55,7 @@ class TestCreateProject:
     def test_create_project_creates_db_file(
         self, client: TestClient, initialized_backend
     ):
-        """Test that creating a project creates the DuckDB file."""
+        """Test that creating a project creates the project directory."""
         response = client.post(
             "/projects",
             json={"id": "file_test"},
@@ -61,9 +63,9 @@ class TestCreateProject:
 
         assert response.status_code == 201
 
-        # Check file exists
-        db_path = initialized_backend["duckdb_dir"] / "project_file_test.duckdb"
-        assert db_path.exists()
+        # ADR-009: Check project directory exists (not file)
+        project_dir = initialized_backend["duckdb_dir"] / "project_file_test"
+        assert project_dir.is_dir()
 
     def test_create_project_conflict(self, client: TestClient, initialized_backend):
         """Test creating duplicate project returns 409."""
@@ -209,16 +211,16 @@ class TestDeleteProject:
         # Create project
         client.post("/projects", json={"id": "delete_test"})
 
-        # Verify DB file exists
-        db_path = initialized_backend["duckdb_dir"] / "project_delete_test.duckdb"
-        assert db_path.exists()
+        # ADR-009: Verify project directory exists
+        project_dir = initialized_backend["duckdb_dir"] / "project_delete_test"
+        assert project_dir.is_dir()
 
         # Delete
         response = client.delete("/projects/delete_test")
         assert response.status_code == 204
 
-        # DB file should be deleted
-        assert not db_path.exists()
+        # ADR-009: Project directory should be deleted
+        assert not project_dir.exists()
 
         # Project should be marked as deleted in metadata
         get_response = client.get("/projects/delete_test")
@@ -246,7 +248,8 @@ class TestProjectStats:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "stats_test"
-        assert data["size_bytes"] > 0
+        # ADR-009: Empty project has no tables, so size is 0
+        assert data["size_bytes"] == 0
         assert data["table_count"] == 0
         assert data["bucket_count"] == 0
 

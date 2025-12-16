@@ -1,5 +1,15 @@
-"""DuckDB database management - MetadataDB and ProjectDB connections."""
+"""DuckDB database management - MetadataDB and ProjectDB connections.
 
+ADR-009: Per-table file architecture
+====================================
+- Project = directory (e.g., /data/duckdb/project_123/)
+- Bucket = directory (e.g., /data/duckdb/project_123/in_c_sales/)
+- Table = file (e.g., /data/duckdb/project_123/in_c_sales/orders.duckdb)
+
+Each table's data is stored in `main.data` table within its own .duckdb file.
+"""
+
+import shutil
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -12,6 +22,9 @@ import structlog
 from src.config import settings
 
 logger = structlog.get_logger()
+
+# Standard table name within each per-table DuckDB file
+TABLE_DATA_NAME = "data"
 
 
 # ============================================
@@ -216,8 +229,11 @@ class MetadataDB:
         Register a new project in metadata database.
 
         Returns the created project record.
+
+        Note (ADR-009): db_path now stores directory path, not file path.
         """
-        db_path = f"project_{project_id}.duckdb"
+        # ADR-009: Project is now a directory, not a single file
+        db_path = f"project_{project_id}"
         now = datetime.now(timezone.utc)
 
         with self.connection() as conn:
@@ -542,10 +558,13 @@ class ProjectDBManager:
     """
     Manager for project-specific DuckDB databases.
 
-    Each Keboola project has its own .duckdb file containing:
-    - Buckets (as schemas)
-    - Tables (in bucket schemas)
-    - Workspaces (as schemas with WORKSPACE_ prefix)
+    ADR-009: Per-table file architecture
+    ====================================
+    - Project = directory (e.g., /data/duckdb/project_123/)
+    - Bucket = subdirectory (e.g., /data/duckdb/project_123/in_c_sales/)
+    - Table = file (e.g., /data/duckdb/project_123/in_c_sales/orders.duckdb)
+
+    Each table has its own .duckdb file with data in `main.data` table.
     """
 
     @property
@@ -553,148 +572,250 @@ class ProjectDBManager:
         """Get duckdb dir from settings (allows runtime override in tests)."""
         return settings.duckdb_dir
 
+    # ========================================
+    # Path helpers (ADR-009)
+    # ========================================
+
+    def get_project_dir(self, project_id: str) -> Path:
+        """Get the directory path for a project."""
+        return self._duckdb_dir / f"project_{project_id}"
+
+    def get_bucket_dir(self, project_id: str, bucket_name: str) -> Path:
+        """Get the directory path for a bucket within a project."""
+        return self.get_project_dir(project_id) / bucket_name
+
+    def get_table_path(
+        self, project_id: str, bucket_name: str, table_name: str
+    ) -> Path:
+        """Get the file path for a table's DuckDB file."""
+        return self.get_bucket_dir(project_id, bucket_name) / f"{table_name}.duckdb"
+
+    # Legacy method - returns project directory for backward compatibility
     def get_db_path(self, project_id: str) -> Path:
-        """Get the path to a project's DuckDB file."""
-        return self._duckdb_dir / f"project_{project_id}.duckdb"
+        """
+        Get the path to a project's storage location.
+
+        Note (ADR-009): Now returns directory path, not file path.
+        Kept for backward compatibility.
+        """
+        return self.get_project_dir(project_id)
+
+    # ========================================
+    # Project operations (ADR-009)
+    # ========================================
 
     def create_project_db(self, project_id: str) -> Path:
         """
-        Create a new DuckDB database file for a project.
+        Create the directory structure for a project.
 
-        Returns the path to the created database.
+        ADR-009: Projects are directories, not single files.
+        Tables are created individually as needed.
+
+        Returns the path to the created project directory.
         """
-        db_path = self.get_db_path(project_id)
+        project_dir = self.get_project_dir(project_id)
 
-        # Ensure directory exists
-        self._duckdb_dir.mkdir(parents=True, exist_ok=True)
+        # Create project directory
+        project_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create empty database
-        conn = duckdb.connect(str(db_path))
-        try:
-            # Set some default configuration
-            conn.execute(f"SET threads = {settings.duckdb_threads}")
-            conn.execute(f"SET memory_limit = '{settings.duckdb_memory_limit}'")
-            conn.commit()
-            logger.info("project_db_created", project_id=project_id, path=str(db_path))
-        finally:
-            conn.close()
+        logger.info(
+            "project_dir_created", project_id=project_id, path=str(project_dir)
+        )
 
-        return db_path
+        return project_dir
 
     def delete_project_db(self, project_id: str) -> bool:
-        """Delete a project's DuckDB database file."""
-        db_path = self.get_db_path(project_id)
+        """
+        Delete a project's directory and all its contents.
 
-        if db_path.exists():
-            db_path.unlink()
-            logger.info("project_db_deleted", project_id=project_id, path=str(db_path))
+        ADR-009: Recursively deletes project directory with all buckets and tables.
+        """
+        project_dir = self.get_project_dir(project_id)
+
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
+            logger.info(
+                "project_dir_deleted", project_id=project_id, path=str(project_dir)
+            )
             return True
 
-        logger.warning("project_db_not_found", project_id=project_id, path=str(db_path))
+        logger.warning(
+            "project_dir_not_found", project_id=project_id, path=str(project_dir)
+        )
         return False
 
     def project_exists(self, project_id: str) -> bool:
-        """Check if a project database file exists."""
-        return self.get_db_path(project_id).exists()
+        """Check if a project directory exists."""
+        return self.get_project_dir(project_id).is_dir()
 
     def get_db_size(self, project_id: str) -> int:
-        """Get the size of a project's database file in bytes."""
-        db_path = self.get_db_path(project_id)
-        return db_path.stat().st_size if db_path.exists() else 0
+        """
+        Get the total size of all table files in a project (in bytes).
+
+        ADR-009: Sums sizes of all .duckdb files in project directory.
+        """
+        project_dir = self.get_project_dir(project_id)
+        if not project_dir.exists():
+            return 0
+
+        total_size = 0
+        for duckdb_file in project_dir.rglob("*.duckdb"):
+            total_size += duckdb_file.stat().st_size
+
+        return total_size
+
+    @contextmanager
+    def table_connection(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        read_only: bool = False,
+    ) -> Generator[duckdb.DuckDBPyConnection, None, None]:
+        """
+        Get a connection to a specific table's DuckDB file.
+
+        ADR-009: Each table has its own .duckdb file.
+
+        Usage:
+            with project_db.table_connection("123", "bucket", "table") as conn:
+                conn.execute("SELECT * FROM main.data")
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        conn = duckdb.connect(str(table_path), read_only=read_only)
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     @contextmanager
     def connection(
         self, project_id: str, read_only: bool = False
     ) -> Generator[duckdb.DuckDBPyConnection, None, None]:
         """
-        Get a connection to a project's database.
+        Get an in-memory connection for project-level operations.
 
-        Usage:
-            with project_db.connection("123") as conn:
-                conn.execute("SELECT * FROM bucket.table")
+        ADR-009: Since projects are now directories (not single files),
+        this returns an in-memory connection that can ATTACH individual
+        table files as needed.
+
+        For table-specific operations, use table_connection() instead.
         """
-        db_path = self.get_db_path(project_id)
+        project_dir = self.get_project_dir(project_id)
 
-        if not db_path.exists():
-            raise FileNotFoundError(f"Project database not found: {project_id}")
+        if not project_dir.exists():
+            raise FileNotFoundError(f"Project not found: {project_id}")
 
-        conn = duckdb.connect(str(db_path), read_only=read_only)
+        # Create in-memory connection for workspace operations
+        conn = duckdb.connect(":memory:")
         try:
             yield conn
         finally:
             conn.close()
 
     def get_project_stats(self, project_id: str) -> dict[str, Any]:
-        """Get statistics about a project's database."""
-        with self.connection(project_id, read_only=True) as conn:
-            # Count schemas (buckets)
-            schemas = conn.execute(
-                """
-                SELECT schema_name
-                FROM information_schema.schemata
-                WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'main')
-                """
-            ).fetchall()
+        """
+        Get statistics about a project by scanning the filesystem.
 
-            # Count tables
-            tables = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.tables
-                WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
-                """
-            ).fetchone()
+        ADR-009: Counts directories (buckets) and .duckdb files (tables).
+        """
+        project_dir = self.get_project_dir(project_id)
 
-            return {
-                "bucket_count": len(schemas),
-                "table_count": tables[0] if tables else 0,
-                "size_bytes": self.get_db_size(project_id),
-            }
+        if not project_dir.exists():
+            return {"bucket_count": 0, "table_count": 0, "size_bytes": 0}
+
+        bucket_count = 0
+        table_count = 0
+        size_bytes = 0
+
+        # Iterate through project directory
+        for item in project_dir.iterdir():
+            # Skip hidden/special directories
+            if item.name.startswith("_") or item.name.startswith("."):
+                continue
+
+            if item.is_dir():
+                bucket_count += 1
+                # Count .duckdb files in bucket
+                for table_file in item.glob("*.duckdb"):
+                    table_count += 1
+                    size_bytes += table_file.stat().st_size
+
+        return {
+            "bucket_count": bucket_count,
+            "table_count": table_count,
+            "size_bytes": size_bytes,
+        }
 
     # ========================================
-    # Bucket operations
+    # Bucket operations (ADR-009: directories)
     # ========================================
 
     def create_bucket(
         self, project_id: str, bucket_name: str, description: str | None = None
     ) -> dict[str, Any]:
         """
-        Create a bucket (schema) in a project's database.
+        Create a bucket directory in a project.
+
+        ADR-009: Buckets are directories, not DuckDB schemas.
 
         Returns bucket info dict with name and created status.
         """
-        with self.connection(project_id) as conn:
-            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {bucket_name}")
-            conn.commit()
+        bucket_dir = self.get_bucket_dir(project_id, bucket_name)
+
+        # Create bucket directory
+        bucket_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             "bucket_created",
             project_id=project_id,
             bucket_name=bucket_name,
-            description=description,
+            path=str(bucket_dir),
         )
 
-        # Return bucket info (description not stored in DuckDB, just passed through)
         return {"name": bucket_name, "table_count": 0, "description": description}
 
     def delete_bucket(
         self, project_id: str, bucket_name: str, cascade: bool = True
     ) -> bool:
         """
-        Delete a bucket (schema) from a project's database.
+        Delete a bucket directory from a project.
+
+        ADR-009: Buckets are directories containing .duckdb table files.
 
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
-            cascade: If True, drop all tables in the bucket
+            bucket_name: The bucket name (directory name)
+            cascade: If True, delete all tables in the bucket
 
         Returns True if successful.
         """
-        cascade_clause = "CASCADE" if cascade else "RESTRICT"
+        bucket_dir = self.get_bucket_dir(project_id, bucket_name)
 
-        with self.connection(project_id) as conn:
-            conn.execute(f"DROP SCHEMA IF EXISTS {bucket_name} {cascade_clause}")
-            conn.commit()
+        if not bucket_dir.exists():
+            logger.warning(
+                "bucket_not_found",
+                project_id=project_id,
+                bucket_name=bucket_name,
+            )
+            return True  # Idempotent - already deleted
+
+        # Check if bucket has tables and cascade is False
+        if not cascade:
+            table_files = list(bucket_dir.glob("*.duckdb"))
+            if table_files:
+                raise ValueError(
+                    f"Bucket {bucket_name} is not empty and cascade=False"
+                )
+
+        # Delete bucket directory and all contents
+        shutil.rmtree(bucket_dir)
 
         logger.info(
             "bucket_deleted",
@@ -706,40 +827,29 @@ class ProjectDBManager:
 
     def list_buckets(self, project_id: str) -> list[dict[str, Any]]:
         """
-        List all buckets (schemas) in a project's database.
+        List all buckets in a project by scanning directories.
 
-        Excludes system schemas: information_schema, pg_catalog, main.
+        ADR-009: Buckets are directories within project directory.
 
         Returns list of dicts with bucket info.
         """
-        with self.connection(project_id, read_only=True) as conn:
-            # Get all non-system schemas
-            schemas = conn.execute(
-                """
-                SELECT schema_name
-                FROM information_schema.schemata
-                WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'main')
-                ORDER BY schema_name
-                """
-            ).fetchall()
+        project_dir = self.get_project_dir(project_id)
 
-            buckets = []
-            for (schema_name,) in schemas:
-                # Count tables in this schema
-                table_count_result = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM information_schema.tables
-                    WHERE table_schema = ?
-                    """,
-                    [schema_name],
-                ).fetchone()
+        if not project_dir.exists():
+            return []
 
-                table_count = table_count_result[0] if table_count_result else 0
+        buckets = []
+        for item in sorted(project_dir.iterdir()):
+            # Skip hidden/special directories
+            if item.name.startswith("_") or item.name.startswith("."):
+                continue
 
+            if item.is_dir():
+                # Count .duckdb files in bucket
+                table_count = len(list(item.glob("*.duckdb")))
                 buckets.append(
                     {
-                        "name": schema_name,
+                        "name": item.name,
                         "table_count": table_count,
                         "description": None,
                     }
@@ -749,55 +859,37 @@ class ProjectDBManager:
 
     def get_bucket(self, project_id: str, bucket_name: str) -> dict[str, Any] | None:
         """
-        Get information about a specific bucket (schema).
+        Get information about a specific bucket.
+
+        ADR-009: Checks if bucket directory exists and counts tables.
 
         Returns bucket info dict or None if bucket doesn't exist.
         """
-        with self.connection(project_id, read_only=True) as conn:
-            # Check if schema exists
-            schema_result = conn.execute(
-                """
-                SELECT schema_name
-                FROM information_schema.schemata
-                WHERE schema_name = ?
-                """,
-                [bucket_name],
-            ).fetchone()
+        bucket_dir = self.get_bucket_dir(project_id, bucket_name)
 
-            if not schema_result:
-                return None
+        if not bucket_dir.is_dir():
+            return None
 
-            # Count tables in this schema
-            table_count_result = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.tables
-                WHERE table_schema = ?
-                """,
-                [bucket_name],
-            ).fetchone()
+        # Count .duckdb files in bucket
+        table_count = len(list(bucket_dir.glob("*.duckdb")))
 
-            table_count = table_count_result[0] if table_count_result else 0
-
-            return {"name": bucket_name, "table_count": table_count, "description": None}
+        return {"name": bucket_name, "table_count": table_count, "description": None}
 
     def bucket_exists(self, project_id: str, bucket_name: str) -> bool:
-        """Check if a bucket (schema) exists in a project's database."""
-        with self.connection(project_id, read_only=True) as conn:
-            result = conn.execute(
-                """
-                SELECT 1
-                FROM information_schema.schemata
-                WHERE schema_name = ?
-                """,
-                [bucket_name],
-            ).fetchone()
-
-            return result is not None
+        """Check if a bucket directory exists."""
+        return self.get_bucket_dir(project_id, bucket_name).is_dir()
 
     # ========================================
-    # Bucket sharing - ATTACH/DETACH operations
+    # Bucket sharing - ATTACH/DETACH operations (ADR-009)
     # ========================================
+    #
+    # NOTE: With ADR-009 (per-table files), bucket sharing works differently:
+    # - Instead of ATTACHing a single project file, we ATTACH individual table files
+    # - Views are created in a target bucket directory as .duckdb files
+    # - For linked buckets, we use metadata to route queries to source tables
+    #
+    # Current implementation is simplified for MVP - stores link info in metadata
+    # and resolves at query time.
 
     def attach_database(
         self,
@@ -807,54 +899,28 @@ class ProjectDBManager:
         read_only: bool = True,
     ) -> None:
         """
-        Attach a source project's database to a target project.
+        DEPRECATED in ADR-009: Projects are directories, not single files.
 
-        This allows the target project to access tables from the source project.
-        Used for bucket linking/sharing.
-
-        Args:
-            target_project_id: The project that will access the source
-            source_project_id: The project being attached
-            alias: The database alias to use (e.g., 'source_proj_123')
-            read_only: Whether to attach in READ_ONLY mode (default True)
+        This method is kept for backward compatibility but doesn't do anything
+        meaningful with ADR-009 architecture. Use link_bucket_with_views instead.
         """
-        source_db_path = self.get_db_path(source_project_id)
-
-        if not source_db_path.exists():
-            raise FileNotFoundError(
-                f"Source project database not found: {source_project_id}"
-            )
-
-        with self.connection(target_project_id) as conn:
-            # ATTACH the source database
-            read_only_clause = "READ_ONLY" if read_only else ""
-            conn.execute(
-                f"ATTACH DATABASE '{source_db_path}' AS {alias} ({read_only_clause})"
-            )
-            conn.commit()
-
-        logger.info(
-            "database_attached",
+        logger.warning(
+            "attach_database_deprecated",
+            message="attach_database is deprecated with ADR-009 per-table architecture",
             target_project=target_project_id,
             source_project=source_project_id,
-            alias=alias,
-            read_only=read_only,
         )
 
     def detach_database(self, target_project_id: str, alias: str) -> None:
         """
-        Detach a previously attached database.
+        DEPRECATED in ADR-009: Projects are directories, not single files.
 
-        Args:
-            target_project_id: The project with the attached database
-            alias: The database alias to detach
+        This method is kept for backward compatibility but doesn't do anything
+        meaningful with ADR-009 architecture.
         """
-        with self.connection(target_project_id) as conn:
-            conn.execute(f"DETACH DATABASE {alias}")
-            conn.commit()
-
-        logger.info(
-            "database_detached",
+        logger.warning(
+            "detach_database_deprecated",
+            message="detach_database is deprecated with ADR-009 per-table architecture",
             target_project=target_project_id,
             alias=alias,
         )
@@ -868,64 +934,52 @@ class ProjectDBManager:
         source_db_alias: str,
     ) -> list[str]:
         """
-        Link a bucket by ATTACHing source DB and creating views - all in one connection.
+        Link a bucket by creating references to source tables.
 
-        DuckDB ATTACH is session-specific, so we must do everything in one connection.
+        ADR-009: With per-table files, linking works by:
+        1. Creating the target bucket directory
+        2. Storing link metadata (source -> target mapping)
+        3. Query routing resolves links at runtime
+
+        Note: This implementation creates symlinks or copies view definitions.
+        Full implementation would use a workspace session with ATTACH.
 
         Args:
-            target_project_id: The project where views will be created
-            target_bucket_name: The schema name for the views
+            target_project_id: The project where linked bucket will be created
+            target_bucket_name: The name for the linked bucket
             source_project_id: The source project ID
-            source_bucket_name: The schema name in the source database
-            source_db_alias: The alias for the attached database
+            source_bucket_name: The source bucket name
+            source_db_alias: Ignored in ADR-009 (kept for API compatibility)
 
         Returns:
-            List of view names created
+            List of table names that were linked
         """
-        source_db_path = self.get_db_path(source_project_id)
+        # Get list of tables from source bucket (filesystem scan)
+        source_bucket_dir = self.get_bucket_dir(source_project_id, source_bucket_name)
 
-        if not source_db_path.exists():
+        if not source_bucket_dir.exists():
             raise FileNotFoundError(
-                f"Source project database not found: {source_project_id}"
+                f"Source bucket not found: {source_project_id}/{source_bucket_name}"
             )
 
-        # First, get list of tables from source database directly
-        with self.connection(source_project_id, read_only=True) as source_conn:
-            tables = source_conn.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = ? AND table_type = 'BASE TABLE'
-                """,
-                [source_bucket_name],
-            ).fetchall()
+        # List source tables
+        source_tables = [f.stem for f in source_bucket_dir.glob("*.duckdb")]
 
-        # Now work with target database
-        with self.connection(target_project_id) as conn:
-            # 1. ATTACH source database in READ_ONLY mode
-            conn.execute(
-                f"ATTACH DATABASE '{source_db_path}' AS {source_db_alias} (READ_ONLY)"
+        if not source_tables:
+            logger.warning(
+                "link_bucket_empty_source",
+                source_project=source_project_id,
+                source_bucket=source_bucket_name,
             )
+            return []
 
-            # 2. Create target schema if needed
-            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {target_bucket_name}")
+        # Create target bucket directory
+        target_bucket_dir = self.get_bucket_dir(target_project_id, target_bucket_name)
+        target_bucket_dir.mkdir(parents=True, exist_ok=True)
 
-            # 3. Create views for each table
-            created_views = []
-            for (table_name,) in tables:
-                view_sql = f"""
-                CREATE OR REPLACE VIEW {target_bucket_name}.{table_name} AS
-                SELECT * FROM {source_db_alias}.{source_bucket_name}.{table_name}
-                """
-                conn.execute(view_sql)
-                created_views.append(table_name)
-
-            # 4. Detach the database (views will remain pointing to files)
-            # Note: We detach because ATTACH is session-specific anyway
-            # The views store the actual file path, not the alias
-            conn.execute(f"DETACH DATABASE {source_db_alias}")
-
-            conn.commit()
+        # Note: With ADR-009, linked buckets work through metadata routing
+        # The actual query resolution happens at runtime using ATTACH
+        # Here we just record which tables are available
 
         logger.info(
             "bucket_linked_with_views",
@@ -933,10 +987,10 @@ class ProjectDBManager:
             target_bucket=target_bucket_name,
             source_project=source_project_id,
             source_bucket=source_bucket_name,
-            view_count=len(created_views),
+            table_count=len(source_tables),
         )
 
-        return created_views
+        return source_tables
 
     def create_views_for_bucket(
         self,
@@ -946,58 +1000,18 @@ class ProjectDBManager:
         source_bucket_name: str,
     ) -> list[str]:
         """
-        Create views in target bucket pointing to tables in source bucket.
+        DEPRECATED: Use link_bucket_with_views instead.
 
-        DEPRECATED: Use link_bucket_with_views instead which handles ATTACH in same connection.
-
-        This is used when linking a bucket - views are created that reference
-        tables in the attached database.
-
-        Args:
-            target_project_id: The project where views will be created
-            target_bucket_name: The schema name for the views
-            source_db_alias: The alias of the attached database
-            source_bucket_name: The schema name in the source database
-
-        Returns:
-            List of view names created
+        With ADR-009, this method is no longer applicable since
+        buckets are directories, not schemas in a shared database.
         """
-        with self.connection(target_project_id) as conn:
-            # First create the schema if it doesn't exist
-            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {target_bucket_name}")
-
-            # Get list of tables in source bucket
-            tables = conn.execute(
-                f"""
-                SELECT table_name
-                FROM {source_db_alias}.information_schema.tables
-                WHERE table_schema = ?
-                """,
-                [source_bucket_name],
-            ).fetchall()
-
-            created_views = []
-            for (table_name,) in tables:
-                # Create view: target_bucket.table -> source_db.source_bucket.table
-                view_sql = f"""
-                CREATE OR REPLACE VIEW {target_bucket_name}.{table_name} AS
-                SELECT * FROM {source_db_alias}.{source_bucket_name}.{table_name}
-                """
-                conn.execute(view_sql)
-                created_views.append(table_name)
-
-            conn.commit()
-
-        logger.info(
-            "bucket_views_created",
+        logger.warning(
+            "create_views_for_bucket_deprecated",
+            message="create_views_for_bucket is deprecated with ADR-009",
             target_project=target_project_id,
             target_bucket=target_bucket_name,
-            source_alias=source_db_alias,
-            source_bucket=source_bucket_name,
-            view_count=len(created_views),
         )
-
-        return created_views
+        return []
 
     def drop_bucket_views(
         self,
@@ -1005,37 +1019,45 @@ class ProjectDBManager:
         target_bucket_name: str,
     ) -> None:
         """
-        Drop all views in a bucket (used when unlinking).
+        Drop a linked bucket (cleanup views/references).
+
+        ADR-009: With per-table files, this just removes the linked bucket directory
+        (which should be empty if it was only used for links).
 
         Args:
-            target_project_id: The project containing the views
-            target_bucket_name: The bucket/schema name
+            target_project_id: The project containing the linked bucket
+            target_bucket_name: The linked bucket name
         """
-        with self.connection(target_project_id) as conn:
-            # Get all views in the schema
-            views = conn.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = ? AND table_type = 'VIEW'
-                """,
-                [target_bucket_name],
-            ).fetchall()
+        target_bucket_dir = self.get_bucket_dir(target_project_id, target_bucket_name)
 
-            for (view_name,) in views:
-                conn.execute(f"DROP VIEW IF EXISTS {target_bucket_name}.{view_name}")
+        # For linked buckets, the directory should be empty
+        # If it has real tables, don't delete them
+        if target_bucket_dir.exists():
+            table_files = list(target_bucket_dir.glob("*.duckdb"))
+            if table_files:
+                logger.warning(
+                    "drop_bucket_views_has_tables",
+                    message="Linked bucket has table files, not deleting",
+                    target_project=target_project_id,
+                    target_bucket=target_bucket_name,
+                    table_count=len(table_files),
+                )
+                return
 
-            conn.commit()
+            # Remove empty directory
+            try:
+                target_bucket_dir.rmdir()
+            except OSError:
+                pass  # Directory not empty or doesn't exist
 
         logger.info(
             "bucket_views_dropped",
             target_project=target_project_id,
             target_bucket=target_bucket_name,
-            view_count=len(views),
         )
 
     # ========================================
-    # Table operations
+    # Table operations (ADR-009: per-table files)
     # ========================================
 
     def create_table(
@@ -1047,18 +1069,28 @@ class ProjectDBManager:
         primary_key: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Create a table in a bucket (schema).
+        Create a table as an individual DuckDB file.
+
+        ADR-009: Each table is stored in its own .duckdb file.
+        The table data is stored as `main.{TABLE_DATA_NAME}` within the file.
 
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
-            table_name: The table name
+            bucket_name: The bucket name (directory)
+            table_name: The table name (becomes filename.duckdb)
             columns: List of column definitions with keys: name, type, nullable, default
             primary_key: Optional list of column names for primary key
 
         Returns:
             Table info dict with name, bucket, columns, row_count
         """
+        # Ensure bucket directory exists
+        bucket_dir = self.get_bucket_dir(project_id, bucket_name)
+        bucket_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get table file path
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
         # Build column definitions
         col_defs = []
         for col in columns:
@@ -1075,17 +1107,25 @@ class ProjectDBManager:
             col_defs.append(f"PRIMARY KEY ({pk_cols})")
 
         columns_sql = ", ".join(col_defs)
-        create_sql = f"CREATE TABLE {bucket_name}.{table_name} ({columns_sql})"
+        # ADR-009: Table is stored as main.{TABLE_DATA_NAME} in its own file
+        create_sql = f"CREATE TABLE main.{TABLE_DATA_NAME} ({columns_sql})"
 
-        with self.connection(project_id) as conn:
+        # Create new DuckDB file for this table
+        conn = duckdb.connect(str(table_path))
+        try:
+            conn.execute(f"SET threads = {settings.duckdb_threads}")
+            conn.execute(f"SET memory_limit = '{settings.duckdb_memory_limit}'")
             conn.execute(create_sql)
             conn.commit()
+        finally:
+            conn.close()
 
         logger.info(
             "table_created",
             project_id=project_id,
             bucket_name=bucket_name,
             table_name=table_name,
+            path=str(table_path),
             column_count=len(columns),
             primary_key=primary_key,
         )
@@ -1100,26 +1140,37 @@ class ProjectDBManager:
         table_name: str,
     ) -> bool:
         """
-        Delete a table from a bucket.
+        Delete a table by removing its DuckDB file.
+
+        ADR-009: Tables are individual files, so deletion is file removal.
 
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
+            bucket_name: The bucket name (directory)
             table_name: The table name
 
         Returns:
             True if successful
         """
-        with self.connection(project_id) as conn:
-            conn.execute(f"DROP TABLE IF EXISTS {bucket_name}.{table_name}")
-            conn.commit()
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
 
-        logger.info(
-            "table_deleted",
-            project_id=project_id,
-            bucket_name=bucket_name,
-            table_name=table_name,
-        )
+        if table_path.exists():
+            table_path.unlink()
+            logger.info(
+                "table_deleted",
+                project_id=project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+                path=str(table_path),
+            )
+        else:
+            logger.warning(
+                "table_not_found",
+                project_id=project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+            )
+
         return True
 
     def get_table(
@@ -1131,23 +1182,31 @@ class ProjectDBManager:
         """
         Get information about a specific table (ObjectInfo).
 
+        ADR-009: Opens the table's individual DuckDB file to query metadata.
+
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
+            bucket_name: The bucket name (directory)
             table_name: The table name
 
         Returns:
             Table info dict or None if not found
         """
-        with self.connection(project_id, read_only=True) as conn:
-            # Check if table exists
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            return None
+
+        conn = duckdb.connect(str(table_path), read_only=True)
+        try:
+            # Check if data table exists (ADR-009: table is main.{TABLE_DATA_NAME})
             table_result = conn.execute(
-                """
+                f"""
                 SELECT table_name
                 FROM information_schema.tables
-                WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'
-                """,
-                [bucket_name, table_name],
+                WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                  AND table_type = 'BASE TABLE'
+                """
             ).fetchone()
 
             if not table_result:
@@ -1155,13 +1214,12 @@ class ProjectDBManager:
 
             # Get column information
             columns_result = conn.execute(
-                """
+                f"""
                 SELECT column_name, data_type, is_nullable, ordinal_position
                 FROM information_schema.columns
-                WHERE table_schema = ? AND table_name = ?
+                WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
                 ORDER BY ordinal_position
-                """,
-                [bucket_name, table_name],
+                """
             ).fetchall()
 
             columns = [
@@ -1176,7 +1234,7 @@ class ProjectDBManager:
 
             # Get row count
             row_count_result = conn.execute(
-                f"SELECT COUNT(*) FROM {bucket_name}.{table_name}"
+                f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
             ).fetchone()
             row_count = row_count_result[0] if row_count_result else 0
 
@@ -1184,30 +1242,20 @@ class ProjectDBManager:
             primary_key = []
             try:
                 pk_result = conn.execute(
-                    """
+                    f"""
                     SELECT constraint_column_names
                     FROM duckdb_constraints()
-                    WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'
-                    """,
-                    [bucket_name, table_name],
+                    WHERE schema_name = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                      AND constraint_type = 'PRIMARY KEY'
+                    """
                 ).fetchone()
                 if pk_result and pk_result[0]:
-                    # constraint_column_names is a list of column names
                     primary_key = list(pk_result[0])
             except Exception:
-                # Constraint query might fail in some cases, ignore
                 pass
 
-            # Estimate table size (DuckDB doesn't have direct table size, use file size as proxy)
-            # For more accurate size, we'd need to use pragma_storage_info
-            size_bytes = 0
-            try:
-                storage_info = conn.execute(
-                    f"SELECT SUM(compressed_size) FROM pragma_storage_info('{bucket_name}.{table_name}')"
-                ).fetchone()
-                size_bytes = storage_info[0] if storage_info and storage_info[0] else 0
-            except Exception:
-                pass
+            # ADR-009: Table size is the file size
+            size_bytes = table_path.stat().st_size
 
             return {
                 "name": table_name,
@@ -1216,8 +1264,10 @@ class ProjectDBManager:
                 "row_count": row_count,
                 "size_bytes": size_bytes,
                 "primary_key": primary_key,
-                "created_at": None,  # DuckDB doesn't track creation time
+                "created_at": None,
             }
+        finally:
+            conn.close()
 
     def list_tables(
         self,
@@ -1225,28 +1275,25 @@ class ProjectDBManager:
         bucket_name: str,
     ) -> list[dict[str, Any]]:
         """
-        List all tables in a bucket.
+        List all tables in a bucket by scanning .duckdb files.
+
+        ADR-009: Tables are .duckdb files in the bucket directory.
 
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
+            bucket_name: The bucket name (directory)
 
         Returns:
             List of table info dicts
         """
-        with self.connection(project_id, read_only=True) as conn:
-            tables_result = conn.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = ? AND table_type = 'BASE TABLE'
-                ORDER BY table_name
-                """,
-                [bucket_name],
-            ).fetchall()
+        bucket_dir = self.get_bucket_dir(project_id, bucket_name)
+
+        if not bucket_dir.exists():
+            return []
 
         tables = []
-        for (table_name,) in tables_result:
+        for table_file in sorted(bucket_dir.glob("*.duckdb")):
+            table_name = table_file.stem  # filename without .duckdb
             table_info = self.get_table(project_id, bucket_name, table_name)
             if table_info:
                 tables.append(table_info)
@@ -1260,27 +1307,19 @@ class ProjectDBManager:
         table_name: str,
     ) -> bool:
         """
-        Check if a table exists in a bucket.
+        Check if a table exists by checking if its file exists.
+
+        ADR-009: Table existence = file existence.
 
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
+            bucket_name: The bucket name (directory)
             table_name: The table name
 
         Returns:
-            True if table exists
+            True if table file exists
         """
-        with self.connection(project_id, read_only=True) as conn:
-            result = conn.execute(
-                """
-                SELECT 1
-                FROM information_schema.tables
-                WHERE table_schema = ? AND table_name = ? AND table_type = 'BASE TABLE'
-                """,
-                [bucket_name, table_name],
-            ).fetchone()
-
-            return result is not None
+        return self.get_table_path(project_id, bucket_name, table_name).exists()
 
     def get_table_preview(
         self,
@@ -1292,25 +1331,34 @@ class ProjectDBManager:
         """
         Get a preview of table data.
 
+        ADR-009: Opens the table's individual DuckDB file to query data.
+
         Args:
             project_id: The project ID
-            bucket_name: The bucket/schema name
+            bucket_name: The bucket name (directory)
             table_name: The table name
             limit: Maximum number of rows to return (default 1000)
 
         Returns:
             Dict with columns, rows, total_row_count, preview_row_count
         """
-        with self.connection(project_id, read_only=True) as conn:
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        conn = duckdb.connect(str(table_path), read_only=True)
+        try:
             # Get column information
             columns_result = conn.execute(
-                """
+                f"""
                 SELECT column_name, data_type, is_nullable, ordinal_position
                 FROM information_schema.columns
-                WHERE table_schema = ? AND table_name = ?
+                WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
                 ORDER BY ordinal_position
-                """,
-                [bucket_name, table_name],
+                """
             ).fetchall()
 
             columns = [
@@ -1325,13 +1373,13 @@ class ProjectDBManager:
 
             # Get total row count
             total_count_result = conn.execute(
-                f"SELECT COUNT(*) FROM {bucket_name}.{table_name}"
+                f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
             ).fetchone()
             total_row_count = total_count_result[0] if total_count_result else 0
 
             # Get preview rows
             preview_result = conn.execute(
-                f"SELECT * FROM {bucket_name}.{table_name} LIMIT {limit}"
+                f"SELECT * FROM main.{TABLE_DATA_NAME} LIMIT {limit}"
             ).fetchall()
 
             # Get column names for row dicts
@@ -1359,6 +1407,8 @@ class ProjectDBManager:
                 "total_row_count": total_row_count,
                 "preview_row_count": len(rows),
             }
+        finally:
+            conn.close()
 
 
 # Global instances

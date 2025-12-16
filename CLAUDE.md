@@ -62,8 +62,8 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Project CRUD | DONE | 32 |
 | Bucket CRUD + Sharing | DONE | 37 |
 | Table CRUD + Preview | DONE | 29 |
-| **ADR-009 Refactor** | **NOW** | - |
-| Write Queue (simplified) | TODO | - |
+| **ADR-009 Refactor** | **DONE** | 98 |
+| Write Queue (simplified) | **NOW** | - |
 | Auth Middleware | TODO | - |
 | Idempotency Middleware | TODO | - |
 | Prometheus /metrics | TODO | - |
@@ -76,8 +76,8 @@ connection/                   # Keboola Connection (git submodule/clone)
 | PHP Driver | TODO (last) | - |
 
 **Next implementation order:**
-1. **REFACTOR to ADR-009** (per-table files) - CURRENT
-2. Write Queue (simplified with ADR-009)
+1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
+2. **Write Queue (simplified with ADR-009)** - CURRENT
 3. Auth middleware (hierarchical API keys)
 4. Idempotency middleware (X-Idempotency-Key)
 5. Prometheus /metrics endpoint

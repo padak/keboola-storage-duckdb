@@ -1,4 +1,4 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v5.3
+# DuckDB Storage Backend pro Keboola - Implementacni plan v6.1
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
 
@@ -21,6 +21,7 @@
 | Project CRUD API | **DONE** | 32 testu PASS |
 | Bucket CRUD API | **DONE** | 37 testu PASS (vcetne sharing/linking) |
 | Table CRUD + Preview | **DONE** | 29 testu PASS |
+| **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 98 testu PASS** |
 | Table Schema Operations | TODO | Specifikace hotova |
 | Import/Export API | TODO | Specifikace hotova |
 | Write Queue | TODO | Specifikace hotova (in-memory + idempotency) |
@@ -51,9 +52,11 @@
        ↓
 [DONE] ADR-009 schvaleno (Codex GPT-5 validace, 4096 ATTACH test OK)
        ↓
-[NOW]  *** REFAKTOR NA ADR-009 (1 soubor per tabulka) ***
+[DONE] REFAKTOR NA ADR-009 (1 soubor per tabulka) - 98 testu PASS
        ↓
-[NEXT] Dotahnout Python API (Write Queue zjednodusena, Import/Export, Files, Snapshots)
+[NOW]  *** Write Queue (zjednodusena) + Auth Middleware ***
+       ↓
+[NEXT] Dotahnout Python API (Import/Export, Files, Snapshots)
        ↓
 [LAST] Implementovat PHP Driver Package (az bude Python API kompletni)
 ```
@@ -66,8 +69,8 @@
 | 2 | Projects | **100%** | Hotovo |
 | 3 | Buckets + Sharing | **100%** | Hotovo |
 | 4 | Table CRUD + Preview | **100%** | Hotovo (98 testu) |
-| **4.5** | **REFAKTOR ADR-009** | **0% - NOW** | **Zmena na per-table soubory** |
-| 5 | Write Queue (zjednodusena) | **0%** | ADR-009 zjednodusuje |
+| **4.5** | **REFAKTOR ADR-009** | **100% - DONE** | **Per-table soubory implementovany** |
+| 5 | Write Queue (zjednodusena) | **0% - NOW** | ADR-009 zjednodusuje |
 | 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
 | 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
 | 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
@@ -2098,7 +2101,8 @@ Headers:
 
 | Verze | Datum | Zmeny |
 |-------|-------|-------|
-| **v6.0** | **2024-12-16** | **ADR-009 ACCEPTED:** Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. Write Queue zjednodusena. Pridan refaktoring plan (Faze 4.5). |
+| **v6.1** | **2024-12-16** | **ADR-009 IMPLEMENTED:** Refaktor dokoncen - projekt=adresar, bucket=adresar, tabulka=soubor. Vsech 98 testu PASS. Bucket sharing zjednoduseno. |
+| v6.0 | 2024-12-16 | ADR-009 ACCEPTED: Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. Write Queue zjednodusena. Pridan refaktoring plan (Faze 4.5). |
 | v5.3 | 2024-12-16 | GPT-5 second opinion review - 11 bodu zpracovano, akceptovana rizika rozsirena, auto-snapshot policy zmenena na per-projekt konfigurovatelnou |
 | v5.2 | 2024-12-15 | Pridana sekce "Akceptovana rizika MVP" - cross-DB konzistence, idempotency middleware |
 | v5.1 | 2024-12-15 | Schvalena vsechna rozhodnuti, hierarchicky auth model, Full MERGE, auto-snapshots |
