@@ -211,6 +211,56 @@ sum by (type) (rate(duckdb_api_errors_total[5m]))
 
 ---
 
+## DuckDB Operations Metrics
+
+### `duckdb_operations_total`
+**Type:** Counter
+
+Total number of DuckDB database operations (queries, inserts, etc.).
+
+**Labels:**
+- `operation` - Operation type (query, insert, update, delete, etc.)
+- `project_id` - Project identifier
+
+**Example:**
+```
+duckdb_operations_total{operation="query",project_id="proj_123"} 500.0
+duckdb_operations_total{operation="insert",project_id="proj_123"} 150.0
+```
+
+**PromQL - Operations per second:**
+```promql
+sum(rate(duckdb_operations_total[5m])) by (operation)
+```
+
+---
+
+### `duckdb_operation_duration_seconds`
+**Type:** Histogram
+
+Duration of DuckDB operations in seconds.
+
+**Labels:**
+- `operation` - Operation type
+- `project_id` - Project identifier
+
+**Example:**
+```
+duckdb_operation_duration_seconds_bucket{operation="query",project_id="proj_123",le="0.1"} 480.0
+duckdb_operation_duration_seconds_bucket{operation="query",project_id="proj_123",le="+Inf"} 500.0
+duckdb_operation_duration_seconds_sum{operation="query",project_id="proj_123"} 25.5
+duckdb_operation_duration_seconds_count{operation="query",project_id="proj_123"} 500.0
+```
+
+**PromQL - P95 operation latency:**
+```promql
+histogram_quantile(0.95,
+  sum by (operation, le) (rate(duckdb_operation_duration_seconds_bucket[5m]))
+)
+```
+
+---
+
 ## Storage Metrics
 
 ### `duckdb_projects_total`
@@ -356,6 +406,56 @@ duckdb_idempotency_conflicts_total 3.0
 **Interpretation:**
 - Should be very low or zero
 - High values indicate client bugs (reusing idempotency keys incorrectly)
+
+---
+
+## Write Queue Metrics
+
+### `duckdb_write_queue_depth`
+**Type:** Gauge
+
+Number of operations currently waiting in the write queue.
+
+**Example:**
+```
+duckdb_write_queue_depth 3.0
+```
+
+**Interpretation:**
+- Value of 0 means no queued operations (healthy)
+- High values indicate backpressure or slow writes
+
+**Alert example:**
+```yaml
+- alert: WriteQueueBackpressure
+  expr: duckdb_write_queue_depth > 10
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Write queue depth exceeds 10"
+```
+
+---
+
+### `duckdb_write_queue_wait_seconds`
+**Type:** Histogram
+
+Time spent waiting in the write queue before processing.
+
+**Example:**
+```
+duckdb_write_queue_wait_seconds_bucket{le="0.01"} 95.0
+duckdb_write_queue_wait_seconds_bucket{le="0.1"} 99.0
+duckdb_write_queue_wait_seconds_bucket{le="+Inf"} 100.0
+duckdb_write_queue_wait_seconds_sum 0.85
+duckdb_write_queue_wait_seconds_count 100.0
+```
+
+**PromQL - P95 queue wait time:**
+```promql
+histogram_quantile(0.95, sum(rate(duckdb_write_queue_wait_seconds_bucket[5m])) by (le))
+```
 
 ---
 
@@ -525,6 +625,55 @@ Number of garbage collection runs by generation.
 python_gc_collections_total{generation="0"} 0.0
 python_gc_collections_total{generation="1"} 15.0
 python_gc_collections_total{generation="2"} 0.0
+```
+
+---
+
+### `python_gc_objects_collected_total`
+**Type:** Counter
+
+Total number of objects collected during garbage collection by generation.
+
+**Labels:**
+- `generation` - GC generation (0, 1, 2)
+
+**Example:**
+```
+python_gc_objects_collected_total{generation="0"} 0.0
+python_gc_objects_collected_total{generation="1"} 378.0
+python_gc_objects_collected_total{generation="2"} 0.0
+```
+
+---
+
+### `python_gc_objects_uncollectable_total`
+**Type:** Counter
+
+Total number of uncollectable objects found during garbage collection (potential memory leaks).
+
+**Labels:**
+- `generation` - GC generation (0, 1, 2)
+
+**Example:**
+```
+python_gc_objects_uncollectable_total{generation="0"} 0.0
+python_gc_objects_uncollectable_total{generation="1"} 0.0
+python_gc_objects_uncollectable_total{generation="2"} 0.0
+```
+
+**Interpretation:**
+- Should always be 0 in healthy applications
+- Non-zero values indicate circular references that cannot be collected (memory leak)
+
+**Alert example:**
+```yaml
+- alert: PythonMemoryLeak
+  expr: sum(python_gc_objects_uncollectable_total) > 0
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Uncollectable objects detected - potential memory leak"
 ```
 
 ---
