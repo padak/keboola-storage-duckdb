@@ -228,3 +228,83 @@ class TablePreviewResponse(BaseModel):
     rows: list[dict[str, Any]] = Field(description="Row data as list of dictionaries")
     total_row_count: int = Field(description="Total rows in table")
     preview_row_count: int = Field(description="Number of rows in preview")
+
+
+# ============================================
+# Table Schema Operations models
+# ============================================
+
+
+class AddColumnRequest(BaseModel):
+    """Request to add a column to a table."""
+
+    name: str = Field(description="Column name")
+    type: str = Field(
+        description="DuckDB data type (VARCHAR, INTEGER, DOUBLE, BOOLEAN, TIMESTAMP, etc.)"
+    )
+    nullable: bool = Field(default=True, description="Whether column allows NULL values")
+    default: str | None = Field(default=None, description="Default value expression")
+
+
+class AlterColumnRequest(BaseModel):
+    """Request to alter a column in a table."""
+
+    new_name: str | None = Field(default=None, description="New column name (for rename)")
+    new_type: str | None = Field(default=None, description="New data type (for type change)")
+    set_not_null: bool | None = Field(
+        default=None, description="Set NOT NULL constraint (True) or DROP NOT NULL (False)"
+    )
+    set_default: str | None = Field(
+        default=None, description="New default value expression (use empty string to drop)"
+    )
+
+
+class SetPrimaryKeyRequest(BaseModel):
+    """Request to set primary key on a table."""
+
+    columns: list[str] = Field(
+        description="List of column names to form the primary key", min_length=1
+    )
+
+
+class DeleteRowsRequest(BaseModel):
+    """Request to delete rows from a table."""
+
+    where_clause: str = Field(
+        description="SQL WHERE clause condition (without 'WHERE' keyword). "
+        "Example: \"status = 'deleted'\" or \"created_at < '2024-01-01'\""
+    )
+
+
+class DeleteRowsResponse(BaseModel):
+    """Response for delete rows operation."""
+
+    deleted_rows: int = Field(description="Number of rows deleted")
+    table_rows_after: int = Field(description="Total rows remaining in table")
+
+
+class ColumnStatistics(BaseModel):
+    """Statistics for a single column from SUMMARIZE."""
+
+    column_name: str = Field(description="Column name")
+    column_type: str = Field(description="Column data type")
+    min: Any | None = Field(default=None, description="Minimum value")
+    max: Any | None = Field(default=None, description="Maximum value")
+    approx_unique: int | None = Field(default=None, description="Approximate unique count")
+    avg: float | None = Field(default=None, description="Average value (numeric columns)")
+    std: float | None = Field(default=None, description="Standard deviation (numeric columns)")
+    q25: Any | None = Field(default=None, description="25th percentile")
+    q50: Any | None = Field(default=None, description="50th percentile (median)")
+    q75: Any | None = Field(default=None, description="75th percentile")
+    count: int | None = Field(default=None, description="Non-null count")
+    null_percentage: float | None = Field(default=None, description="Percentage of null values")
+
+
+class TableProfileResponse(BaseModel):
+    """Response for table profiling (SUMMARIZE)."""
+
+    table_name: str = Field(description="Table name")
+    bucket_name: str = Field(description="Bucket name")
+    row_count: int = Field(description="Total rows in table")
+    column_count: int = Field(description="Number of columns")
+    statistics: list[ColumnStatistics] = Field(description="Per-column statistics")

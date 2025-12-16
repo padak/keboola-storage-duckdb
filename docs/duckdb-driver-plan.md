@@ -25,7 +25,7 @@
 | **Auth + Write Queue** | **DONE** | **TableLockManager + API keys, 144 testu PASS** |
 | **Idempotency Middleware** | **DONE** | **X-Idempotency-Key header, 165 testu PASS** |
 | **Prometheus /metrics** | **DONE** | **180 testu PASS** |
-| Table Schema Operations | TODO | Specifikace hotova |
+| **Table Schema Operations** | **DONE** | **33 novych testu (213 total)** |
 | Import/Export API | TODO | Specifikace hotova |
 | Files API (on-prem) | TODO | Specifikace hotova |
 | Snapshots API | TODO | Specifikace hotova (per-projekt policy) |
@@ -60,9 +60,11 @@
        ↓
 [DONE] Prometheus /metrics endpoint - 180 testu PASS
        ↓
-[NOW]  *** Table Schema Operations ***
+[DONE] Table Schema Operations - 213 testu PASS
        ↓
-[NEXT] Dotahnout Python API (Import/Export, Files, Snapshots)
+[NOW]  *** Import/Export API ***
+       ↓
+[NEXT] Dotahnout Python API (Files, Snapshots)
        ↓
 [LAST] Implementovat PHP Driver Package (az bude Python API kompletni)
 ```
@@ -79,7 +81,7 @@
 | **5** | **Auth + Write Queue** | **100% - DONE** | **TableLockManager + API keys, 144 testu** |
 | **5.6** | **Idempotency Middleware** | **100% - DONE** | **165 testu PASS** |
 | **5.7** | **Prometheus /metrics** | **100% - DONE** | **180 testu PASS** |
-| 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
+| **6** | **Table Schema Operations** | **100% - DONE** | **33 testu, 213 total** |
 | 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
 | 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
 | 9 | Dev Branches | **0%** | Zjednoduseno s ADR-009 |
@@ -956,15 +958,18 @@ BEFORE (ADR-002):                    AFTER (ADR-009):
 - ~~Priority queue~~ (zbytecna pro per-table)
 - ~~Complex queue management~~ (simple lock staci)
 
-### Faze 6: Table Schema Operations
-- [ ] POST /tables/{table}/columns (AddColumn)
-- [ ] DELETE /tables/{table}/columns/{name} (DropColumn)
-- [ ] PUT /tables/{table}/columns/{name} (AlterColumn)
-- [ ] POST /tables/{table}/primary-key (AddPrimaryKey)
-- [ ] DELETE /tables/{table}/primary-key (DropPrimaryKey)
-- [ ] DELETE /tables/{table}/rows (DeleteTableRows with WHERE)
-- [ ] POST /tables/{table}/profile (ProfileTable - SUMMARIZE)
-- [ ] Pytest testy
+### Faze 6: Table Schema Operations - DONE
+- [x] POST /tables/{table}/columns (AddColumn)
+- [x] DELETE /tables/{table}/columns/{name} (DropColumn)
+- [x] PUT /tables/{table}/columns/{name} (AlterColumn)
+- [x] POST /tables/{table}/primary-key (AddPrimaryKey)
+- [x] DELETE /tables/{table}/primary-key (DropPrimaryKey)
+- [x] DELETE /tables/{table}/rows (DeleteTableRows with WHERE)
+- [x] POST /tables/{table}/profile (ProfileTable - SUMMARIZE)
+- [x] Pytest testy (33 novych testu, 213 total)
+
+> **Poznamka:** DuckDB nepodporuje `ALTER TABLE ADD COLUMN` s `NOT NULL` constraint.
+> Sloupce se musi pridat jako nullable a pak zmenit na NOT NULL pres `ALTER COLUMN`.
 
 ### Faze 7: Import/Export - KRITICKE PRO MVP
 > **Viz sekce "Import/Export - Detailni specifikace" nize**

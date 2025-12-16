@@ -75,15 +75,15 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Auth Middleware | DONE | 24 |
 | Idempotency Middleware | DONE | 21 |
 | Prometheus /metrics | DONE | 15 |
-| **Table Schema Ops** | **TODO - NEXT** | - |
-| Import/Export | TODO | - |
+| Table Schema Ops | DONE | 33 |
+| **Import/Export** | **TODO - NEXT** | - |
 | Files API | TODO | - |
 | Snapshots | TODO | - |
 | Dev Branches | TODO | - |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 180 tests PASS**
+**Total: 213 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -91,9 +91,9 @@ connection/                   # Keboola Connection (git submodule/clone)
 3. ~~Auth middleware (hierarchical API keys)~~ - DONE
 4. ~~Idempotency middleware (X-Idempotency-Key)~~ - DONE
 5. ~~Prometheus /metrics endpoint~~ - DONE
-6. **Table Schema Operations** - NEXT
-7. Files API
-8. Import/Export
+6. ~~Table Schema Operations~~ - DONE
+7. **Import/Export** - NEXT
+8. Files API
 9. Snapshots
 10. Dev Branches (simplified with ADR-009)
 11. PHP Driver
@@ -189,11 +189,15 @@ docker compose up --build  # Docker
 | `/projects/{id}/buckets/{bucket}/tables` | GET/POST | List/Create tables |
 | `/projects/{id}/buckets/{bucket}/tables/{table}` | GET/DELETE | Table CRUD |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/preview` | GET | Preview data |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/columns` | POST | Add column |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/columns/{name}` | DELETE/PUT | Drop/Alter column |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/primary-key` | POST/DELETE | Add/Drop PK |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/rows` | DELETE | Delete rows (WHERE) |
+| `/projects/{id}/buckets/{bucket}/tables/{table}/profile` | POST | Table profiling |
 
 ### TODO Endpoints (see duckdb-driver-plan.md for specs)
 
 - `POST /projects/{id}/query` - Write Queue
-- Table schema: columns, primary-key, rows
 - Import/Export: import/file, import/table, export
 - Files: prepare, upload, register, download, delete
 - Snapshots: create, list, get, restore, delete

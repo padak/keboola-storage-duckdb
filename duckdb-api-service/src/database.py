@@ -1950,6 +1950,552 @@ class ProjectDBManager:
             conn.close()
 
 
+    # ========================================
+    # Table schema operations (ADR-009: per-table files)
+    # ========================================
+
+    def add_column(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+        nullable: bool = True,
+        default: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a column to a table.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+            column_name: Name for the new column
+            column_type: DuckDB data type
+            nullable: Whether column allows NULL
+            default: Default value expression
+
+        Returns:
+            Updated table info dict
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        # Build ALTER TABLE statement
+        col_def = f"{column_name} {column_type}"
+        if not nullable:
+            col_def += " NOT NULL"
+        if default is not None:
+            col_def += f" DEFAULT {default}"
+
+        alter_sql = f"ALTER TABLE main.{TABLE_DATA_NAME} ADD COLUMN {col_def}"
+
+        # Execute with table lock
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                conn.execute(alter_sql)
+                conn.commit()
+            finally:
+                conn.close()
+
+        logger.info(
+            "column_added",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            column_name=column_name,
+            column_type=column_type,
+        )
+
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def drop_column(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        column_name: str,
+    ) -> dict[str, Any]:
+        """
+        Drop a column from a table.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+            column_name: Name of column to drop
+
+        Returns:
+            Updated table info dict
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        alter_sql = f"ALTER TABLE main.{TABLE_DATA_NAME} DROP COLUMN {column_name}"
+
+        # Execute with table lock
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                conn.execute(alter_sql)
+                conn.commit()
+            finally:
+                conn.close()
+
+        logger.info(
+            "column_dropped",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            column_name=column_name,
+        )
+
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def alter_column(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        column_name: str,
+        new_name: str | None = None,
+        new_type: str | None = None,
+        set_not_null: bool | None = None,
+        set_default: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Alter a column in a table.
+
+        Supports: rename, type change, NOT NULL constraint, default value.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+            column_name: Current column name
+            new_name: New column name (for rename)
+            new_type: New data type
+            set_not_null: True to add NOT NULL, False to drop it
+            set_default: New default value (empty string to drop)
+
+        Returns:
+            Updated table info dict
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        # Build ALTER statements
+        alter_statements = []
+
+        if new_name is not None:
+            alter_statements.append(
+                f"ALTER TABLE main.{TABLE_DATA_NAME} RENAME COLUMN {column_name} TO {new_name}"
+            )
+            # Update column_name for subsequent operations
+            column_name = new_name
+
+        if new_type is not None:
+            alter_statements.append(
+                f"ALTER TABLE main.{TABLE_DATA_NAME} ALTER COLUMN {column_name} SET DATA TYPE {new_type}"
+            )
+
+        if set_not_null is True:
+            alter_statements.append(
+                f"ALTER TABLE main.{TABLE_DATA_NAME} ALTER COLUMN {column_name} SET NOT NULL"
+            )
+        elif set_not_null is False:
+            alter_statements.append(
+                f"ALTER TABLE main.{TABLE_DATA_NAME} ALTER COLUMN {column_name} DROP NOT NULL"
+            )
+
+        if set_default is not None:
+            if set_default == "":
+                alter_statements.append(
+                    f"ALTER TABLE main.{TABLE_DATA_NAME} ALTER COLUMN {column_name} DROP DEFAULT"
+                )
+            else:
+                alter_statements.append(
+                    f"ALTER TABLE main.{TABLE_DATA_NAME} ALTER COLUMN {column_name} SET DEFAULT {set_default}"
+                )
+
+        if not alter_statements:
+            # Nothing to do
+            return self.get_table(project_id, bucket_name, table_name)
+
+        # Execute with table lock
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                for sql in alter_statements:
+                    conn.execute(sql)
+                conn.commit()
+            finally:
+                conn.close()
+
+        logger.info(
+            "column_altered",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            column_name=column_name,
+            changes=len(alter_statements),
+        )
+
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def add_primary_key(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        columns: list[str],
+    ) -> dict[str, Any]:
+        """
+        Add a primary key constraint to a table.
+
+        Note: DuckDB doesn't support adding PK to existing table with data.
+        This recreates the table with the PK constraint.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+            columns: Column names for the primary key
+
+        Returns:
+            Updated table info dict
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        pk_cols = ", ".join(columns)
+
+        # DuckDB requires recreating the table to add PK
+        # We'll use a temp table approach
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                # Check if PK already exists
+                pk_result = conn.execute(
+                    f"""
+                    SELECT constraint_column_names
+                    FROM duckdb_constraints()
+                    WHERE schema_name = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                      AND constraint_type = 'PRIMARY KEY'
+                    """
+                ).fetchone()
+
+                if pk_result:
+                    raise ValueError(
+                        f"Table already has a primary key: {list(pk_result[0])}"
+                    )
+
+                # Get current table schema
+                columns_info = conn.execute(
+                    f"""
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                    ORDER BY ordinal_position
+                    """
+                ).fetchall()
+
+                # Build new table definition with PK
+                col_defs = []
+                for col in columns_info:
+                    col_def = f"{col[0]} {col[1]}"
+                    if col[2] == "NO":
+                        col_def += " NOT NULL"
+                    col_defs.append(col_def)
+                col_defs.append(f"PRIMARY KEY ({pk_cols})")
+
+                # Recreate table with PK
+                conn.execute(f"ALTER TABLE main.{TABLE_DATA_NAME} RENAME TO _temp_data")
+                conn.execute(
+                    f"CREATE TABLE main.{TABLE_DATA_NAME} ({', '.join(col_defs)})"
+                )
+                conn.execute(
+                    f"INSERT INTO main.{TABLE_DATA_NAME} SELECT * FROM main._temp_data"
+                )
+                conn.execute("DROP TABLE main._temp_data")
+                conn.commit()
+
+            finally:
+                conn.close()
+
+        logger.info(
+            "primary_key_added",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            columns=columns,
+        )
+
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def drop_primary_key(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> dict[str, Any]:
+        """
+        Drop the primary key constraint from a table.
+
+        Note: DuckDB doesn't support DROP CONSTRAINT for PK.
+        This recreates the table without the PK constraint.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+
+        Returns:
+            Updated table info dict
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                # Check if PK exists
+                pk_result = conn.execute(
+                    f"""
+                    SELECT constraint_column_names
+                    FROM duckdb_constraints()
+                    WHERE schema_name = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                      AND constraint_type = 'PRIMARY KEY'
+                    """
+                ).fetchone()
+
+                if not pk_result:
+                    raise ValueError("Table does not have a primary key")
+
+                # Get current table schema
+                columns_info = conn.execute(
+                    f"""
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                    ORDER BY ordinal_position
+                    """
+                ).fetchall()
+
+                # Build new table definition without PK
+                col_defs = []
+                for col in columns_info:
+                    col_def = f"{col[0]} {col[1]}"
+                    # Keep NOT NULL for non-nullable columns, but remove from PK columns
+                    if col[2] == "NO":
+                        col_def += " NOT NULL"
+                    col_defs.append(col_def)
+
+                # Recreate table without PK
+                conn.execute(f"ALTER TABLE main.{TABLE_DATA_NAME} RENAME TO _temp_data")
+                conn.execute(
+                    f"CREATE TABLE main.{TABLE_DATA_NAME} ({', '.join(col_defs)})"
+                )
+                conn.execute(
+                    f"INSERT INTO main.{TABLE_DATA_NAME} SELECT * FROM main._temp_data"
+                )
+                conn.execute("DROP TABLE main._temp_data")
+                conn.commit()
+
+            finally:
+                conn.close()
+
+        logger.info(
+            "primary_key_dropped",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+        )
+
+        return self.get_table(project_id, bucket_name, table_name)
+
+    def delete_table_rows(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+        where_clause: str,
+    ) -> dict[str, Any]:
+        """
+        Delete rows from a table matching a WHERE condition.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+            where_clause: SQL WHERE condition (without 'WHERE' keyword)
+
+        Returns:
+            Dict with deleted_rows count and table_rows_after
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        # Basic SQL injection prevention - check for dangerous patterns
+        dangerous_patterns = [";", "--", "/*", "*/", "drop ", "truncate ", "alter "]
+        where_lower = where_clause.lower()
+        for pattern in dangerous_patterns:
+            if pattern in where_lower:
+                raise ValueError(f"Invalid WHERE clause: contains '{pattern}'")
+
+        delete_sql = f"DELETE FROM main.{TABLE_DATA_NAME} WHERE {where_clause}"
+
+        with table_lock_manager.acquire(project_id, bucket_name, table_name):
+            conn = duckdb.connect(str(table_path))
+            try:
+                # Get count before
+                count_before = conn.execute(
+                    f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
+                ).fetchone()[0]
+
+                # Execute delete
+                conn.execute(delete_sql)
+                conn.commit()
+
+                # Get count after
+                count_after = conn.execute(
+                    f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
+                ).fetchone()[0]
+
+                deleted_rows = count_before - count_after
+
+            finally:
+                conn.close()
+
+        logger.info(
+            "table_rows_deleted",
+            project_id=project_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            deleted_rows=deleted_rows,
+            rows_remaining=count_after,
+        )
+
+        return {
+            "deleted_rows": deleted_rows,
+            "table_rows_after": count_after,
+        }
+
+    def get_table_profile(
+        self,
+        project_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> dict[str, Any]:
+        """
+        Get statistical profile of a table using DuckDB's SUMMARIZE.
+
+        Args:
+            project_id: The project ID
+            bucket_name: The bucket name
+            table_name: The table name
+
+        Returns:
+            Dict with table info and per-column statistics
+        """
+        table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not table_path.exists():
+            raise FileNotFoundError(
+                f"Table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        conn = duckdb.connect(str(table_path), read_only=True)
+        try:
+            # Get row count
+            row_count = conn.execute(
+                f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
+            ).fetchone()[0]
+
+            # Get column count
+            column_count_result = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                """
+            ).fetchone()
+            column_count = column_count_result[0] if column_count_result else 0
+
+            # Run SUMMARIZE to get statistics
+            # SUMMARIZE returns columns: column_name, column_type, min, max, approx_unique, avg, std, q25, q50, q75, count, null_percentage
+            summarize_result = conn.execute(
+                f"SUMMARIZE main.{TABLE_DATA_NAME}"
+            ).fetchall()
+
+            statistics = []
+            for row in summarize_result:
+                stat = {
+                    "column_name": row[0],
+                    "column_type": row[1],
+                    "min": self._serialize_value(row[2]),
+                    "max": self._serialize_value(row[3]),
+                    "approx_unique": row[4],
+                    "avg": row[5],
+                    "std": row[6],
+                    "q25": self._serialize_value(row[7]),
+                    "q50": self._serialize_value(row[8]),
+                    "q75": self._serialize_value(row[9]),
+                    "count": row[10],
+                    "null_percentage": row[11],
+                }
+                statistics.append(stat)
+
+            return {
+                "table_name": table_name,
+                "bucket_name": bucket_name,
+                "row_count": row_count,
+                "column_count": column_count,
+                "statistics": statistics,
+            }
+
+        finally:
+            conn.close()
+
+    def _serialize_value(self, val: Any) -> Any:
+        """Serialize a value for JSON response."""
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val.isoformat()
+        if hasattr(val, "__str__") and not isinstance(
+            val, (str, int, float, bool, type(None), list, dict)
+        ):
+            return str(val)
+        return val
+
+
 # Global instances
 metadata_db = MetadataDB()
 project_db_manager = ProjectDBManager()
