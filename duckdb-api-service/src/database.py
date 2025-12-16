@@ -255,6 +255,20 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
+
+-- Idempotency keys for HTTP request deduplication
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key VARCHAR PRIMARY KEY,
+    method VARCHAR(10) NOT NULL,
+    endpoint VARCHAR(500) NOT NULL,
+    request_hash VARCHAR(64),
+    response_status INTEGER NOT NULL,
+    response_body TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at);
 """
 
 
@@ -865,6 +879,113 @@ class MetadataDB:
             project_id=project_id,
             count=count,
         )
+
+        return count
+
+    # ========================================
+    # Idempotency key operations
+    # ========================================
+
+    def get_idempotency_key(self, key: str) -> dict[str, Any] | None:
+        """
+        Get an idempotency key record if it exists and hasn't expired.
+
+        Args:
+            key: The idempotency key
+
+        Returns:
+            Dict with key info including cached response, or None if not found/expired
+        """
+        result = self.execute_one(
+            """
+            SELECT key, method, endpoint, request_hash, response_status, response_body,
+                   created_at, expires_at
+            FROM idempotency_keys
+            WHERE key = ? AND expires_at > now()
+            """,
+            [key],
+        )
+
+        if result:
+            return {
+                "key": result[0],
+                "method": result[1],
+                "endpoint": result[2],
+                "request_hash": result[3],
+                "response_status": result[4],
+                "response_body": result[5],
+                "created_at": result[6].isoformat() if result[6] else None,
+                "expires_at": result[7].isoformat() if result[7] else None,
+            }
+
+        return None
+
+    def store_idempotency_key(
+        self,
+        key: str,
+        method: str,
+        endpoint: str,
+        request_hash: str | None,
+        response_status: int,
+        response_body: str,
+        ttl_seconds: int = 600,
+    ) -> None:
+        """
+        Store an idempotency key with its response.
+
+        Args:
+            key: The idempotency key
+            method: HTTP method (POST, PUT, DELETE)
+            endpoint: The request endpoint path
+            request_hash: SHA-256 hash of request body (for validation)
+            response_status: HTTP status code of the response
+            response_body: JSON string of the response body
+            ttl_seconds: Time to live in seconds (default 10 minutes)
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+
+        self.execute_write(
+            """
+            INSERT INTO idempotency_keys
+            (key, method, endpoint, request_hash, response_status, response_body, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (key) DO UPDATE SET
+                response_status = EXCLUDED.response_status,
+                response_body = EXCLUDED.response_body,
+                expires_at = EXCLUDED.expires_at
+            """,
+            [key, method, endpoint, request_hash, response_status, response_body, now, expires_at],
+        )
+
+        logger.debug(
+            "idempotency_key_stored",
+            key=key[:20] + "...",
+            method=method,
+            endpoint=endpoint,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def cleanup_expired_idempotency_keys(self) -> int:
+        """
+        Delete expired idempotency keys.
+
+        Returns:
+            Number of deleted keys
+        """
+        # Get count before deletion
+        count_result = self.execute_one(
+            "SELECT COUNT(*) FROM idempotency_keys WHERE expires_at <= now()"
+        )
+        count = count_result[0] if count_result else 0
+
+        if count > 0:
+            self.execute_write(
+                "DELETE FROM idempotency_keys WHERE expires_at <= now()"
+            )
+            logger.info("idempotency_keys_cleaned", count=count)
 
         return count
 

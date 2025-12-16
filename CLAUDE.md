@@ -50,7 +50,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── buckets.py     # Bucket CRUD
   │       ├── bucket_sharing.py  # Share, link, readonly
   │       └── tables.py      # Table CRUD + preview
-  └── tests/                 # pytest tests (144 tests)
+  └── tests/                 # pytest tests (165 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -66,8 +66,8 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Table CRUD + Preview | DONE | 34 |
 | ADR-009 Refactor | DONE | - |
 | Write Queue (mutex) | DONE | 14 |
-| **Auth Middleware** | **DONE** | 25 |
-| Idempotency Middleware | TODO | - |
+| Auth Middleware | DONE | 25 |
+| **Idempotency Middleware** | **DONE** | 21 |
 | Prometheus /metrics | TODO | - |
 | Table Schema Ops | TODO | - |
 | Import/Export | TODO | - |
@@ -77,14 +77,14 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 144 tests PASS**
+**Total: 165 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
 2. ~~Write Queue (simplified with ADR-009)~~ - DONE
 3. ~~Auth middleware (hierarchical API keys)~~ - DONE
-4. **Idempotency middleware (X-Idempotency-Key)** - NEXT
-5. Prometheus /metrics endpoint
+4. ~~Idempotency middleware (X-Idempotency-Key)~~ - DONE
+5. **Prometheus /metrics endpoint** - NEXT
 6. Table Schema Operations
 7. Files API
 8. Import/Export
@@ -100,7 +100,7 @@ All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHOD
 |------|----------|-------|
 | **Architecture** | **File organization** | **1 DuckDB file per table (ADR-009)** |
 | Write Queue | Simplified | Per-table lock (not per-project queue) |
-| Write Queue | Idempotency | X-Idempotency-Key header (TTL 5-10 min) |
+| Write Queue | Idempotency | X-Idempotency-Key header (TTL 10 min) |
 | Import/Export | Staging | `_staging/{uuid}.duckdb` |
 | Import/Export | Dedup | INSERT ON CONFLICT |
 | Import/Export | Incremental | Full MERGE |

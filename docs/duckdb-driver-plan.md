@@ -1,4 +1,4 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v6.4
+# DuckDB Storage Backend pro Keboola - Implementacni plan v6.5
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
 
@@ -24,7 +24,7 @@
 | **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 106 testu PASS** |
 | **Write Queue (mutex)** | **DONE** | **TableLockManager, 120 testu PASS** |
 | **Auth Middleware** | **DONE** | **Hierarchicky API key model, 144 testu PASS** |
-| Idempotency Middleware | TODO | X-Idempotency-Key header |
+| **Idempotency Middleware** | **DONE** | **X-Idempotency-Key header, 165 testu PASS** |
 | Table Schema Operations | TODO | Specifikace hotova |
 | Import/Export API | TODO | Specifikace hotova |
 | Files API (on-prem) | TODO | Specifikace hotova |
@@ -59,7 +59,9 @@
        ↓
 [DONE] Auth Middleware - 144 testu PASS
        ↓
-[NOW]  *** Idempotency Middleware ***
+[DONE] Idempotency Middleware - 165 testu PASS
+       ↓
+[NOW]  *** Prometheus /metrics endpoint ***
        ↓
 [NEXT] Dotahnout Python API (Import/Export, Files, Snapshots)
        ↓
@@ -77,6 +79,7 @@
 | **4.5** | **REFAKTOR ADR-009** | **100% - DONE** | **Per-table soubory implementovany** |
 | **5** | **Write Queue (mutex)** | **100% - DONE** | **TableLockManager implementovan** |
 | **5.5** | **Auth Middleware** | **100% - DONE** | **144 testu PASS** |
+| **5.6** | **Idempotency Middleware** | **100% - DONE** | **165 testu PASS** |
 | 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
 | 7 | Import/Export | **0%** | Specifikace hotova (GPT-5 review) |
 | 8 | Snapshots | **0%** | Specifikace hotova (per-projekt policy) |
@@ -100,9 +103,9 @@
 3. ~~**Dospecifikovat a implementovat Write Queue**~~ - DONE
    - [x] Rozhodnout: Queue durability → **In-memory** (klient ceka, retry na strane Keboola)
    - [x] Rozhodnout: Batch vs single statement → **Single SQL**
-   - [x] Rozhodnout: Idempotency → **X-Idempotency-Key header** (TTL 5-10 min)
+   - [x] Rozhodnout: Idempotency → **X-Idempotency-Key header** (TTL 10 min)
    - [x] TableLockManager implementovan (per-table mutex)
-   - [ ] Implementovat idempotency middleware (NEXT)
+   - [x] Idempotency middleware implementovan (21 testu)
    - [ ] Endpoint `POST /projects/{id}/query`
    - [ ] Connection pooling per project
    - [ ] Metriky: queue_depth, wait_time

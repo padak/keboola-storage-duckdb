@@ -1,5 +1,6 @@
 """DuckDB Storage API - FastAPI application."""
 
+import asyncio
 import logging
 import structlog
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ import uuid
 from src.config import settings
 from src.routers import backend, buckets, bucket_sharing, projects, tables
 from src.database import metadata_db
+from src.middleware.idempotency import IdempotencyMiddleware
 
 
 def setup_logging() -> None:
@@ -34,6 +36,25 @@ def setup_logging() -> None:
     )
 
 
+async def cleanup_idempotency_keys_task():
+    """Background task to periodically clean up expired idempotency keys."""
+    logger = structlog.get_logger()
+    # Run cleanup every 5 minutes
+    cleanup_interval = 300
+
+    while True:
+        try:
+            await asyncio.sleep(cleanup_interval)
+            count = metadata_db.cleanup_expired_idempotency_keys()
+            if count > 0:
+                logger.info("idempotency_cleanup_completed", deleted_count=count)
+        except asyncio.CancelledError:
+            logger.info("idempotency_cleanup_task_cancelled")
+            break
+        except Exception as e:
+            logger.error("idempotency_cleanup_failed", error=str(e))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -53,7 +74,19 @@ async def lifespan(app: FastAPI):
         logger.error("metadata_db_init_failed", error=str(e), exc_info=True)
         raise
 
+    # Start background cleanup task
+    cleanup_task = asyncio.create_task(cleanup_idempotency_keys_task())
+    logger.info("idempotency_cleanup_task_started")
+
     yield
+
+    # Cancel cleanup task on shutdown
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
     logger.info("application_shutdown")
 
 
@@ -90,6 +123,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add idempotency middleware (for POST/PUT/DELETE deduplication)
+app.add_middleware(IdempotencyMiddleware)
 
 
 @app.middleware("http")
