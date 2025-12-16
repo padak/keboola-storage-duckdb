@@ -66,15 +66,16 @@ connection/                   # Keboola Connection (git submodule/clone)
 
 | Component | Status | Tests |
 |-----------|--------|-------|
+| Backend + Health | DONE | 12 |
 | Project CRUD | DONE | 20 |
 | Bucket CRUD + Sharing | DONE | 40 |
 | Table CRUD + Preview | DONE | 34 |
 | ADR-009 Refactor | DONE | - |
-| Write Queue (mutex) | DONE | 14 |
-| Auth Middleware | DONE | 25 |
+| Write Queue (TableLockManager) | DONE | 14 |
+| Auth Middleware | DONE | 24 |
 | Idempotency Middleware | DONE | 21 |
-| **Prometheus /metrics** | **DONE** | 15 |
-| Table Schema Ops | TODO | - |
+| Prometheus /metrics | DONE | 15 |
+| **Table Schema Ops** | **TODO - NEXT** | - |
 | Import/Export | TODO | - |
 | Files API | TODO | - |
 | Snapshots | TODO | - |

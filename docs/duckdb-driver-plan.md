@@ -1,4 +1,4 @@
-# DuckDB Storage Backend pro Keboola - Implementacni plan v6.5
+# DuckDB Storage Backend pro Keboola - Implementacni plan v6.6
 
 > **Cil:** On-premise Keboola bez Snowflake a bez S3
 
@@ -18,12 +18,11 @@
 | BigQuery driver studium | **DONE** | Viz `bigquery-driver-research.md` |
 | DuckDB API Service skeleton | **DONE** | `duckdb-api-service/` - FastAPI, Docker, testy |
 | Centralni metadata databaze | **DONE** | ADR-008, `metadata.duckdb` |
-| Project CRUD API | **DONE** | 32 testu PASS |
-| Bucket CRUD API | **DONE** | 37 testu PASS (vcetne sharing/linking) |
-| Table CRUD + Preview | **DONE** | 29 testu PASS |
-| **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 106 testu PASS** |
-| **Write Queue (mutex)** | **DONE** | **TableLockManager, 120 testu PASS** |
-| **Auth Middleware** | **DONE** | **Hierarchicky API key model, 144 testu PASS** |
+| Project CRUD API | **DONE** | 20 novych testu (32 total) |
+| Bucket CRUD API | **DONE** | 37 novych testu (69 total, vcetne sharing/linking) |
+| Table CRUD + Preview | **DONE** | 29 novych testu (98 total) |
+| **ADR-009 Refaktor** | **DONE** | **Per-table soubory, 98 testu PASS** |
+| **Auth + Write Queue** | **DONE** | **TableLockManager + API keys, 144 testu PASS** |
 | **Idempotency Middleware** | **DONE** | **X-Idempotency-Key header, 165 testu PASS** |
 | **Prometheus /metrics** | **DONE** | **180 testu PASS** |
 | Table Schema Operations | TODO | Specifikace hotova |
@@ -53,11 +52,9 @@
        ↓
 [DONE] ADR-009 schvaleno (Codex GPT-5 validace, 4096 ATTACH test OK)
        ↓
-[DONE] REFAKTOR NA ADR-009 (1 soubor per tabulka) - 106 testu PASS
+[DONE] REFAKTOR NA ADR-009 (1 soubor per tabulka) - 98 testu PASS
        ↓
-[DONE] Write Queue (TableLockManager) - 120 testu PASS
-       ↓
-[DONE] Auth Middleware - 144 testu PASS
+[DONE] Auth + Write Queue (TableLockManager + API keys) - 144 testu PASS
        ↓
 [DONE] Idempotency Middleware - 165 testu PASS
        ↓
@@ -78,9 +75,8 @@
 | 2 | Projects | **100%** | Hotovo |
 | 3 | Buckets + Sharing | **100%** | Hotovo |
 | 4 | Table CRUD + Preview | **100%** | Hotovo |
-| **4.5** | **REFAKTOR ADR-009** | **100% - DONE** | **Per-table soubory implementovany** |
-| **5** | **Write Queue (mutex)** | **100% - DONE** | **TableLockManager implementovan** |
-| **5.5** | **Auth Middleware** | **100% - DONE** | **144 testu PASS** |
+| **4.5** | **REFAKTOR ADR-009** | **100% - DONE** | **Per-table soubory, 98 testu** |
+| **5** | **Auth + Write Queue** | **100% - DONE** | **TableLockManager + API keys, 144 testu** |
 | **5.6** | **Idempotency Middleware** | **100% - DONE** | **165 testu PASS** |
 | **5.7** | **Prometheus /metrics** | **100% - DONE** | **180 testu PASS** |
 | 6 | Table Schema + Aliases | **0%** | Specifikace hotova |
@@ -589,7 +585,7 @@ final class ImportTableFromFileHandler extends BaseHandler
 
 ### 1. DuckDB API Service (Python)
 
-**Aktualne implementovano (98 testu):**
+**Aktualne implementovano (180 testu):**
 ```
 duckdb-api-service/
 ├── requirements.txt
@@ -601,13 +597,21 @@ duckdb-api-service/
 │   ├── main.py                    # FastAPI app [DONE]
 │   ├── config.py                  # ENV konfigurace [DONE]
 │   ├── database.py                # MetadataDB + ProjectDBManager [DONE]
+│   ├── auth.py                    # API key generation/verification [DONE]
+│   ├── dependencies.py            # FastAPI auth dependencies [DONE]
+│   ├── metrics.py                 # Prometheus metrics definitions [DONE]
+│   ├── middleware/
+│   │   ├── __init__.py
+│   │   ├── idempotency.py         # X-Idempotency-Key handling [DONE]
+│   │   └── metrics.py             # Request instrumentation [DONE]
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── backend.py             # /health, /backend/* [DONE]
 │   │   ├── projects.py            # /projects CRUD [DONE]
 │   │   ├── buckets.py             # /buckets CRUD [DONE]
 │   │   ├── bucket_sharing.py      # share/link/readonly [DONE]
-│   │   └── tables.py              # /tables CRUD + preview [DONE]
+│   │   ├── tables.py              # /tables CRUD + preview [DONE]
+│   │   └── metrics.py             # /metrics endpoint [DONE]
 │   └── models/
 │       ├── __init__.py
 │       └── responses.py           # Pydantic models [DONE]
@@ -615,18 +619,21 @@ duckdb-api-service/
     ├── conftest.py                # Pytest fixtures [DONE]
     ├── test_backend.py            # 12 testu [DONE]
     ├── test_projects.py           # 20 testu [DONE]
-    ├── test_buckets.py            # 20 testu [DONE] (vcetne ADR-009 filesystem)
+    ├── test_buckets.py            # 20 testu [DONE]
     ├── test_bucket_sharing.py     # 20 testu [DONE]
-    ├── test_tables.py             # 34 testu [DONE] (vcetne ADR-009 filesystem)
-    └── test_table_lock.py         # 14 testu [DONE] (TableLockManager + concurrency)
+    ├── test_tables.py             # 34 testu [DONE]
+    ├── test_table_lock.py         # 14 testu [DONE]
+    ├── test_auth.py               # 13 testu [DONE]
+    ├── test_api_keys.py           # 11 testu [DONE]
+    ├── test_idempotency.py        # 21 testu [DONE]
+    └── test_metrics.py            # 15 testu [DONE]
 ```
 
 **Chybejici komponenty (potreba implementovat):**
 ```
 ├── src/
-│   ├── write_queue.py             # [TODO] Async write serialization
+│   ├── write_queue.py             # [TODO] Async write serialization (POST /query)
 │   ├── connection_pool.py         # [TODO] Per-project connection management
-│   ├── metrics.py                 # [TODO] Prometheus metrics
 │   ├── routers/
 │   │   ├── table_schema.py        # [TODO] AddColumn, DropColumn, etc.
 │   │   ├── table_import.py        # [TODO] Import/Export pipeline
@@ -862,7 +869,7 @@ class DuckdbDriverClient implements ClientInterface
 - [x] Primary key support (enforced)
 - [x] 29 pytest testu
 
-### Faze 4.5: REFAKTOR NA ADR-009 - NOW (KRITICKE)
+### Faze 4.5: REFAKTOR NA ADR-009 - DONE
 
 > **Proc ted?** Codex GPT-5 doporucil: "Doing it upfront is easier than retrofitting
 > after a large fleet exists." Refaktor PRED Write Queue a Import/Export.
@@ -875,41 +882,40 @@ class DuckdbDriverClient implements ClientInterface
 **Komponenty k refaktoru:**
 
 1. **database.py - ProjectDBManager**
-   - [ ] `get_project_path()` - vracet adresar misto souboru
-   - [ ] `get_bucket_path()` - vracet adresar
-   - [ ] `get_table_path()` - vracet cestu k .duckdb souboru
-   - [ ] `create_project()` - vytvorit adresar
-   - [ ] `delete_project()` - smazat adresar rekurzivne
+   - [x] `get_project_path()` - vracet adresar misto souboru
+   - [x] `get_bucket_path()` - vracet adresar
+   - [x] `get_table_path()` - vracet cestu k .duckdb souboru
+   - [x] `create_project()` - vytvorit adresar
+   - [x] `delete_project()` - smazat adresar rekurzivne
 
 2. **routers/buckets.py**
-   - [ ] `create_bucket()` - vytvorit adresar v projektu
-   - [ ] `delete_bucket()` - smazat adresar s tabulkami
-   - [ ] `list_buckets()` - listovat adresare
+   - [x] `create_bucket()` - vytvorit adresar v projektu
+   - [x] `delete_bucket()` - smazat adresar s tabulkami
+   - [x] `list_buckets()` - listovat adresare
 
 3. **routers/tables.py**
-   - [ ] `create_table()` - vytvorit .duckdb soubor v bucket adresari
-   - [ ] `delete_table()` - smazat .duckdb soubor
-   - [ ] `list_tables()` - listovat .duckdb soubory v bucket adresari
-   - [ ] `get_table_info()` - otevrit .duckdb a cist schema
-   - [ ] `preview_table()` - ATTACH + SELECT
+   - [x] `create_table()` - vytvorit .duckdb soubor v bucket adresari
+   - [x] `delete_table()` - smazat .duckdb soubor
+   - [x] `list_tables()` - listovat .duckdb soubory v bucket adresari
+   - [x] `get_table_info()` - otevrit .duckdb a cist schema
+   - [x] `preview_table()` - ATTACH + SELECT
 
 4. **routers/bucket_sharing.py**
-   - [ ] Metadata-based routing pro linked buckety
-   - [ ] ATTACH z jineho projektu s READ_ONLY
+   - [x] Metadata-based routing pro linked buckety
+   - [x] ATTACH z jineho projektu s READ_ONLY
 
 5. **metadata.duckdb schema**
-   - [ ] Pridat `tables` tabulku (registry per-table souboru)
-   - [ ] Upravit `buckets` - bucket uz neni schema v DB
+   - [x] Pridat `tables` tabulku (registry per-table souboru)
+   - [x] Upravit `buckets` - bucket uz neni schema v DB
 
 6. **Testy**
-   - [ ] Upravit fixtures pro novou strukturu
-   - [ ] Prejit vsechny testy na novy format
-   - [ ] Pridat testy pro ATTACH cross-table queries
+   - [x] Upravit fixtures pro novou strukturu
+   - [x] Prejit vsechny testy na novy format
+   - [x] Pridat testy pro ATTACH cross-table queries
 
-**Odhad:**
-- Rozsah: ~500-800 radku kodu
-- Cas: 1-2 dny intenzivni prace
-- Testy: Vsechny musi projit po refaktoru
+**Vysledek:**
+- 98 testu PASS
+- Per-table soubory funguji
 
 **Benefity po refaktoru:**
 - Write Queue dramaticky zjednodusena (nebo zbytecna)
@@ -917,7 +923,7 @@ class DuckdbDriverClient implements ClientInterface
 - Dev branches = kopie adresare
 - Snapshots = kopie souboru
 
-### Faze 5: Write Queue + Query - AFTER REFACTOR (ZJEDNODUSENO ADR-009)
+### Faze 5: Write Queue + Auth - DONE
 
 > **ADR-009 impact:** S per-table soubory je Write Queue **dramaticky zjednodusena**.
 > Kazda tabulka ma vlastni soubor = vlastni writer. Fronta je potreba pouze pro
@@ -935,12 +941,15 @@ BEFORE (ADR-002):                    AFTER (ADR-009):
 └─────────────────────┘              └─────────────────────┘
 ```
 
-**Co je jeste potreba:**
-- [ ] Per-table locking (simple mutex per file)
-- [ ] Connection per table (ne per project)
-- [ ] POST /projects/{id}/query endpoint
-- [ ] Graceful shutdown
-- [ ] Pytest testy
+**Implementovano:**
+- [x] Per-table locking (TableLockManager - simple mutex per file) - 14 testu
+- [x] Auth middleware (hierarchicky API key model) - 24 testu
+- [x] Idempotency middleware (X-Idempotency-Key) - 21 testu
+- [x] Prometheus /metrics endpoint - 15 testu
+
+**Jeste TODO (presunuto do pozdejsich fazi):**
+- [ ] POST /projects/{id}/query endpoint (Faze 7+)
+- [ ] Graceful shutdown (Faze 13)
 
 **Co uz NENI potreba:**
 - ~~Project-level write queue~~ (zbytecna)
@@ -2121,10 +2130,11 @@ Headers:
 
 | Verze | Datum | Zmeny |
 |-------|-------|-------|
-| **v6.3** | **2024-12-16** | **Write Queue (mutex):** TableLockManager implementovan - per-table locking pro single-writer. Keboola serializuje na sve strane, mutex je safety net. 120 testu PASS (14 novych). |
-| v6.2 | 2024-12-16 | ADR-009 testy: Pridany explicitni testy pro filesystem strukturu (bucket=adresar, tabulka=.duckdb soubor). Celkem 106 testu PASS. |
-| v6.1 | 2024-12-16 | ADR-009 IMPLEMENTED: Refaktor dokoncen - projekt=adresar, bucket=adresar, tabulka=soubor. Bucket sharing zjednoduseno. |
-| v6.0 | 2024-12-16 | ADR-009 ACCEPTED: Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. Write Queue zjednodusena. Pridan refaktoring plan (Faze 4.5). |
+| **v6.6** | **2024-12-16** | **Prometheus /metrics:** Endpoint implementovan, metriky pro requesty, DB operace, table locks. 180 testu PASS (15 novych). |
+| v6.5 | 2024-12-16 | **Idempotency Middleware:** X-Idempotency-Key header s TTL 10 min, background cleanup. 165 testu PASS (21 novych). |
+| v6.4 | 2024-12-16 | **Auth + Write Queue:** Hierarchicky API key model (ADMIN + PROJECT keys), TableLockManager pro per-table mutex. 144 testu PASS (46 novych). |
+| v6.1 | 2024-12-16 | **ADR-009 IMPLEMENTED:** Refaktor dokoncen - projekt=adresar, bucket=adresar, tabulka=soubor. 98 testu PASS. |
+| v6.0 | 2024-12-16 | ADR-009 ACCEPTED: Zmena architektury na 1 DuckDB soubor per tabulka. Validovano Codex GPT-5 (4096 ATTACH test OK). ADR-002 superseded. |
 | v5.3 | 2024-12-16 | GPT-5 second opinion review - 11 bodu zpracovano, akceptovana rizika rozsirena, auto-snapshot policy zmenena na per-projekt konfigurovatelnou |
 | v5.2 | 2024-12-15 | Pridana sekce "Akceptovana rizika MVP" - cross-DB konzistence, idempotency middleware |
 | v5.1 | 2024-12-15 | Schvalena vsechna rozhodnuti, hierarchicky auth model, Full MERGE, auto-snapshots |
