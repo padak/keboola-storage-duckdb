@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 10 (Dev Branches)
+## Current Status: Phase 11 (Workspaces)
 
-**Total Tests: 284**
+**Total Tests: 312**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -17,8 +17,8 @@
 | 7 | Import/Export | DONE | 17 | [phase-07-import-export.md](phase-07-import-export.md) |
 | 8 | Files API | DONE | 20 | [phase-08-files.md](phase-08-files.md) |
 | 9 | Snapshots + Settings | DONE | 34 | [phase-09-snapshots.md](phase-09-snapshots.md) |
-| **10** | **Dev Branches** | **NOW** | - | **[phase-10-branches.md](phase-10-branches.md)** |
-| 11 | Workspaces | TODO | - | [phase-11-workspaces.md](phase-11-workspaces.md) |
+| 10 | Dev Branches | DONE | 28 | [phase-10-branches.md](phase-10-branches.md) |
+| **11** | **Workspaces** | **NOW** | - | **[phase-11-workspaces.md](phase-11-workspaces.md)** |
 | 12 | PHP Driver | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 
 ## Architecture (ADR-009)
@@ -60,9 +60,9 @@
        ↓
 [DONE] Snapshots + Settings (34 tests)
        ↓
-[NOW]  *** Dev Branches ***
+[DONE] Dev Branches (28 tests)
        ↓
-[NEXT] Workspaces
+[NOW]  *** Workspaces ***
        ↓
 [LAST] PHP Driver Package
 ```
@@ -77,6 +77,7 @@
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v6.8 | 2024-12-17 | Dev Branches: 28 tests, CoW branching with Live View |
 | v6.7 | 2024-12-16 | Snapshots + Settings: 34 tests, hierarchical config |
 | v6.6 | 2024-12-16 | Prometheus /metrics: 180 tests |
 | v6.5 | 2024-12-16 | Idempotency Middleware: 165 tests |

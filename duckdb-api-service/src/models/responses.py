@@ -611,3 +611,68 @@ class SnapshotRestoreResponse(BaseModel):
         description="Target location {'bucket': '...', 'table': '...'}"
     )
     row_count: int = Field(description="Number of rows restored")
+
+
+# ============================================
+# Branch Models (ADR-007: CoW branching)
+# ============================================
+
+
+class BranchCreateRequest(BaseModel):
+    """Request to create a dev branch."""
+
+    name: str = Field(..., description="Branch name")
+    description: str | None = Field(None, description="Optional description")
+
+
+class BranchResponse(BaseModel):
+    """Response for a single branch."""
+
+    id: str
+    project_id: str
+    name: str
+    created_at: str | None
+    created_by: str | None
+    description: str | None
+    table_count: int = Field(default=0, description="Number of tables copied to branch")
+    size_bytes: int = Field(default=0, description="Total size of branch tables")
+
+
+class BranchDetailResponse(BranchResponse):
+    """Detailed branch response including copied tables list."""
+
+    copied_tables: list[dict] = Field(
+        default_factory=list,
+        description="List of tables that have been copied to branch (CoW triggered)"
+    )
+
+
+class BranchListResponse(BaseModel):
+    """Response for listing branches."""
+
+    branches: list[BranchResponse]
+    count: int
+
+
+class BranchTableInfo(BaseModel):
+    """Information about a table in a branch context."""
+
+    bucket_name: str
+    table_name: str
+    is_local: bool = Field(description="True if table has been copied to branch (CoW)")
+    copied_at: str | None = Field(None, description="When table was copied to branch")
+
+
+class PullTableRequest(BaseModel):
+    """Request to pull (refresh) a table from main - restores live view."""
+
+    pass  # No parameters needed, table path is in URL
+
+
+class PullTableResponse(BaseModel):
+    """Response for pull table operation."""
+
+    bucket_name: str
+    table_name: str
+    message: str = Field(description="Confirmation message")
+    was_local: bool = Field(description="Whether table was in branch before pull")

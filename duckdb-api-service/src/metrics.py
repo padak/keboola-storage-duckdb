@@ -186,6 +186,38 @@ TABLE_LOCKS_ACTIVE = Gauge(
 )
 
 # =============================================================================
+# Branch Metrics (ADR-007: CoW branching)
+# =============================================================================
+
+BRANCHES_TOTAL = Gauge(
+    "duckdb_branches_total",
+    "Total number of dev branches"
+)
+
+BRANCH_COW_OPERATIONS = Counter(
+    "duckdb_branch_cow_operations_total",
+    "Total number of Copy-on-Write operations",
+    ["project_id", "branch_id"]
+)
+
+BRANCH_COW_DURATION = Histogram(
+    "duckdb_branch_cow_duration_seconds",
+    "Duration of Copy-on-Write operations",
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
+)
+
+BRANCH_COW_SIZE_BYTES = Counter(
+    "duckdb_branch_cow_bytes_total",
+    "Total bytes copied in CoW operations",
+    ["project_id", "branch_id"]
+)
+
+BRANCH_TABLES_TOTAL = Gauge(
+    "duckdb_branch_tables_total",
+    "Total number of tables copied to branches"
+)
+
+# =============================================================================
 # Service Info
 # =============================================================================
 

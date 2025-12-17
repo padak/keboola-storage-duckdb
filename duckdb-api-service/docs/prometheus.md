@@ -541,6 +541,101 @@ duckdb_table_locks_active 2.0
 
 ---
 
+## Branch Metrics (ADR-007: CoW branching)
+
+### `duckdb_branches_total`
+**Type:** Gauge
+
+Total number of dev branches across all projects.
+
+**Example:**
+```
+duckdb_branches_total 5.0
+```
+
+---
+
+### `duckdb_branch_cow_operations_total`
+**Type:** Counter
+
+Total number of Copy-on-Write operations (table copies to branches).
+
+**Labels:**
+- `project_id` - Project identifier
+- `branch_id` - Branch identifier
+
+**Example:**
+```
+duckdb_branch_cow_operations_total{project_id="proj_123",branch_id="abc12345"} 15.0
+```
+
+**PromQL - CoW rate by project:**
+```promql
+sum by (project_id) (rate(duckdb_branch_cow_operations_total[5m]))
+```
+
+---
+
+### `duckdb_branch_cow_duration_seconds`
+**Type:** Histogram
+
+Duration of Copy-on-Write operations (time to copy table file).
+
+**Buckets:** 10ms, 50ms, 100ms, 500ms, 1s, 5s, 10s, 30s
+
+**Example:**
+```
+duckdb_branch_cow_duration_seconds_bucket{le="0.1"} 45.0
+duckdb_branch_cow_duration_seconds_bucket{le="1.0"} 48.0
+duckdb_branch_cow_duration_seconds_bucket{le="+Inf"} 50.0
+duckdb_branch_cow_duration_seconds_sum 25.5
+duckdb_branch_cow_duration_seconds_count 50.0
+```
+
+**PromQL - P95 CoW duration:**
+```promql
+histogram_quantile(0.95, sum(rate(duckdb_branch_cow_duration_seconds_bucket[5m])) by (le))
+```
+
+---
+
+### `duckdb_branch_cow_bytes_total`
+**Type:** Counter
+
+Total bytes copied in Copy-on-Write operations.
+
+**Labels:**
+- `project_id` - Project identifier
+- `branch_id` - Branch identifier
+
+**Example:**
+```
+duckdb_branch_cow_bytes_total{project_id="proj_123",branch_id="abc12345"} 1.5e+09
+```
+
+**PromQL - CoW throughput (bytes/sec):**
+```promql
+sum(rate(duckdb_branch_cow_bytes_total[5m]))
+```
+
+---
+
+### `duckdb_branch_tables_total`
+**Type:** Gauge
+
+Total number of tables copied to branches (across all branches).
+
+**Example:**
+```
+duckdb_branch_tables_total 42.0
+```
+
+**Interpretation:**
+- Higher values indicate more branch-local modifications
+- Low values indicate most branches use live view from main
+
+---
+
 ## Process Metrics (Linux only)
 
 These metrics are only available when running on Linux (e.g., in Docker).
@@ -775,4 +870,15 @@ groups:
           severity: warning
         annotations:
           summary: "Total storage exceeds 500GB"
+
+      - alert: DuckDBAPIHighCoWDuration
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(duckdb_branch_cow_duration_seconds_bucket[5m])) by (le)
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 Copy-on-Write duration above 10 seconds"
 ```

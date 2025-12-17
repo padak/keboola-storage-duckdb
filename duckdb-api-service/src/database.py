@@ -331,6 +331,31 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_project ON snapshots(project_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_table ON snapshots(project_id, bucket_name, table_name);
 CREATE INDEX IF NOT EXISTS idx_snapshots_expires ON snapshots(expires_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_type ON snapshots(snapshot_type);
+
+-- Dev branches (ADR-007: CoW branching)
+CREATE TABLE IF NOT EXISTS branches (
+    id VARCHAR PRIMARY KEY,
+    project_id VARCHAR NOT NULL,
+    name VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR,
+    description TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_branches_project ON branches(project_id);
+
+-- Track which tables have been copied to branch (Copy-on-Write tracking)
+CREATE TABLE IF NOT EXISTS branch_tables (
+    branch_id VARCHAR NOT NULL,
+    bucket_name VARCHAR NOT NULL,
+    table_name VARCHAR NOT NULL,
+    copied_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (branch_id, bucket_name, table_name),
+    FOREIGN KEY (branch_id) REFERENCES branches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_branch_tables_branch ON branch_tables(branch_id);
 """
 
 
@@ -1798,6 +1823,194 @@ class MetadataDB:
             "description": row[12],
         }
 
+    # ========================================
+    # Branch operations (ADR-007: CoW branching)
+    # ========================================
+
+    def create_branch(
+        self,
+        branch_id: str,
+        project_id: str,
+        name: str,
+        created_by: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new dev branch record."""
+        now = datetime.now(timezone.utc)
+
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO branches (id, project_id, name, created_at, created_by, description)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [branch_id, project_id, name, now, created_by, description],
+            )
+            conn.commit()
+
+            result = conn.execute(
+                "SELECT * FROM branches WHERE id = ?", [branch_id]
+            ).fetchone()
+
+        logger.info("branch_created", branch_id=branch_id, project_id=project_id, name=name)
+        return self._row_to_branch_dict(result)
+
+    def get_branch(self, branch_id: str) -> dict[str, Any] | None:
+        """Get branch by ID."""
+        result = self.execute_one(
+            "SELECT * FROM branches WHERE id = ?", [branch_id]
+        )
+        return self._row_to_branch_dict(result) if result else None
+
+    def get_branch_by_project(
+        self, project_id: str, branch_id: str
+    ) -> dict[str, Any] | None:
+        """Get branch by ID, ensuring it belongs to project."""
+        result = self.execute_one(
+            "SELECT * FROM branches WHERE id = ? AND project_id = ?",
+            [branch_id, project_id]
+        )
+        return self._row_to_branch_dict(result) if result else None
+
+    def list_branches(
+        self,
+        project_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List all branches for a project."""
+        results = self.execute(
+            """
+            SELECT * FROM branches
+            WHERE project_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            [project_id, limit, offset],
+        )
+        return [self._row_to_branch_dict(row) for row in results]
+
+    def delete_branch(self, branch_id: str) -> bool:
+        """Delete a branch and its table records."""
+        # First delete branch_tables records
+        self.execute_write(
+            "DELETE FROM branch_tables WHERE branch_id = ?",
+            [branch_id]
+        )
+        # Then delete branch
+        self.execute_write(
+            "DELETE FROM branches WHERE id = ?",
+            [branch_id]
+        )
+        logger.info("branch_deleted", branch_id=branch_id)
+        return True
+
+    def mark_table_copied_to_branch(
+        self,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> None:
+        """Record that a table has been copied to a branch (CoW triggered)."""
+        now = datetime.now(timezone.utc)
+        self.execute_write(
+            """
+            INSERT INTO branch_tables (branch_id, bucket_name, table_name, copied_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (branch_id, bucket_name, table_name) DO NOTHING
+            """,
+            [branch_id, bucket_name, table_name, now],
+        )
+        logger.info(
+            "branch_table_copied",
+            branch_id=branch_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+        )
+
+    def remove_table_from_branch(
+        self,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """Remove a table from branch tracking (for pull operation)."""
+        self.execute_write(
+            """
+            DELETE FROM branch_tables
+            WHERE branch_id = ? AND bucket_name = ? AND table_name = ?
+            """,
+            [branch_id, bucket_name, table_name],
+        )
+        logger.info(
+            "branch_table_removed",
+            branch_id=branch_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+        )
+        return True
+
+    def get_branch_tables(self, branch_id: str) -> list[dict[str, str]]:
+        """Get list of tables that have been copied to a branch."""
+        results = self.execute(
+            """
+            SELECT bucket_name, table_name, copied_at
+            FROM branch_tables
+            WHERE branch_id = ?
+            ORDER BY copied_at
+            """,
+            [branch_id],
+        )
+        return [
+            {
+                "bucket_name": row[0],
+                "table_name": row[1],
+                "copied_at": row[2].isoformat() if row[2] else None,
+            }
+            for row in results
+        ]
+
+    def is_table_in_branch(
+        self,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """Check if a table has been copied to a branch."""
+        result = self.execute_one(
+            """
+            SELECT 1 FROM branch_tables
+            WHERE branch_id = ? AND bucket_name = ? AND table_name = ?
+            """,
+            [branch_id, bucket_name, table_name],
+        )
+        return result is not None
+
+    def count_branches(self, project_id: str | None = None) -> int:
+        """Count branches, optionally for a specific project."""
+        if project_id:
+            result = self.execute_one(
+                "SELECT COUNT(*) FROM branches WHERE project_id = ?",
+                [project_id]
+            )
+        else:
+            result = self.execute_one("SELECT COUNT(*) FROM branches")
+        return result[0] if result else 0
+
+    def _row_to_branch_dict(self, row: tuple | None) -> dict[str, Any] | None:
+        """Convert database row to branch dictionary."""
+        if row is None:
+            return None
+
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "name": row[2],
+            "created_at": row[3].isoformat() if row[3] else None,
+            "created_by": row[4],
+            "description": row[5],
+        }
+
 
 class ProjectDBManager:
     """
@@ -1844,6 +2057,296 @@ class ProjectDBManager:
         Kept for backward compatibility.
         """
         return self.get_project_dir(project_id)
+
+    # ========================================
+    # Branch path helpers (ADR-007: CoW branching)
+    # ========================================
+
+    def get_branch_dir(self, project_id: str, branch_id: str) -> Path:
+        """Get the directory path for a dev branch."""
+        return self._duckdb_dir / f"project_{project_id}_branch_{branch_id}"
+
+    def get_branch_bucket_dir(
+        self, project_id: str, branch_id: str, bucket_name: str
+    ) -> Path:
+        """Get the directory path for a bucket within a branch."""
+        return self.get_branch_dir(project_id, branch_id) / bucket_name
+
+    def get_branch_table_path(
+        self, project_id: str, branch_id: str, bucket_name: str, table_name: str
+    ) -> Path:
+        """Get the file path for a table within a branch."""
+        return self.get_branch_bucket_dir(project_id, branch_id, bucket_name) / f"{table_name}.duckdb"
+
+    # ========================================
+    # Branch operations (ADR-007: CoW branching)
+    # ========================================
+
+    def create_branch_db(self, project_id: str, branch_id: str) -> Path:
+        """
+        Create the directory structure for a dev branch.
+
+        ADR-007: Branches start empty - tables are copied on first write (CoW).
+
+        Returns the path to the created branch directory.
+        """
+        branch_dir = self.get_branch_dir(project_id, branch_id)
+        branch_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            "branch_dir_created",
+            project_id=project_id,
+            branch_id=branch_id,
+            path=str(branch_dir),
+        )
+
+        return branch_dir
+
+    def delete_branch_db(self, project_id: str, branch_id: str) -> bool:
+        """
+        Delete a branch's directory and all its contents.
+
+        ADR-007: All branch tables are deleted (data is lost).
+        """
+        branch_dir = self.get_branch_dir(project_id, branch_id)
+
+        if branch_dir.exists():
+            # Clean up locks for all tables in branch
+            for bucket_dir in branch_dir.iterdir():
+                if bucket_dir.is_dir():
+                    for table_file in bucket_dir.glob("*.duckdb"):
+                        table_name = table_file.stem
+                        # Use branch-specific lock key
+                        lock_key = f"{project_id}_branch_{branch_id}/{bucket_dir.name}/{table_name}"
+                        table_lock_manager._locks.pop(lock_key, None)
+
+            shutil.rmtree(branch_dir)
+            logger.info(
+                "branch_dir_deleted",
+                project_id=project_id,
+                branch_id=branch_id,
+                path=str(branch_dir),
+            )
+            return True
+
+        logger.warning(
+            "branch_dir_not_found",
+            project_id=project_id,
+            branch_id=branch_id,
+        )
+        return False
+
+    def branch_exists(self, project_id: str, branch_id: str) -> bool:
+        """Check if a branch directory exists."""
+        return self.get_branch_dir(project_id, branch_id).is_dir()
+
+    def copy_table_to_branch(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> Path:
+        """
+        Copy a table from main to branch (Copy-on-Write operation).
+
+        ADR-007: Called before first write to a table in a branch.
+        Copies the entire .duckdb file from main project to branch.
+
+        Returns the path to the copied table in branch.
+        """
+        # Source: main project table
+        source_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        if not source_path.exists():
+            raise FileNotFoundError(
+                f"Source table not found: {project_id}/{bucket_name}/{table_name}"
+            )
+
+        # Target: branch table
+        branch_bucket_dir = self.get_branch_bucket_dir(project_id, branch_id, bucket_name)
+        branch_bucket_dir.mkdir(parents=True, exist_ok=True)
+
+        target_path = self.get_branch_table_path(project_id, branch_id, bucket_name, table_name)
+
+        # Copy the file
+        shutil.copy2(source_path, target_path)
+
+        logger.info(
+            "table_copied_to_branch",
+            project_id=project_id,
+            branch_id=branch_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            source_path=str(source_path),
+            target_path=str(target_path),
+            size_bytes=target_path.stat().st_size,
+        )
+
+        return target_path
+
+    def delete_table_from_branch(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """
+        Delete a table from branch (for pull operation - restore live view).
+
+        ADR-007: After deletion, reads will go back to main (live view).
+        """
+        table_path = self.get_branch_table_path(project_id, branch_id, bucket_name, table_name)
+
+        if table_path.exists():
+            table_path.unlink()
+            logger.info(
+                "table_deleted_from_branch",
+                project_id=project_id,
+                branch_id=branch_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+            )
+            return True
+
+        return False
+
+    def branch_table_exists(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """Check if a table exists in branch (has been copied via CoW)."""
+        return self.get_branch_table_path(
+            project_id, branch_id, bucket_name, table_name
+        ).exists()
+
+    def get_branch_stats(self, project_id: str, branch_id: str) -> dict[str, Any]:
+        """
+        Get statistics about a branch by scanning the filesystem.
+
+        Returns counts and sizes of tables that have been copied to the branch.
+        """
+        branch_dir = self.get_branch_dir(project_id, branch_id)
+
+        if not branch_dir.exists():
+            return {"bucket_count": 0, "table_count": 0, "size_bytes": 0}
+
+        bucket_count = 0
+        table_count = 0
+        size_bytes = 0
+
+        for bucket_dir in branch_dir.iterdir():
+            if bucket_dir.is_dir() and not bucket_dir.name.startswith("_"):
+                bucket_count += 1
+                for table_file in bucket_dir.glob("*.duckdb"):
+                    table_count += 1
+                    size_bytes += table_file.stat().st_size
+
+        return {
+            "bucket_count": bucket_count,
+            "table_count": table_count,
+            "size_bytes": size_bytes,
+        }
+
+    @contextmanager
+    def branch_table_connection(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+        read_only: bool = False,
+    ) -> Generator[duckdb.DuckDBPyConnection, None, None]:
+        """
+        Get a connection to a table, routing to branch or main based on CoW status.
+
+        ADR-007 Live View + CoW:
+        - READ: If table in branch -> read from branch, else read from main (live!)
+        - WRITE: If table not in branch -> copy from main first (CoW), then write
+
+        Args:
+            project_id: The project ID
+            branch_id: The branch ID
+            bucket_name: The bucket name
+            table_name: The table name
+            read_only: If True, read-only access (no CoW trigger)
+
+        Yields:
+            DuckDB connection to the appropriate table (branch copy or main)
+        """
+        branch_table_path = self.get_branch_table_path(
+            project_id, branch_id, bucket_name, table_name
+        )
+        main_table_path = self.get_table_path(project_id, bucket_name, table_name)
+
+        # Determine which table to use
+        table_in_branch = branch_table_path.exists()
+
+        if read_only:
+            # READ: Use branch if exists, otherwise main (live view)
+            if table_in_branch:
+                target_path = branch_table_path
+            else:
+                # Live view - read from main
+                if not main_table_path.exists():
+                    raise FileNotFoundError(
+                        f"Table not found: {project_id}/{bucket_name}/{table_name}"
+                    )
+                target_path = main_table_path
+
+            conn = duckdb.connect(str(target_path), read_only=True)
+            try:
+                yield conn
+            finally:
+                conn.close()
+        else:
+            # WRITE: Need CoW if table not in branch
+            # Note: Caller should handle CoW and metadata update before calling this
+            # This method just provides connection to the branch table
+            if not table_in_branch:
+                raise ValueError(
+                    f"Table not in branch - CoW required first: {branch_id}/{bucket_name}/{table_name}"
+                )
+
+            # Use branch-specific lock key
+            lock_key = f"{project_id}_branch_{branch_id}/{bucket_name}/{table_name}"
+
+            # Manually handle the lock since we're using a custom key
+            lock = table_lock_manager.get_lock(
+                f"{project_id}_branch_{branch_id}", bucket_name, table_name
+            )
+
+            from src.metrics import (
+                TABLE_LOCK_ACQUISITIONS,
+                TABLE_LOCK_WAIT_TIME,
+                TABLE_LOCKS_ACTIVE,
+            )
+
+            wait_start = time.perf_counter()
+            lock.acquire()
+            wait_duration = time.perf_counter() - wait_start
+
+            TABLE_LOCK_WAIT_TIME.observe(wait_duration)
+            TABLE_LOCK_ACQUISITIONS.labels(
+                project_id=f"{project_id}_branch_{branch_id}",
+                bucket=bucket_name,
+                table=table_name
+            ).inc()
+            TABLE_LOCKS_ACTIVE.inc()
+
+            try:
+                conn = duckdb.connect(str(branch_table_path), read_only=False)
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+            finally:
+                lock.release()
+                TABLE_LOCKS_ACTIVE.dec()
 
     # ========================================
     # Project operations (ADR-009)

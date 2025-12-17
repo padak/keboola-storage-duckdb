@@ -11,7 +11,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, snapshot_settings, snapshots
+from src.routers import backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, snapshot_settings, snapshots
 from src.database import metadata_db
 from src.middleware.idempotency import IdempotencyMiddleware
 from src.middleware.metrics import MetricsMiddleware, normalize_path
@@ -204,6 +204,7 @@ app.include_router(table_import.router)
 app.include_router(files.router)
 app.include_router(snapshot_settings.router)
 app.include_router(snapshots.router)
+app.include_router(branches.router)
 app.include_router(metrics.router)
 
 # Root endpoint

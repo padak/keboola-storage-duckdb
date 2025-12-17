@@ -64,8 +64,9 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── files.py       # Files API (on-prem S3)
   │       ├── snapshots.py       # Snapshots CRUD + restore
   │       ├── snapshot_settings.py  # Hierarchical snapshot config
+  │       ├── branches.py    # Dev branches CRUD + pull
   │       └── metrics.py     # Prometheus /metrics endpoint
-  └── tests/                 # pytest tests (284 tests)
+  └── tests/                 # pytest tests (310 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -89,11 +90,11 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Files API | DONE | 20 |
 | Import/Export | DONE | 17 |
 | **Snapshots + Settings** | **DONE** | 34 |
-| Dev Branches | TODO | - |
+| **Dev Branches** | **DONE** | 26 |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 284 tests PASS**
+**Total: 310 tests PASS**
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -105,8 +106,9 @@ connection/                   # Keboola Connection (git submodule/clone)
 7. ~~Files API~~ - DONE
 8. ~~Import/Export~~ - DONE
 9. ~~Snapshots + Settings~~ - DONE
-10. **Dev Branches** - NEXT
-11. PHP Driver
+10. ~~Dev Branches~~ - DONE
+11. **Schema Migrations** - NEXT
+12. PHP Driver
 
 ## Key Decisions (APPROVED)
 
@@ -236,10 +238,9 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots` | GET/POST | List/Create snapshots |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}/restore` | POST | Restore from snapshot |
-
-### TODO Endpoints (see docs/plan/ for specs)
-
-- Dev Branches: create, delete, merge (see `phase-10-branches.md`)
+| `/projects/{id}/branches` | GET/POST | List/Create branches |
+| `/projects/{id}/branches/{branch_id}` | GET/DELETE | Branch CRUD |
+| `/projects/{id}/branches/{branch_id}/tables/{bucket}/{table}/pull` | POST | Pull table from main |
 
 ## Development Notes
 
