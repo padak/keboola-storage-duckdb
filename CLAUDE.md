@@ -32,7 +32,11 @@ Build an **on-premise Keboola with DuckDB backend** - a lightweight, self-contai
 
 ```
 docs/                         # Project documentation
-  ├── duckdb-driver-plan.md  # MAIN PLAN - implementation phases, decisions, specs
+  ├── plan/                  # MAIN PLAN - modular structure
+  │   ├── README.md          # Index with phase status and links
+  │   ├── phase-01-backend.md ... phase-12-php-driver.md
+  │   ├── decisions.md       # All approved decisions
+  │   └── risks.md           # Accepted MVP risks
   ├── local-connection.md    # Local Connection setup guide
   ├── bigquery-driver-research.md  # BigQuery driver analysis
   └── adr/                   # Architecture Decision Records (001-009)
@@ -106,7 +110,7 @@ connection/                   # Keboola Connection (git submodule/clone)
 
 ## Key Decisions (APPROVED)
 
-All decisions documented in `docs/duckdb-driver-plan.md` section "PREHLED ROZHODNUTI".
+All decisions documented in `docs/plan/decisions.md`.
 
 | Area | Decision | Value |
 |------|----------|-------|
@@ -180,7 +184,20 @@ source .venv/bin/activate
 pytest tests/ -v           # Run tests
 python -m src.main         # Run server
 docker compose up --build  # Docker
+open dashboard.html        # Metrics dashboard (auto-refresh)
 ```
+
+### Metrics Dashboard
+
+`dashboard.html` - standalone HTML dashboard for Prometheus metrics visualization:
+- **Service Health**: Status, uptime, total requests, error rate (4xx/5xx)
+- **Storage**: Projects/buckets/tables count, size breakdown (metadata/tables/staging/files)
+- **Latency**: P50/P90/P95/P99 percentiles + average (calculated from histograms)
+- **Concurrency**: Active locks, lock acquisitions, lock wait P95, idempotency cache
+- **Charts**: Request distribution by status code and HTTP method
+- **Tables**: Endpoint details with latency, table lock activity, Python GC stats
+
+Auto-refreshes every 5s, works with API running on `localhost:8000`.
 
 ### Implemented Endpoints
 
@@ -220,9 +237,9 @@ docker compose up --build  # Docker
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}/restore` | POST | Restore from snapshot |
 
-### TODO Endpoints (see duckdb-driver-plan.md for specs)
+### TODO Endpoints (see docs/plan/ for specs)
 
-- Dev Branches: create, delete, merge
+- Dev Branches: create, delete, merge (see `phase-10-branches.md`)
 
 ## Development Notes
 
@@ -248,17 +265,20 @@ When completing an implementation phase, ALWAYS:
 
 1. **Write tests** - both functional (API works) and structural (architecture verified)
 2. **Run all tests** - ensure 100% pass rate
-3. **Update docs/duckdb-driver-plan.md**:
-   - Change status to DONE
-   - Update test counts
-   - Add changelog entry with new version
+3. **Update docs/plan/**:
+   - Update phase file (e.g., `phase-10-branches.md`) with DONE status
+   - Update `README.md` - change status in table, update test count
+   - Add changelog entry
 4. **Update CLAUDE.md** - refresh test counts and status table
 
 This ensures each phase has documented progress and test coverage for future sessions.
 
 ## Documentation
 
-- **Main plan**: `docs/duckdb-driver-plan.md` - phases, decisions, detailed specs
+- **Main plan**: `docs/plan/README.md` - index with phase status and links
+- **Phase specs**: `docs/plan/phase-*.md` - detailed specs per phase
+- **Decisions**: `docs/plan/decisions.md` - all approved decisions
+- **Risks**: `docs/plan/risks.md` - accepted MVP risks
 - **ADRs**: `docs/adr/001-009` - architecture decisions
 - **Key ADR**: `docs/adr/009-duckdb-file-per-table.md` - current architecture
 - **Research**: `docs/duckdb-technical-research.md`, `docs/bigquery-driver-research.md`
