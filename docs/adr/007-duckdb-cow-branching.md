@@ -2,7 +2,14 @@
 
 ## Status
 
-Proposed (nahrazuje ADR-003)
+APPROVED (nahrazuje ADR-003)
+
+## Zdroj
+
+Chovani odvozeno z analyzy Keboola Storage produkce (Snowflake backend):
+- Knowledge sharing session: Martin Zajic - branchovana storage (2024-11-28)
+- Devin AI analyza kodu: `DevBranchCreate.php`, `DevBranchDelete.php`, `MergeConfigurationsService`
+- Feature flag: `storage-branches` (real branched storage)
 
 ## Datum
 
@@ -33,41 +40,63 @@ ADR-003 definoval dev branches jako samostatne DuckDB soubory s plnym kopiovanim
 
 **Implementovat Copy-on-Write na aplikacni urovni v Python API vrstve.**
 
-### Princip
+### Princip (Live View + CoW)
+
+**DULEZITE**: Dev branch vidi LIVE data z main, ne zamrzly snapshot!
 
 ```
 Branch READ:
-  - Pokud tabulka NENI v branch -> cti z main (ATTACH READ_ONLY)
-  - Pokud tabulka JE v branch -> cti z branch
+  - Pokud tabulka NENI v branch -> cti AKTUALNI data z main (ATTACH READ_ONLY)
+  - Pokud tabulka JE v branch -> cti z branch (izolovaná kopie)
 
-Branch WRITE:
-  - Pokud tabulka NENI v branch -> zkopiruj ji z main, pak zapis
-  - Pokud tabulka JE v branch -> zapis primo
+Branch WRITE (Copy-on-Write):
+  - Pokud tabulka NENI v branch -> zkopiruj AKTUALNI stav z main, pak zapis
+  - Pokud tabulka JE v branch -> zapis primo do branch kopie
+
+Branch DELETE (po merge):
+  - Merge = POUZE konfigurace (ne tabulky!)
+  - Vsechny tabulky v branch se SMAZOU
+  - Data z branch se NEPREPISUJI do main
+```
+
+**Priklad:**
+```
+T0: create_branch("dev-123")
+T1: main.customers ma 100 radku
+T2: branch cte customers -> vidi 100 radku (live z main)
+T3: main dostane +50 radku (celkem 150)
+T4: branch cte customers -> vidi 150 radku (stale live!)
+T5: branch ZAPISE do customers (CoW: zkopiruje 150 radku)
+T6: main dostane +20 radku (celkem 170)
+T7: branch cte customers -> vidi 150 radku (izolovaná kopie)
+T8: merge_branch("dev-123") -> merge JEN konfigurace
+T9: delete_branch("dev-123") -> smaze branch + vsechny branch tabulky
+    (zmeny v customers z branche jsou ZTRACENY!)
 ```
 
 ### Architektura
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    BranchConnection                          │
+│                    BranchConnection                         │
 ├─────────────────────────────────────────────────────────────┤
-│                                                              │
+│                                                             │
 │   ┌─────────────────┐                                       │
 │   │  BranchState    │  tracking:                            │
 │   │  (metadata)     │  - copied_tables: set[(bucket,table)] │
 │   │                 │  - deleted_tables: set[(bucket,table)]│
 │   │                 │  - created_at: timestamp              │
 │   └────────┬────────┘                                       │
-│            │                                                 │
-│            ▼                                                 │
+│            │                                                │
+│            ▼                                                │
 │   ┌────────────────────────────────────────────────┐        │
-│   │              Query Router                       │        │
-│   │                                                 │        │
+│   │              Query Router                       │       │
+│   │                                                 │       │
 │   │  is_local(bucket, table)?                      │        │
 │   │     YES ──► branch.duckdb                      │        │
-│   │     NO  ──► main.duckdb (ATTACH READ_ONLY)    │        │
+│   │     NO  ──► main.duckdb (ATTACH READ_ONLY)    │         │
 │   └────────────────────────────────────────────────┘        │
-│                                                              │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -214,35 +243,58 @@ class BranchConnection:
         self.conn.execute(sql)
 ```
 
-### Merge branch
+### Merge branch (POUZE konfigurace!)
+
+**DULEZITE**: V Keboola produkci merge NEMERGE tabulky! Mergují se pouze konfigurace komponent.
 
 ```python
-def merge_branch(project_id: str, branch_id: str, strategy: str = "replace"):
-    """Merge zmenene tabulky zpet do main"""
+def merge_branch(project_id: str, branch_id: str):
+    """
+    Merge branch = merge POUZE konfigurace (ne tabulky!)
+
+    V DuckDB API implementaci:
+    - Konfigurace jsou mimo scope (reseno v Connection)
+    - Tato funkce pouze validuje stav pred smazanim
+    """
     state = load_branch_metadata(project_id, branch_id)
 
-    main_conn = duckdb.connect(f"project_{project_id}_main.duckdb")
-    branch_path = f"project_{project_id}_branch_{branch_id}.duckdb"
+    # Informovat uzivatele o tabulkach, ktere budou smazany
+    if state.copied_tables:
+        logger.warning(
+            f"Branch {branch_id} obsahuje {len(state.copied_tables)} "
+            f"modifikovanych tabulek. Tyto tabulky budou SMAZANY pri delete_branch!"
+        )
+        logger.warning(f"Tabulky: {state.copied_tables}")
 
-    main_conn.execute(f"ATTACH '{branch_path}' AS branch_db (READ_ONLY)")
+    # V DuckDB API neprovadime merge tabulek - to neni nase zodpovednost
+    # Konfigurace merguje Connection vrstva
 
-    # Merge pouze ZMENENE tabulky
+    return {
+        "status": "ready_for_delete",
+        "tables_to_be_deleted": list(state.copied_tables),
+        "warning": "Tabulky z branch budou smazany. Export data pred smazanim pokud je potrebujete."
+    }
+```
+
+### Alternativa: Export tabulek pred smazanim (volitelne)
+
+```python
+def export_branch_tables(project_id: str, branch_id: str, output_dir: Path):
+    """Exportuj modifikovane tabulky z branch pred smazanim"""
+    state = load_branch_metadata(project_id, branch_id)
+    branch_path = Path(f"project_{project_id}_branch_{branch_id}.duckdb")
+
+    conn = duckdb.connect(str(branch_path), read_only=True)
+
     for bucket, table in state.copied_tables:
-        if strategy == "replace":
-            main_conn.execute(f"""
-                CREATE OR REPLACE TABLE {bucket}.{table} AS
-                SELECT * FROM branch_db.{bucket}.{table}
-            """)
-        elif strategy == "upsert":
-            # TODO: Implementovat upsert (vyzaduje PK)
-            pass
+        output_file = output_dir / f"{bucket}_{table}.parquet"
+        conn.execute(f"""
+            COPY {bucket}.{table} TO '{output_file}' (FORMAT PARQUET)
+        """)
+        logger.info(f"Exported {bucket}.{table} to {output_file}")
 
-    # Aplikuj DELETE operace
-    for bucket, table in state.deleted_tables:
-        main_conn.execute(f"DROP TABLE IF EXISTS {bucket}.{table}")
-
-    main_conn.execute("DETACH branch_db")
-    main_conn.close()
+    conn.close()
+    return list(state.copied_tables)
 ```
 
 ### Smazani branch
@@ -257,54 +309,59 @@ def delete_branch(project_id: str, branch_id: str):
     meta_path.unlink(missing_ok=True)
 ```
 
-## Otevrene otazky (TODO)
+## Vyresene otazky (na zaklade Keboola produkce)
 
-### 1. Izolace vs Fresh Data
+### 1. Izolace vs Fresh Data - VYRESENO
 
-**Problem**: Co kdyz se main zmeni po vytvoreni branch?
+**Rozhodnuti: B) Live view**
 
-```
-T0: create_branch (customers ma 100 radku)
-T1: main dostane +50 radku do customers
-T2: branch cte customers - vidi 100 nebo 150?
-```
+Branch vidi AKTUALNI data z main, dokud do tabulky nezapise. Toto je chovani Keboola produkce.
 
-**Moznosti**:
-- **A) Snapshot izolace**: Branch vidi stav z T0 (jako Git) - DOPORUCENO
-- **B) Live view**: Branch vidi aktualni main
+**Duvody:**
+- Vyvojar pracuje s aktualnimi daty (ne zastaralymi)
+- Jednodussi implementace (neni potreba time-travel)
+- Konzistentni s ocekavanim uzivatelu
 
-**Implementace snapshot izolace**: Pri vytvoreni branch ulozit LSN nebo timestamp, pouzit pro ATTACH WITH TIME TRAVEL (pokud DuckDB podporuje) nebo exportovat do Parquet.
+### 2. Konfliktni zmeny pri merge - VYRESENO
 
-### 2. Konfliktni zmeny pri merge
+**Rozhodnuti: ZADNY MERGE TABULEK**
 
-**Problem**: Main i branch zmenily stejnou tabulku.
+Keboola `MergeConfigurationsService` merguje POUZE konfigurace, NE tabulky!
 
-**Moznosti**:
-- **Replace**: Branch prepise main (jednoduche)
-- **Upsert**: Merge na urovni radku (potrebuje PK)
-- **Fail**: Odmitni merge, vyzaduj manualni reseni
-- **Three-way merge**: Porovnej s base snapshot
+Pri delete branch:
+- Vsechny tabulky v branch se smazou
+- Data z branch se NEKOPIRUJI zpet do main
+- Pokud uzivatel chce data z branch, musi je MANUALNE exportovat pred smazanim
 
-### 3. Velke tabulky - lazy copy optimalizace
+**Duvody:**
+- Jednoducha a bezpecna logika
+- Zadne riziko prepisu produkce
+- Uzivatel ma plnou kontrolu
 
-**Problem**: Prvni write do 100GB tabulky = 100GB kopie.
+### 3. Velke tabulky - lazy copy - AKCEPTOVANO
 
-**Moznosti**:
-- **Parquet intermediary**: Exportovat main tabulku do Parquet, branch cte z Parquet + vlastni delta
-- **Partition-level CoW**: Kopirovat jen affected partitions
-- **Accept tradeoff**: Pro branch development je jednorizova kopie OK
+**Rozhodnuti: Accept tradeoff**
 
-### 4. ATTACH limity
+Prvni write do velke tabulky = plna kopie. Pro dev branch development je to OK.
 
-**Problem**: DuckDB ma limit na pocet ATTACHed databazi.
+**Budouci optimalizace (post-MVP):**
+- Partition-level CoW pro velmi velke tabulky
+- Parquet intermediary pro read-heavy workloads
 
-**Reseni**: Pouzivat jeden ATTACH na main, lazy attach/detach.
+### 4. ATTACH limity - VYRESENO
 
-### 5. Transakce across databases
+**Reseni**: Jeden ATTACH na main project database, lazy attach/detach.
 
-**Problem**: DuckDB nepodporuje cross-database transakce.
+S ADR-009 (per-table files) je limit mene relevantni - attachujeme jednotlive tabulky.
 
-**Reseni**: Pro CoW logiku pouzivat sekvenční operace s manualni rollback logikou.
+### 5. Transakce across databases - VYRESENO
+
+**Reseni**: Sekvencni operace s rollback logikou.
+
+Pro CoW kopii:
+1. Vytvor novou tabulku v branch
+2. INSERT SELECT z main
+3. Pokud fail -> DROP nove vytvorena tabulka
 
 ## Dusledky
 

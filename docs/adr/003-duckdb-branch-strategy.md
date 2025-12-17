@@ -2,7 +2,13 @@
 
 ## Status
 
-Superseded by [ADR-007](007-duckdb-cow-branching.md)
+**SUPERSEDED** by [ADR-007](007-duckdb-cow-branching.md)
+
+> **Note**: ADR-007 implementuje Copy-on-Write s Live View na zaklade analyzy
+> Keboola Storage produkce. Klic rozdily oproti tomuto ADR:
+> - **Live View** (ne snapshot) - branch vidi aktualni main data
+> - **CoW on first write** - kopie az pri prvnim zapisu
+> - **No table merge** - merge = jen konfigurace, tabulky se smazou
 
 ## Datum
 
