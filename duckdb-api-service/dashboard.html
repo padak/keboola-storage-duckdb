@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB API Metrics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #e2e8f0;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --border-color: #334155;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+            --method-get-bg: #166534;
+            --method-get-text: #86efac;
+            --method-post-bg: #1e40af;
+            --method-post-text: #93c5fd;
+            --method-delete-bg: #991b1b;
+            --method-delete-text: #fca5a5;
+            --method-put-bg: #854d0e;
+            --method-put-text: #fde047;
+            --error-banner-bg: #7f1d1d;
+            --error-banner-border: #ef4444;
+            --error-banner-text: #fecaca;
+        }
+        [data-theme="light"] {
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #1e293b;
+            --text-muted: #475569;
+            --text-dim: #64748b;
+            --border-color: #cbd5e1;
+            --method-get-bg: #dcfce7;
+            --method-get-text: #166534;
+            --method-post-bg: #dbeafe;
+            --method-post-text: #1e40af;
+            --method-delete-bg: #fee2e2;
+            --method-delete-text: #991b1b;
+            --method-put-bg: #fef3c7;
+            --method-put-text: #854d0e;
+            --error-banner-bg: #fee2e2;
+            --error-banner-border: #ef4444;
+            --error-banner-text: #991b1b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            min-height: 100vh;
+            padding: 20px;
+            transition: background 0.3s, color 0.3s;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .header h1 { font-size: 22px; font-weight: 600; color: var(--text-primary); }
+        .version-badge {
+            background: var(--method-post-bg);
+            color: var(--method-post-text);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .status { display: flex; align-items: center; gap: 10px; }
+        .status-indicator {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .status-indicator.down { background: var(--error); box-shadow: 0 0 8px var(--error); }
+        .last-update { font-size: 11px; color: var(--text-dim); }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        .auto-refresh-toggle {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px; color: var(--text-muted);
+        }
+        .refresh-btn, .theme-btn {
+            background: var(--blue); color: white; border: none;
+            padding: 6px 14px; border-radius: 6px; cursor: pointer;
+            font-size: 12px; transition: background 0.2s, transform 0.1s;
+        }
+        .refresh-btn:hover, .theme-btn:hover { background: #2563eb; }
+        .theme-btn:active { transform: scale(0.95); }
+        .theme-btn {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .theme-btn:hover { background: var(--border-color); }
+        .error-banner {
+            background: var(--error-banner-bg);
+            border: 1px solid var(--error-banner-border);
+            color: var(--error-banner-text);
+            padding: 10px 14px; border-radius: 8px;
+            margin-bottom: 16px; display: none; font-size: 13px;
+        }
+        .section-title {
+            font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+            color: var(--text-dim); margin: 20px 0 12px; font-weight: 600;
+        }
+        .grid { display: grid; gap: 12px; margin-bottom: 16px; }
+        .grid-4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+        .grid-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .grid-2 { grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); }
+        .card {
+            background: var(--bg-secondary); border-radius: 10px; padding: 16px;
+            border: 1px solid var(--border-color);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .card-title {
+            font-size: 10px; text-transform: uppercase; color: var(--text-dim);
+            margin-bottom: 6px; letter-spacing: 0.5px;
+        }
+        .card-value { font-size: 28px; font-weight: 700; color: var(--text-primary); }
+        .card-value.medium { font-size: 22px; }
+        .card-value.small { font-size: 18px; }
+        .card-subtitle { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+        .card-value.success { color: var(--success); }
+        .card-value.warning { color: var(--warning); }
+        .card-value.error { color: var(--error); }
+        .chart-card {
+            background: var(--bg-secondary); border-radius: 10px; padding: 16px;
+            border: 1px solid var(--border-color);
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .chart-card h3 {
+            font-size: 12px; font-weight: 600; color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+        .chart-container { position: relative; height: 200px; }
+        .chart-container.tall { height: 280px; }
+        .table-card {
+            background: var(--bg-secondary); border-radius: 10px; padding: 16px;
+            border: 1px solid var(--border-color); margin-bottom: 16px;
+            transition: background 0.3s, border-color 0.3s;
+        }
+        .table-card h3 {
+            font-size: 12px; font-weight: 600; color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        th { font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+        td { font-size: 12px; color: var(--text-secondary); }
+        .method {
+            font-family: monospace; padding: 2px 6px; border-radius: 4px;
+            font-size: 10px; font-weight: 600;
+        }
+        .method.GET { background: var(--method-get-bg); color: var(--method-get-text); }
+        .method.POST { background: var(--method-post-bg); color: var(--method-post-text); }
+        .method.DELETE { background: var(--method-delete-bg); color: var(--method-delete-text); }
+        .method.PUT { background: var(--method-put-bg); color: var(--method-put-text); }
+        .status-code { font-family: monospace; font-weight: 600; }
+        .status-code.s2xx { color: var(--success); }
+        .status-code.s4xx { color: var(--warning); }
+        .status-code.s5xx { color: var(--error); }
+        .bar-container {
+            display: flex; align-items: center; gap: 8px; margin: 4px 0;
+        }
+        .bar-label { font-size: 11px; color: var(--text-muted); min-width: 80px; }
+        .bar-bg {
+            flex: 1; height: 18px; background: var(--bg-tertiary); border-radius: 4px;
+            overflow: hidden; position: relative;
+        }
+        .bar-fill {
+            height: 100%; border-radius: 4px; transition: width 0.3s;
+            display: flex; align-items: center; justify-content: flex-end;
+            padding-right: 6px; font-size: 10px; font-weight: 600; color: white;
+        }
+        .bar-fill.metadata { background: var(--purple); }
+        .bar-fill.tables { background: var(--blue); }
+        .bar-fill.staging { background: var(--warning); }
+        .bar-fill.files { background: var(--success); }
+        .percentile-row {
+            display: flex; justify-content: space-between; padding: 6px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .percentile-row:last-child { border-bottom: none; }
+        .percentile-label { font-size: 11px; color: var(--text-muted); }
+        .percentile-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+        .mini-stat {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 0; border-bottom: 1px solid var(--border-color);
+        }
+        .mini-stat:last-child { border-bottom: none; }
+        .mini-stat-label { font-size: 11px; color: var(--text-muted); }
+        .mini-stat-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <h1>DuckDB API Metrics</h1>
+            <span class="version-badge" id="versionBadge">v--</span>
+        </div>
+        <div class="status">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <span id="statusText">Connecting...</span>
+            <span class="last-update" id="lastUpdate"></span>
+        </div>
+        <div class="controls">
+            <label class="auto-refresh-toggle">
+                <input type="checkbox" id="autoRefresh" checked> Auto (5s)
+            </label>
+            <button class="refresh-btn" onclick="fetchMetrics()">Refresh</button>
+            <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">
+                <span id="themeIcon">&#9790;</span>
+                <span id="themeLabel">Light</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="error-banner" id="errorBanner"></div>
+
+    <!-- Service Health -->
+    <div class="section-title">Service Health</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Status</div>
+            <div class="card-value success" id="serviceStatus">--</div>
+            <div class="card-subtitle" id="pythonVersion">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Uptime</div>
+            <div class="card-value small" id="uptime">--</div>
+            <div class="card-subtitle" id="startTime">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Total Requests</div>
+            <div class="card-value" id="totalRequests">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Error Rate</div>
+            <div class="card-value" id="errorRate">--</div>
+            <div class="card-subtitle" id="errorBreakdown">--</div>
+        </div>
+    </div>
+
+    <!-- Storage -->
+    <div class="section-title">Storage</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Projects</div>
+            <div class="card-value" id="projects">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Buckets</div>
+            <div class="card-value" id="buckets">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Tables</div>
+            <div class="card-value" id="tables">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Total Size</div>
+            <div class="card-value small" id="totalStorage">--</div>
+        </div>
+    </div>
+
+    <div class="grid grid-2">
+        <div class="chart-card">
+            <h3>Storage Breakdown</h3>
+            <div id="storageBreakdown"></div>
+        </div>
+        <div class="chart-card">
+            <h3>Request Latency Percentiles</h3>
+            <div id="latencyPercentiles">
+                <div class="percentile-row">
+                    <span class="percentile-label">P50 (Median)</span>
+                    <span class="percentile-value" id="p50">--</span>
+                </div>
+                <div class="percentile-row">
+                    <span class="percentile-label">P90</span>
+                    <span class="percentile-value" id="p90">--</span>
+                </div>
+                <div class="percentile-row">
+                    <span class="percentile-label">P95</span>
+                    <span class="percentile-value" id="p95">--</span>
+                </div>
+                <div class="percentile-row">
+                    <span class="percentile-label">P99</span>
+                    <span class="percentile-value" id="p99">--</span>
+                </div>
+                <div class="percentile-row">
+                    <span class="percentile-label">Average</span>
+                    <span class="percentile-value" id="avgLatency">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Locks & Cache -->
+    <div class="section-title">Concurrency & Caching</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Active Locks</div>
+            <div class="card-value" id="activeLocks">--</div>
+            <div class="card-subtitle" id="lockAcquisitions">-- acquisitions</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Lock Wait P95</div>
+            <div class="card-value small" id="lockWaitP95">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Cache Size</div>
+            <div class="card-value" id="cacheSize">--</div>
+            <div class="card-subtitle" id="cacheHitRate">Hit rate: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Cache Conflicts</div>
+            <div class="card-value" id="cacheConflicts">--</div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="section-title">Request Distribution</div>
+    <div class="grid grid-2">
+        <div class="chart-card">
+            <h3>By Status Code</h3>
+            <div class="chart-container">
+                <canvas id="statusChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3>By HTTP Method</h3>
+            <div class="chart-container">
+                <canvas id="methodChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tables -->
+    <div class="section-title">Request Details</div>
+    <div class="table-card">
+        <h3>Requests by Endpoint (Top 20)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Method</th>
+                    <th>Endpoint</th>
+                    <th>Status</th>
+                    <th style="text-align:right">Count</th>
+                    <th style="text-align:right">Avg Latency</th>
+                </tr>
+            </thead>
+            <tbody id="endpointsTable"></tbody>
+        </table>
+    </div>
+
+    <div class="two-col">
+        <div class="table-card">
+            <h3>Table Lock Activity</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Project / Bucket / Table</th>
+                        <th style="text-align:right">Lock Count</th>
+                    </tr>
+                </thead>
+                <tbody id="locksTable"></tbody>
+            </table>
+        </div>
+        <div class="table-card">
+            <h3>Python Runtime</h3>
+            <div id="pythonStats">
+                <div class="mini-stat">
+                    <span class="mini-stat-label">GC Collections (Gen 0)</span>
+                    <span class="mini-stat-value" id="gc0">--</span>
+                </div>
+                <div class="mini-stat">
+                    <span class="mini-stat-label">GC Collections (Gen 1)</span>
+                    <span class="mini-stat-value" id="gc1">--</span>
+                </div>
+                <div class="mini-stat">
+                    <span class="mini-stat-label">GC Collections (Gen 2)</span>
+                    <span class="mini-stat-value" id="gc2">--</span>
+                </div>
+                <div class="mini-stat">
+                    <span class="mini-stat-label">Objects Collected</span>
+                    <span class="mini-stat-value" id="gcCollected">--</span>
+                </div>
+                <div class="mini-stat">
+                    <span class="mini-stat-label">Uncollectable Objects</span>
+                    <span class="mini-stat-value" id="gcUncollectable">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const METRICS_URL = 'http://localhost:8000/metrics';
+        let statusChart = null;
+        let methodChart = null;
+        let refreshInterval = null;
+        let currentTheme = 'dark';
+
+        // Theme management
+        function initTheme() {
+            const saved = localStorage.getItem('dashboard-theme');
+            if (saved) {
+                currentTheme = saved;
+            } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+                currentTheme = 'light';
+            }
+            applyTheme();
+        }
+
+        function applyTheme() {
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            const icon = document.getElementById('themeIcon');
+            const label = document.getElementById('themeLabel');
+            if (currentTheme === 'light') {
+                icon.innerHTML = '&#9728;'; // Sun
+                label.textContent = 'Dark';
+            } else {
+                icon.innerHTML = '&#9790;'; // Moon
+                label.textContent = 'Light';
+            }
+            // Update charts if they exist
+            updateChartColors();
+        }
+
+        function toggleTheme() {
+            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('dashboard-theme', currentTheme);
+            applyTheme();
+        }
+
+        function getChartColors() {
+            const isLight = currentTheme === 'light';
+            return {
+                text: isLight ? '#475569' : '#94a3b8',
+                grid: isLight ? '#e2e8f0' : '#334155'
+            };
+        }
+
+        function updateChartColors() {
+            const colors = getChartColors();
+            if (statusChart) {
+                statusChart.options.plugins.legend.labels.color = colors.text;
+                statusChart.update();
+            }
+            if (methodChart) {
+                methodChart.options.scales.x.ticks.color = colors.text;
+                methodChart.options.scales.x.grid.color = colors.grid;
+                methodChart.options.scales.y.ticks.color = colors.text;
+                methodChart.options.scales.y.grid.color = colors.grid;
+                methodChart.update();
+            }
+        }
+
+        function parseMetrics(text) {
+            const metrics = {};
+            for (const line of text.split('\n')) {
+                if (line.startsWith('#') || !line.trim()) continue;
+                const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)((?:\{[^}]*\})?)?\s+(.+)$/);
+                if (match) {
+                    const [, name, labelsStr, value] = match;
+                    const labels = {};
+                    if (labelsStr) {
+                        for (const m of labelsStr.matchAll(/(\w+)="([^"]*)"/g)) {
+                            labels[m[1]] = m[2];
+                        }
+                    }
+                    if (!metrics[name]) metrics[name] = [];
+                    metrics[name].push({ labels, value: parseFloat(value) });
+                }
+            }
+            return metrics;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 0.001) return (seconds * 1000000).toFixed(0) + ' us';
+            if (seconds < 1) return (seconds * 1000).toFixed(1) + ' ms';
+            return seconds.toFixed(2) + ' s';
+        }
+
+        function formatUptime(startTime) {
+            const seconds = Math.floor(Date.now() / 1000 - startTime);
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function calculatePercentile(buckets, percentile) {
+            if (!buckets || buckets.length === 0) return null;
+            const sorted = buckets.filter(b => b.le !== '+Inf').sort((a, b) => a.le - b.le);
+            const infBucket = buckets.find(b => b.le === '+Inf');
+            const total = infBucket ? infBucket.count : sorted[sorted.length - 1]?.count || 0;
+            if (total === 0) return null;
+
+            const target = total * percentile;
+            let prev = { le: 0, count: 0 };
+            for (const bucket of sorted) {
+                if (bucket.count >= target) {
+                    const ratio = (target - prev.count) / (bucket.count - prev.count || 1);
+                    return prev.le + ratio * (bucket.le - prev.le);
+                }
+                prev = bucket;
+            }
+            return sorted[sorted.length - 1]?.le;
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch(METRICS_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const text = await response.text();
+                const metrics = parseMetrics(text);
+                updateDashboard(metrics);
+
+                document.getElementById('statusIndicator').classList.remove('down');
+                document.getElementById('statusText').textContent = 'Connected';
+                document.getElementById('errorBanner').style.display = 'none';
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            } catch (error) {
+                document.getElementById('statusIndicator').classList.add('down');
+                document.getElementById('statusText').textContent = 'Disconnected';
+                document.getElementById('errorBanner').textContent = `Failed to fetch: ${error.message}`;
+                document.getElementById('errorBanner').style.display = 'block';
+            }
+        }
+
+        function updateDashboard(m) {
+            // Version
+            const info = m['duckdb_api_service_info']?.[0];
+            if (info) {
+                document.getElementById('versionBadge').textContent =
+                    `v${info.labels.version} / DuckDB ${info.labels.duckdb_version}`;
+            }
+
+            // Python version
+            const pyInfo = m['python_info']?.[0];
+            if (pyInfo) {
+                document.getElementById('pythonVersion').textContent =
+                    `Python ${pyInfo.labels.version}`;
+            }
+
+            // Service status
+            const up = m['duckdb_api_up']?.[0]?.value;
+            document.getElementById('serviceStatus').textContent = up === 1 ? 'Healthy' : 'Down';
+            document.getElementById('serviceStatus').className =
+                'card-value ' + (up === 1 ? 'success' : 'error');
+
+            // Uptime
+            const startTime = m['duckdb_api_start_time_seconds']?.[0]?.value;
+            if (startTime) {
+                document.getElementById('uptime').textContent = formatUptime(startTime);
+                document.getElementById('startTime').textContent =
+                    'Started ' + new Date(startTime * 1000).toLocaleString();
+            }
+
+            // Requests
+            const requests = m['duckdb_api_requests_total'] || [];
+            const totalReqs = requests.reduce((s, r) => s + r.value, 0);
+            document.getElementById('totalRequests').textContent = totalReqs.toLocaleString();
+
+            // Error rate
+            const errors4xx = requests.filter(r => r.labels.status_code?.startsWith('4'))
+                .reduce((s, r) => s + r.value, 0);
+            const errors5xx = requests.filter(r => r.labels.status_code?.startsWith('5'))
+                .reduce((s, r) => s + r.value, 0);
+            const errorRate = totalReqs > 0 ? ((errors4xx + errors5xx) / totalReqs * 100).toFixed(1) : 0;
+            document.getElementById('errorRate').textContent = errorRate + '%';
+            document.getElementById('errorRate').className =
+                'card-value ' + (errors5xx > 0 ? 'error' : errors4xx > 0 ? 'warning' : 'success');
+            document.getElementById('errorBreakdown').textContent =
+                `4xx: ${errors4xx}, 5xx: ${errors5xx}`;
+
+            // Storage counts
+            document.getElementById('projects').textContent =
+                m['duckdb_projects_total']?.[0]?.value ?? '--';
+            document.getElementById('buckets').textContent =
+                m['duckdb_buckets_total']?.[0]?.value ?? '--';
+            document.getElementById('tables').textContent =
+                m['duckdb_tables_total']?.[0]?.value ?? '--';
+
+            // Storage size
+            const storageMetrics = m['duckdb_storage_size_bytes'] || [];
+            const storageByType = {};
+            let totalSize = 0;
+            for (const s of storageMetrics) {
+                storageByType[s.labels.type] = s.value;
+                totalSize += s.value;
+            }
+            document.getElementById('totalStorage').textContent = formatBytes(totalSize);
+
+            // Storage breakdown bars
+            const storageHtml = ['metadata', 'tables', 'staging', 'files'].map(type => {
+                const size = storageByType[type] || 0;
+                const pct = totalSize > 0 ? (size / totalSize * 100) : 0;
+                return `
+                    <div class="bar-container">
+                        <span class="bar-label">${type}</span>
+                        <div class="bar-bg">
+                            <div class="bar-fill ${type}" style="width: ${Math.max(pct, size > 0 ? 5 : 0)}%">
+                                ${formatBytes(size)}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('storageBreakdown').innerHTML = storageHtml;
+
+            // Latency percentiles
+            const durations = m['duckdb_api_request_duration_seconds_bucket'] || [];
+            const buckets = [];
+            for (const d of durations) {
+                const le = d.labels.le === '+Inf' ? '+Inf' : parseFloat(d.labels.le);
+                const existing = buckets.find(b => b.le === le);
+                if (existing) existing.count += d.value;
+                else buckets.push({ le, count: d.value });
+            }
+
+            const durationSum = m['duckdb_api_request_duration_seconds_sum'] || [];
+            const durationCount = m['duckdb_api_request_duration_seconds_count'] || [];
+            const totalDurationSum = durationSum.reduce((s, d) => s + d.value, 0);
+            const totalDurationCount = durationCount.reduce((s, d) => s + d.value, 0);
+
+            document.getElementById('p50').textContent =
+                formatDuration(calculatePercentile(buckets, 0.5) || 0);
+            document.getElementById('p90').textContent =
+                formatDuration(calculatePercentile(buckets, 0.9) || 0);
+            document.getElementById('p95').textContent =
+                formatDuration(calculatePercentile(buckets, 0.95) || 0);
+            document.getElementById('p99').textContent =
+                formatDuration(calculatePercentile(buckets, 0.99) || 0);
+            document.getElementById('avgLatency').textContent =
+                totalDurationCount > 0 ? formatDuration(totalDurationSum / totalDurationCount) : '--';
+
+            // Locks
+            const activeLocks = m['duckdb_table_locks_active']?.[0]?.value ?? 0;
+            document.getElementById('activeLocks').textContent = activeLocks;
+
+            const lockAcqs = m['duckdb_table_lock_acquisitions_total'] || [];
+            const totalAcqs = lockAcqs.reduce((s, l) => s + l.value, 0);
+            document.getElementById('lockAcquisitions').textContent = `${totalAcqs} acquisitions`;
+
+            // Lock wait P95
+            const lockBuckets = (m['duckdb_table_lock_wait_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('lockWaitP95').textContent =
+                formatDuration(calculatePercentile(lockBuckets, 0.95) || 0);
+
+            // Cache
+            const cacheSize = m['duckdb_idempotency_cache_size']?.[0]?.value ?? 0;
+            const cacheHits = m['duckdb_idempotency_cache_hits_total']?.[0]?.value ?? 0;
+            const cacheMisses = m['duckdb_idempotency_cache_misses_total']?.[0]?.value ?? 0;
+            const cacheConflicts = m['duckdb_idempotency_conflicts_total']?.[0]?.value ?? 0;
+
+            document.getElementById('cacheSize').textContent = cacheSize;
+            const cacheTotal = cacheHits + cacheMisses;
+            document.getElementById('cacheHitRate').textContent =
+                `Hit rate: ${cacheTotal > 0 ? (cacheHits / cacheTotal * 100).toFixed(1) : 0}%`;
+            document.getElementById('cacheConflicts').textContent = cacheConflicts;
+            document.getElementById('cacheConflicts').className =
+                'card-value ' + (cacheConflicts > 0 ? 'warning' : '');
+
+            // Charts
+            const statusCounts = {};
+            requests.forEach(r => {
+                const code = r.labels.status_code;
+                statusCounts[code] = (statusCounts[code] || 0) + r.value;
+            });
+            updateStatusChart(statusCounts);
+
+            const methodCounts = {};
+            requests.forEach(r => {
+                const method = r.labels.method;
+                methodCounts[method] = (methodCounts[method] || 0) + r.value;
+            });
+            updateMethodChart(methodCounts);
+
+            // Endpoints table with latency
+            updateEndpointsTable(requests, m);
+
+            // Locks table
+            updateLocksTable(lockAcqs);
+
+            // Python GC
+            const gc0 = m['python_gc_collections_total']?.find(g => g.labels.generation === '0')?.value ?? 0;
+            const gc1 = m['python_gc_collections_total']?.find(g => g.labels.generation === '1')?.value ?? 0;
+            const gc2 = m['python_gc_collections_total']?.find(g => g.labels.generation === '2')?.value ?? 0;
+            document.getElementById('gc0').textContent = gc0;
+            document.getElementById('gc1').textContent = gc1;
+            document.getElementById('gc2').textContent = gc2;
+
+            const collected = (m['python_gc_objects_collected_total'] || [])
+                .reduce((s, g) => s + g.value, 0);
+            document.getElementById('gcCollected').textContent = collected.toLocaleString();
+
+            const uncollectable = (m['python_gc_objects_uncollectable_total'] || [])
+                .reduce((s, g) => s + g.value, 0);
+            document.getElementById('gcUncollectable').textContent = uncollectable;
+            document.getElementById('gcUncollectable').className =
+                'mini-stat-value' + (uncollectable > 0 ? ' error' : '');
+        }
+
+        function updateStatusChart(counts) {
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            const labels = Object.keys(counts).sort();
+            const data = labels.map(l => counts[l]);
+            const colors = labels.map(code => {
+                if (code.startsWith('2')) return '#22c55e';
+                if (code.startsWith('4')) return '#f59e0b';
+                return '#ef4444';
+            });
+            const chartColors = getChartColors();
+
+            if (statusChart) {
+                statusChart.data.labels = labels;
+                statusChart.data.datasets[0].data = data;
+                statusChart.data.datasets[0].backgroundColor = colors;
+                statusChart.update();
+            } else {
+                statusChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { position: 'right', labels: { color: chartColors.text, font: { size: 11 } } } }
+                    }
+                });
+            }
+        }
+
+        function updateMethodChart(counts) {
+            const ctx = document.getElementById('methodChart').getContext('2d');
+            const labels = Object.keys(counts).sort();
+            const data = labels.map(l => counts[l]);
+            const colors = { GET: '#22c55e', POST: '#3b82f6', PUT: '#f59e0b', DELETE: '#ef4444', PATCH: '#8b5cf6' };
+            const chartColors = getChartColors();
+
+            if (methodChart) {
+                methodChart.data.labels = labels;
+                methodChart.data.datasets[0].data = data;
+                methodChart.data.datasets[0].backgroundColor = labels.map(m => colors[m] || '#64748b');
+                methodChart.update();
+            } else {
+                methodChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels,
+                        datasets: [{ data, backgroundColor: labels.map(m => colors[m] || '#64748b'), borderWidth: 0, borderRadius: 4 }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid } },
+                            y: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid } }
+                        }
+                    }
+                });
+            }
+        }
+
+        function updateEndpointsTable(requests, metrics) {
+            const tbody = document.getElementById('endpointsTable');
+            const durationSum = metrics['duckdb_api_request_duration_seconds_sum'] || [];
+            const durationCount = metrics['duckdb_api_request_duration_seconds_count'] || [];
+
+            const latencyMap = {};
+            for (const d of durationSum) {
+                const key = `${d.labels.method}:${d.labels.endpoint}`;
+                latencyMap[key] = { sum: d.value, count: 0 };
+            }
+            for (const d of durationCount) {
+                const key = `${d.labels.method}:${d.labels.endpoint}`;
+                if (latencyMap[key]) latencyMap[key].count = d.value;
+            }
+
+            const sorted = [...requests].sort((a, b) => b.value - a.value).slice(0, 20);
+
+            tbody.innerHTML = sorted.map(r => {
+                const key = `${r.labels.method}:${r.labels.endpoint}`;
+                const lat = latencyMap[key];
+                const avgLat = lat && lat.count > 0 ? formatDuration(lat.sum / lat.count) : '--';
+                const statusClass = r.labels.status_code.startsWith('2') ? 's2xx' :
+                    r.labels.status_code.startsWith('4') ? 's4xx' : 's5xx';
+                return `
+                    <tr>
+                        <td><span class="method ${r.labels.method}">${r.labels.method}</span></td>
+                        <td style="font-family: monospace; font-size: 11px;">${r.labels.endpoint}</td>
+                        <td><span class="status-code ${statusClass}">${r.labels.status_code}</span></td>
+                        <td style="text-align: right; font-weight: 600;">${r.value.toLocaleString()}</td>
+                        <td style="text-align: right; color: var(--text-muted);">${avgLat}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function updateLocksTable(locks) {
+            const tbody = document.getElementById('locksTable');
+            if (locks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="color: var(--text-dim); text-align: center;">No lock activity</td></tr>';
+                return;
+            }
+            const sorted = [...locks].sort((a, b) => b.value - a.value).slice(0, 10);
+            tbody.innerHTML = sorted.map(l => `
+                <tr>
+                    <td style="font-family: monospace; font-size: 11px;">
+                        ${l.labels.project_id} / ${l.labels.bucket} / ${l.labels.table}
+                    </td>
+                    <td style="text-align: right; font-weight: 600;">${l.value.toLocaleString()}</td>
+                </tr>
+            `).join('');
+        }
+
+        document.getElementById('autoRefresh').addEventListener('change', function() {
+            if (this.checked) refreshInterval = setInterval(fetchMetrics, 5000);
+            else clearInterval(refreshInterval);
+        });
+
+        // Initialize
+        initTheme();
+        fetchMetrics();
+        refreshInterval = setInterval(fetchMetrics, 5000);
+    </script>
+</body>
+</html>
