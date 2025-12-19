@@ -2,7 +2,23 @@
 
 ## Status
 
-Accepted
+**IMPLEMENTED** (2024-12-18)
+
+## Implementace
+
+Pouzita knihovna **buenavista** (Python) misto puvodne planovaneho duckgres (Rust).
+
+**Duvody zmeny:**
+- Jednodussi integrace s existujicim Python codebase
+- Snazsi customizace autentizace
+- Mene zavislosti (neni potreba Rust toolchain)
+- Dostatecny vykon pro MVP
+
+**Soubory:**
+- `src/pgwire_server.py` - Custom PG Wire server based on buenavista
+- `src/routers/pgwire_auth.py` - Authentication bridge for PG Wire
+
+**Reference:** [buenavista](https://github.com/jwills/buenavista)
 
 ## Datum
 
@@ -274,8 +290,9 @@ class WorkspaceConfig:
 
 ## Reference
 
-- [duckgres (PostHog)](https://github.com/PostHog/duckgres)
-- [duckdb-pgwire](https://github.com/euiko/duckdb-pgwire)
+- [buenavista](https://github.com/jwills/buenavista) - **POUZITO** v implementaci
+- [duckgres (PostHog)](https://github.com/PostHog/duckgres) - puvodne zvazovano
+- [duckdb-pgwire](https://github.com/euiko/duckdb-pgwire) - alternativa
 - [PostgreSQL Wire Protocol](https://www.postgresql.org/docs/current/protocol.html)
 - [DuckDB ATTACH](https://duckdb.org/docs/sql/statements/attach.html)
 - [ADR-009: File per Table](009-duckdb-file-per-table.md) - zaklad pro ATTACH architekturu
