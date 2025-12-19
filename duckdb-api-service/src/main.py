@@ -11,7 +11,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, pgwire_auth, snapshot_settings, snapshots, workspaces
+from src.routers import api_keys, backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, pgwire_auth, snapshot_settings, snapshots, workspaces
 from src.database import metadata_db
 from src.middleware.idempotency import IdempotencyMiddleware
 from src.middleware.metrics import MetricsMiddleware, normalize_path
@@ -142,6 +142,24 @@ This service provides a REST API for managing DuckDB-based storage:
 - Workspace management
 
 Part of the on-premise Keboola setup without cloud dependencies.
+
+## Idempotency
+
+All mutating operations (POST, PUT, DELETE) support idempotency via the
+`X-Idempotency-Key` header. When provided, the API caches the response
+for 10 minutes. Subsequent requests with the same key return the cached
+response without re-executing the operation.
+
+**Usage:**
+```
+X-Idempotency-Key: unique-client-generated-key
+```
+
+**Response headers:**
+- `X-Idempotency-Key`: echoed back
+- `X-Idempotency-Replay: true`: indicates a cached response
+
+This protects against duplicate operations from network retries.
     """,
     lifespan=lifespan,
     docs_url="/docs" if settings.debug else None,
@@ -227,6 +245,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(backend.router)
 app.include_router(projects.router)
+app.include_router(api_keys.router)
 app.include_router(buckets.router)
 app.include_router(bucket_sharing.router)
 app.include_router(tables.router)
@@ -250,6 +269,54 @@ async def root():
         "health": "/health",
         "docs": "/docs" if settings.debug else None,
     }
+
+
+# Customize OpenAPI schema to add X-Idempotency-Key header to mutating operations
+def custom_openapi():
+    """Add X-Idempotency-Key header to POST/PUT/DELETE endpoints."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    from fastapi.openapi.utils import get_openapi
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Define the idempotency header parameter
+    idempotency_param = {
+        "name": "X-Idempotency-Key",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string"},
+        "description": (
+            "Optional unique key for idempotent requests. "
+            "If provided, the response is cached for 10 minutes. "
+            "Subsequent requests with the same key return the cached response."
+        ),
+    }
+
+    # Add header to all POST, PUT, DELETE operations
+    mutating_methods = {"post", "put", "delete"}
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        for method in mutating_methods:
+            if method in path_item:
+                operation = path_item[method]
+                if "parameters" not in operation:
+                    operation["parameters"] = []
+                # Add idempotency header if not already present
+                existing_params = {p.get("name") for p in operation["parameters"]}
+                if "X-Idempotency-Key" not in existing_params:
+                    operation["parameters"].append(idempotency_param.copy())
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 if __name__ == "__main__":

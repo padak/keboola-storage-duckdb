@@ -264,21 +264,6 @@ CREATE TABLE IF NOT EXISTS bucket_links (
 CREATE INDEX IF NOT EXISTS idx_links_target ON bucket_links(target_project_id);
 CREATE INDEX IF NOT EXISTS idx_links_source ON bucket_links(source_project_id, source_bucket_name);
 
--- API keys for authentication
-CREATE TABLE IF NOT EXISTS api_keys (
-    id VARCHAR PRIMARY KEY,
-    project_id VARCHAR NOT NULL,
-    key_hash VARCHAR(64) NOT NULL,
-    key_prefix VARCHAR(30) NOT NULL,
-    description VARCHAR(255),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    last_used_at TIMESTAMPTZ,
-    FOREIGN KEY (project_id) REFERENCES projects(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
-CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
-
 -- Idempotency keys for HTTP request deduplication
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     key VARCHAR PRIMARY KEY,
@@ -344,6 +329,29 @@ CREATE TABLE IF NOT EXISTS branches (
 );
 
 CREATE INDEX IF NOT EXISTS idx_branches_project ON branches(project_id);
+
+-- API keys for authentication
+-- Note: Placed after branches table to satisfy FOREIGN KEY constraint
+CREATE TABLE IF NOT EXISTS api_keys (
+    id VARCHAR PRIMARY KEY,
+    project_id VARCHAR NOT NULL,
+    branch_id VARCHAR,                    -- NULL for project-wide keys
+    key_hash VARCHAR(64) NOT NULL,
+    key_prefix VARCHAR(50) NOT NULL,      -- Extended for branch key prefixes
+    scope VARCHAR(20) NOT NULL DEFAULT 'project_admin',  -- 'project_admin', 'branch_admin', 'branch_read'
+    description VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    last_used_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,               -- Optional expiration
+    revoked_at TIMESTAMPTZ,               -- Soft delete (revoked keys)
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (branch_id) REFERENCES branches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_branch ON api_keys(branch_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_revoked ON api_keys(revoked_at);
 
 -- Track which tables have been copied to branch (Copy-on-Write tracking)
 CREATE TABLE IF NOT EXISTS branch_tables (
@@ -450,11 +458,107 @@ class MetadataDB:
             # Connect and create schema
             conn = duckdb.connect(str(db_path))
             try:
+                # Run migrations BEFORE creating schema
+                # This allows us to migrate existing tables before CREATE TABLE IF NOT EXISTS
+                self._migrate_api_keys_schema(conn)
+
+                # Create/update schema
                 conn.execute(METADATA_SCHEMA)
                 conn.commit()
                 logger.info("metadata_db_schema_created", path=str(db_path))
             finally:
                 conn.close()
+
+    def _migrate_api_keys_schema(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """
+        Migrate api_keys table to new schema if needed.
+
+        Adds: branch_id, scope, expires_at, revoked_at columns if they don't exist.
+        Extends key_prefix from VARCHAR(30) to VARCHAR(50).
+        """
+        # Check if we need to migrate by checking if branch_id column exists
+        try:
+            result = conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'api_keys'"
+            ).fetchall()
+            columns = {row[0] for row in result}
+
+            if not columns:
+                # Table doesn't exist yet, will be created by METADATA_SCHEMA
+                return
+
+            needs_migration = False
+
+            # Check if new columns exist
+            if 'branch_id' not in columns:
+                needs_migration = True
+                logger.info("api_keys_migration_needed", reason="missing_branch_id_column")
+
+            if not needs_migration:
+                logger.debug("api_keys_schema_up_to_date")
+                return
+
+            # Perform migration: recreate table with new schema
+            logger.info("api_keys_migration_started")
+
+            # 1. Drop old indexes first (required before renaming table)
+            conn.execute("DROP INDEX IF EXISTS idx_api_keys_prefix")
+            conn.execute("DROP INDEX IF EXISTS idx_api_keys_project")
+
+            # 2. Rename old table
+            conn.execute("ALTER TABLE api_keys RENAME TO api_keys_old")
+
+            # 3. Create new table with updated schema
+            # Re-run just the api_keys portion of the schema
+            conn.execute("""
+                CREATE TABLE api_keys (
+                    id VARCHAR PRIMARY KEY,
+                    project_id VARCHAR NOT NULL,
+                    branch_id VARCHAR,
+                    key_hash VARCHAR(64) NOT NULL,
+                    key_prefix VARCHAR(50) NOT NULL,
+                    scope VARCHAR(20) NOT NULL DEFAULT 'project_admin',
+                    description VARCHAR(255),
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    last_used_at TIMESTAMPTZ,
+                    expires_at TIMESTAMPTZ,
+                    revoked_at TIMESTAMPTZ,
+                    FOREIGN KEY (project_id) REFERENCES projects(id),
+                    FOREIGN KEY (branch_id) REFERENCES branches(id)
+                );
+
+                CREATE INDEX idx_api_keys_prefix ON api_keys(key_prefix);
+                CREATE INDEX idx_api_keys_project ON api_keys(project_id);
+                CREATE INDEX idx_api_keys_branch ON api_keys(branch_id);
+                CREATE INDEX idx_api_keys_revoked ON api_keys(revoked_at);
+            """)
+
+            # 4. Migrate data from old table
+            conn.execute("""
+                INSERT INTO api_keys (id, project_id, branch_id, key_hash, key_prefix,
+                                      scope, description, created_at, last_used_at)
+                SELECT id, project_id, NULL, key_hash, key_prefix,
+                       'project_admin', description, created_at, last_used_at
+                FROM api_keys_old
+            """)
+
+            # 5. Drop old table
+            conn.execute("DROP TABLE api_keys_old")
+
+            conn.commit()
+            logger.info("api_keys_migration_completed")
+
+        except Exception as e:
+            logger.error("api_keys_migration_failed", error=str(e))
+            # Rollback if possible
+            try:
+                conn.execute("DROP TABLE IF EXISTS api_keys")
+                conn.execute("ALTER TABLE api_keys_old RENAME TO api_keys")
+                conn.commit()
+                logger.info("api_keys_migration_rolled_back")
+            except Exception:
+                pass
+            raise
 
     @contextmanager
     def connection(self) -> Generator[duckdb.DuckDBPyConnection, None, None]:
@@ -897,6 +1001,9 @@ class MetadataDB:
         key_hash: str,
         key_prefix: str,
         description: str | None = None,
+        branch_id: str | None = None,
+        scope: str = "project_admin",
+        expires_at: datetime | None = None,
     ) -> dict[str, Any]:
         """
         Store a new API key (hashed).
@@ -905,8 +1012,11 @@ class MetadataDB:
             key_id: Unique identifier for the API key
             project_id: The project this key belongs to
             key_hash: SHA-256 hash of the full API key
-            key_prefix: First ~30 chars of the API key for lookup
+            key_prefix: First ~50 chars of the API key for lookup
             description: Optional description
+            branch_id: Branch ID for branch-specific keys (NULL for project-wide)
+            scope: Key scope ('project_admin', 'branch_admin', 'branch_read')
+            expires_at: Optional expiration timestamp
 
         Returns:
             Dict with the created API key record (without the hash)
@@ -916,15 +1026,20 @@ class MetadataDB:
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO api_keys (id, project_id, key_hash, key_prefix, description, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO api_keys (id, project_id, branch_id, key_hash, key_prefix,
+                                      scope, description, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                [key_id, project_id, key_hash, key_prefix, description, now],
+                [key_id, project_id, branch_id, key_hash, key_prefix, scope, description, now, expires_at],
             )
             conn.commit()
 
             result = conn.execute(
-                "SELECT id, project_id, key_prefix, description, created_at, last_used_at FROM api_keys WHERE id = ?",
+                """
+                SELECT id, project_id, branch_id, key_prefix, scope, description,
+                       created_at, last_used_at, expires_at, revoked_at
+                FROM api_keys WHERE id = ?
+                """,
                 [key_id],
             ).fetchone()
 
@@ -932,6 +1047,8 @@ class MetadataDB:
             "api_key_created",
             key_id=key_id,
             project_id=project_id,
+            branch_id=branch_id,
+            scope=scope,
             key_prefix=key_prefix[:10] + "...",
         )
 
@@ -939,10 +1056,14 @@ class MetadataDB:
             return {
                 "id": result[0],
                 "project_id": result[1],
-                "key_prefix": result[2],
-                "description": result[3],
-                "created_at": result[4].isoformat() if result[4] else None,
-                "last_used_at": result[5].isoformat() if result[5] else None,
+                "branch_id": result[2],
+                "key_prefix": result[3],
+                "scope": result[4],
+                "description": result[5],
+                "created_at": result[6].isoformat() if result[6] else None,
+                "last_used_at": result[7].isoformat() if result[7] else None,
+                "expires_at": result[8].isoformat() if result[8] else None,
+                "revoked_at": result[9].isoformat() if result[9] else None,
             }
 
         return {}
@@ -955,61 +1076,150 @@ class MetadataDB:
             key_prefix: The key prefix to search for
 
         Returns:
-            Dict with id, project_id, key_hash, key_prefix, etc. or None if not found
+            Dict with id, project_id, branch_id, scope, key_hash, etc. or None if not found
+            Only returns non-revoked, non-expired keys
         """
+        now = datetime.now(timezone.utc)
         result = self.execute_one(
             """
-            SELECT id, project_id, key_hash, key_prefix, description, created_at, last_used_at
+            SELECT id, project_id, branch_id, key_hash, key_prefix, scope,
+                   description, created_at, last_used_at, expires_at, revoked_at
             FROM api_keys
             WHERE key_prefix = ?
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
             """,
-            [key_prefix],
+            [key_prefix, now],
         )
 
         if result:
             return {
                 "id": result[0],
                 "project_id": result[1],
-                "key_hash": result[2],
-                "key_prefix": result[3],
-                "description": result[4],
-                "created_at": result[5].isoformat() if result[5] else None,
-                "last_used_at": result[6].isoformat() if result[6] else None,
+                "branch_id": result[2],
+                "key_hash": result[3],
+                "key_prefix": result[4],
+                "scope": result[5],
+                "description": result[6],
+                "created_at": result[7].isoformat() if result[7] else None,
+                "last_used_at": result[8].isoformat() if result[8] else None,
+                "expires_at": result[9].isoformat() if result[9] else None,
+                "revoked_at": result[10].isoformat() if result[10] else None,
             }
 
         return None
 
-    def get_api_keys_for_project(self, project_id: str) -> list[dict[str, Any]]:
+    def get_api_keys_for_project(self, project_id: str, include_revoked: bool = False) -> list[dict[str, Any]]:
         """
         List all API keys for a project.
 
         Args:
             project_id: The project ID
+            include_revoked: Whether to include revoked keys (default: False)
 
         Returns:
             List of API key dicts (without key_hash for security)
         """
-        results = self.execute(
+        if include_revoked:
+            query = """
+                SELECT id, project_id, branch_id, key_prefix, scope, description,
+                       created_at, last_used_at, expires_at, revoked_at
+                FROM api_keys
+                WHERE project_id = ?
+                ORDER BY created_at DESC
             """
-            SELECT id, project_id, key_prefix, description, created_at, last_used_at
-            FROM api_keys
-            WHERE project_id = ?
-            ORDER BY created_at DESC
-            """,
-            [project_id],
-        )
+        else:
+            query = """
+                SELECT id, project_id, branch_id, key_prefix, scope, description,
+                       created_at, last_used_at, expires_at, revoked_at
+                FROM api_keys
+                WHERE project_id = ? AND revoked_at IS NULL
+                ORDER BY created_at DESC
+            """
+
+        results = self.execute(query, [project_id])
 
         return [
             {
                 "id": row[0],
                 "project_id": row[1],
-                "key_prefix": row[2],
-                "description": row[3],
-                "created_at": row[4].isoformat() if row[4] else None,
-                "last_used_at": row[5].isoformat() if row[5] else None,
+                "branch_id": row[2],
+                "key_prefix": row[3],
+                "scope": row[4],
+                "description": row[5],
+                "created_at": row[6].isoformat() if row[6] else None,
+                "last_used_at": row[7].isoformat() if row[7] else None,
+                "expires_at": row[8].isoformat() if row[8] else None,
+                "revoked_at": row[9].isoformat() if row[9] else None,
             }
             for row in results
         ]
+
+    def get_api_key_by_id(self, key_id: str) -> dict[str, Any] | None:
+        """
+        Get a single API key by its ID.
+
+        Args:
+            key_id: The API key ID
+
+        Returns:
+            Dict with API key details (without key_hash for security) or None if not found
+        """
+        result = self.execute_one(
+            """
+            SELECT id, project_id, branch_id, key_prefix, scope, description,
+                   created_at, last_used_at, expires_at, revoked_at
+            FROM api_keys
+            WHERE id = ?
+            """,
+            [key_id],
+        )
+
+        if result:
+            return {
+                "id": result[0],
+                "project_id": result[1],
+                "branch_id": result[2],
+                "key_prefix": result[3],
+                "scope": result[4],
+                "description": result[5],
+                "created_at": result[6].isoformat() if result[6] else None,
+                "last_used_at": result[7].isoformat() if result[7] else None,
+                "expires_at": result[8].isoformat() if result[8] else None,
+                "revoked_at": result[9].isoformat() if result[9] else None,
+            }
+
+        return None
+
+    def revoke_api_key(self, key_id: str) -> bool:
+        """
+        Revoke an API key (soft delete by setting revoked_at timestamp).
+
+        Args:
+            key_id: The API key ID
+
+        Returns:
+            True if key was revoked, False if key not found
+        """
+        now = datetime.now(timezone.utc)
+
+        # Check if key exists
+        key = self.get_api_key_by_id(key_id)
+        if not key:
+            return False
+
+        self.execute_write(
+            "UPDATE api_keys SET revoked_at = ? WHERE id = ?",
+            [now, key_id],
+        )
+
+        logger.info(
+            "api_key_revoked",
+            key_id=key_id,
+            project_id=key.get("project_id"),
+            branch_id=key.get("branch_id"),
+        )
+        return True
 
     def update_api_key_last_used(self, key_id: str) -> None:
         """
@@ -1071,6 +1281,30 @@ class MetadataDB:
         )
 
         return count
+
+    def count_active_project_admin_keys(self, project_id: str) -> int:
+        """
+        Count active (non-revoked, non-expired) project_admin keys.
+
+        Args:
+            project_id: The project ID
+
+        Returns:
+            Count of active project_admin keys
+        """
+        now = datetime.now(timezone.utc)
+        result = self.execute_one(
+            """
+            SELECT COUNT(*)
+            FROM api_keys
+            WHERE project_id = ?
+              AND scope = 'project_admin'
+              AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            [project_id, now],
+        )
+        return result[0] if result else 0
 
     # ========================================
     # Idempotency key operations
@@ -2655,6 +2889,459 @@ class ProjectDBManager:
             "table_count": table_count,
             "size_bytes": size_bytes,
         }
+
+    # ========================================
+    # Branch-First API helpers (ADR-012)
+    # ========================================
+
+    def resolve_branch_path(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str | None = None,
+        table_name: str | None = None,
+    ) -> Path:
+        """
+        Resolve the correct path based on branch_id.
+
+        ADR-012: Branch-First API
+        - branch_id = "default" -> main project path
+        - Other branch_id -> branch path
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+            bucket_name: Optional bucket name
+            table_name: Optional table name
+
+        Returns:
+            Path to project directory, bucket directory, or table file
+        """
+        if branch_id == "default":
+            # Main project paths
+            if table_name and bucket_name:
+                return self.get_table_path(project_id, bucket_name, table_name)
+            elif bucket_name:
+                return self.get_bucket_dir(project_id, bucket_name)
+            else:
+                return self.get_project_dir(project_id)
+        else:
+            # Branch paths
+            if table_name and bucket_name:
+                return self.get_branch_table_path(project_id, branch_id, bucket_name, table_name)
+            elif bucket_name:
+                return self.get_branch_bucket_dir(project_id, branch_id, bucket_name)
+            else:
+                return self.get_branch_dir(project_id, branch_id)
+
+    def get_table_source(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> str:
+        """
+        Determine where a table exists in relation to a branch.
+
+        ADR-012: Branch-First API
+        - For default branch: always returns "main"
+        - For dev branches:
+          - "main" if table only exists in main project
+          - "branch" if table was copied to branch (CoW)
+          - "branch_only" if table only exists in branch
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+            bucket_name: The bucket name
+            table_name: The table name
+
+        Returns:
+            "main", "branch", or "branch_only"
+        """
+        if branch_id == "default":
+            # Default branch always returns "main"
+            return "main"
+
+        # Check if table exists in branch
+        branch_table_path = self.get_branch_table_path(
+            project_id, branch_id, bucket_name, table_name
+        )
+        branch_exists = branch_table_path.exists()
+
+        # Check if table exists in main
+        main_table_path = self.get_table_path(project_id, bucket_name, table_name)
+        main_exists = main_table_path.exists()
+
+        if branch_exists and main_exists:
+            return "branch"  # CoW copy exists
+        elif branch_exists and not main_exists:
+            return "branch_only"  # Created in branch
+        elif main_exists and not branch_exists:
+            return "main"  # Only in main (live view)
+        else:
+            # Table doesn't exist anywhere - this shouldn't happen in normal usage
+            # but we'll return "main" as the default
+            return "main"
+
+    def list_tables_with_source(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+    ) -> list[dict[str, Any]]:
+        """
+        List all tables visible in a branch with source information.
+
+        ADR-012: Branch-First API
+        - For default branch: list tables from main
+        - For dev branches: merge main tables + branch tables
+
+        Each table entry includes a "source" field:
+        - "main": table from main project (live view)
+        - "branch": table copied to branch (CoW)
+        - "branch_only": table created only in branch
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+            bucket_name: The bucket name
+
+        Returns:
+            List of table info dicts with added "source" field
+        """
+        if branch_id == "default":
+            # Default branch: just list tables from main
+            tables = self.list_tables(project_id, bucket_name)
+            # Add source field
+            for table in tables:
+                table["source"] = "main"
+            return tables
+
+        # Dev branch: merge main + branch tables
+        tables_dict: dict[str, dict[str, Any]] = {}
+
+        # First, add all tables from main (live view)
+        main_bucket_dir = self.get_bucket_dir(project_id, bucket_name)
+        if main_bucket_dir.exists():
+            for table_file in sorted(main_bucket_dir.glob("*.duckdb")):
+                table_name = table_file.stem
+                table_info = self.get_table(project_id, bucket_name, table_name)
+                if table_info:
+                    table_info["source"] = "main"
+                    tables_dict[table_name] = table_info
+
+        # Then, override with branch tables (CoW copies and branch-only)
+        branch_bucket_dir = self.get_branch_bucket_dir(project_id, branch_id, bucket_name)
+        if branch_bucket_dir.exists():
+            for table_file in sorted(branch_bucket_dir.glob("*.duckdb")):
+                table_name = table_file.stem
+
+                # Determine source
+                if table_name in tables_dict:
+                    # Table exists in main, so this is a CoW copy
+                    source = "branch"
+                else:
+                    # Table only exists in branch
+                    source = "branch_only"
+
+                # Get table info from branch
+                table_info = self._get_table_info_from_path(table_file, bucket_name)
+                if table_info:
+                    table_info["source"] = source
+                    tables_dict[table_name] = table_info
+
+        return list(tables_dict.values())
+
+    def list_buckets_for_branch(
+        self,
+        project_id: str,
+        branch_id: str,
+    ) -> list[dict[str, Any]]:
+        """
+        List all buckets visible in a branch.
+
+        ADR-012: Branch-First API
+        - For default branch: list buckets from main
+        - For dev branches: merge main buckets + branch-only buckets
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+
+        Returns:
+            List of bucket info dicts
+        """
+        if branch_id == "default":
+            # Default branch: just list buckets from main
+            return self.list_buckets(project_id)
+
+        # Dev branch: merge main + branch buckets
+        buckets_dict: dict[str, dict[str, Any]] = {}
+
+        # First, add all buckets from main
+        main_project_dir = self.get_project_dir(project_id)
+        if main_project_dir.exists():
+            for item in sorted(main_project_dir.iterdir()):
+                # Skip hidden/special directories
+                if item.name.startswith("_") or item.name.startswith("."):
+                    continue
+
+                if item.is_dir():
+                    # Count .duckdb files in bucket
+                    table_count = len(list(item.glob("*.duckdb")))
+                    buckets_dict[item.name] = {
+                        "name": item.name,
+                        "table_count": table_count,
+                        "description": None,
+                    }
+
+        # Then, add branch-only buckets
+        branch_dir = self.get_branch_dir(project_id, branch_id)
+        if branch_dir.exists():
+            for item in sorted(branch_dir.iterdir()):
+                # Skip hidden/special directories
+                if item.name.startswith("_") or item.name.startswith("."):
+                    continue
+
+                if item.is_dir():
+                    # Count .duckdb files in branch bucket
+                    table_count = len(list(item.glob("*.duckdb")))
+
+                    # If bucket already exists from main, update table count
+                    # (branch may have CoW copies or branch-only tables)
+                    if item.name in buckets_dict:
+                        # For simplicity, we'll use the branch count
+                        # In a more sophisticated implementation, we'd merge the counts
+                        buckets_dict[item.name]["table_count"] = table_count
+                    else:
+                        # Branch-only bucket
+                        buckets_dict[item.name] = {
+                            "name": item.name,
+                            "table_count": table_count,
+                            "description": None,
+                        }
+
+        return list(buckets_dict.values())
+
+    def create_table_in_branch(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+        columns: list[dict[str, Any]],
+        primary_key: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a table in a specific branch.
+
+        ADR-012: Branch-First API
+        - For default branch: create in main project
+        - For dev branch: create only in branch directory (branch_only table)
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+            bucket_name: The bucket name
+            table_name: The table name
+            columns: List of column definitions
+            primary_key: Optional list of column names for primary key
+
+        Returns:
+            Table info dict with name, bucket, columns, row_count
+        """
+        if branch_id == "default":
+            # Default branch: create in main
+            return self.create_table(
+                project_id, bucket_name, table_name, columns, primary_key
+            )
+
+        # Dev branch: create in branch directory
+        # Ensure branch bucket directory exists
+        branch_bucket_dir = self.get_branch_bucket_dir(project_id, branch_id, bucket_name)
+        branch_bucket_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get table file path in branch
+        table_path = self.get_branch_table_path(
+            project_id, branch_id, bucket_name, table_name
+        )
+
+        if table_path.exists():
+            raise FileExistsError(
+                f"Table already exists in branch: {project_id}/{branch_id}/{bucket_name}/{table_name}"
+            )
+
+        # Build CREATE TABLE statement
+        col_defs = []
+        for col in columns:
+            col_def = f"{col['name']} {col['type']}"
+            if not col.get("nullable", True):
+                col_def += " NOT NULL"
+            if col.get("default") is not None:
+                col_def += f" DEFAULT {col['default']}"
+            col_defs.append(col_def)
+
+        if primary_key:
+            col_defs.append(f"PRIMARY KEY ({', '.join(primary_key)})")
+
+        create_sql = f"CREATE TABLE {TABLE_DATA_NAME} ({', '.join(col_defs)})"
+
+        # Create the table file
+        with duckdb.connect(str(table_path)) as conn:
+            conn.execute(create_sql)
+
+        logger.info(
+            "table_created_in_branch",
+            project_id=project_id,
+            branch_id=branch_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+            columns=len(columns),
+            primary_key=primary_key,
+        )
+
+        # Return table info
+        return {
+            "name": table_name,
+            "bucket": bucket_name,
+            "columns": columns,
+            "primary_key": primary_key or [],
+            "row_count": 0,
+        }
+
+    def ensure_cow_for_write(
+        self,
+        project_id: str,
+        branch_id: str,
+        bucket_name: str,
+        table_name: str,
+    ) -> bool:
+        """
+        Ensure Copy-on-Write for a table before writing.
+
+        ADR-012: Branch-First API
+        - If branch_id is "default": no CoW needed, return False
+        - If table already in branch: no CoW needed, return False
+        - If table only in main: copy to branch (CoW), return True
+
+        This should be called before any write operation to a table in a dev branch.
+
+        Args:
+            project_id: The project ID
+            branch_id: "default" for main, or branch ID for dev branch
+            bucket_name: The bucket name
+            table_name: The table name
+
+        Returns:
+            True if CoW was performed, False otherwise
+        """
+        if branch_id == "default":
+            # Default branch: no CoW needed
+            return False
+
+        # Check if table already exists in branch
+        branch_table_path = self.get_branch_table_path(
+            project_id, branch_id, bucket_name, table_name
+        )
+        if branch_table_path.exists():
+            # Table already in branch, no CoW needed
+            return False
+
+        # Check if table exists in main
+        main_table_path = self.get_table_path(project_id, bucket_name, table_name)
+        if not main_table_path.exists():
+            # Table doesn't exist in main either
+            # This might be a branch_only table that doesn't exist yet
+            return False
+
+        # Table exists in main but not in branch: perform CoW
+        self.copy_table_to_branch(project_id, branch_id, bucket_name, table_name)
+
+        logger.info(
+            "cow_performed_for_write",
+            project_id=project_id,
+            branch_id=branch_id,
+            bucket_name=bucket_name,
+            table_name=table_name,
+        )
+
+        return True
+
+    def _get_table_info_from_path(
+        self,
+        table_path: Path,
+        bucket_name: str,
+    ) -> dict[str, Any] | None:
+        """
+        Helper method to get table info from a specific path.
+
+        Used by list_tables_with_source to read table info from branch files.
+
+        Args:
+            table_path: Path to the .duckdb file
+            bucket_name: The bucket name
+
+        Returns:
+            Table info dict or None if error
+        """
+        try:
+            table_name = table_path.stem
+
+            with duckdb.connect(str(table_path), read_only=True) as conn:
+                # Get columns
+                columns_result = conn.execute(
+                    f"DESCRIBE {TABLE_DATA_NAME}"
+                ).fetchall()
+                columns = [
+                    {
+                        "name": row[0],
+                        "type": row[1],
+                        "nullable": row[2] == "YES",
+                        "default": row[4],
+                    }
+                    for row in columns_result
+                ]
+
+                # Get primary key
+                primary_key = []
+                try:
+                    pk_result = conn.execute(
+                        f"""
+                        SELECT constraint_column_names
+                        FROM duckdb_constraints()
+                        WHERE schema_name = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                          AND constraint_type = 'PRIMARY KEY'
+                        """
+                    ).fetchone()
+                    if pk_result and pk_result[0]:
+                        primary_key = list(pk_result[0])
+                except Exception:
+                    pass
+
+                # Get row count
+                row_count_result = conn.execute(
+                    f"SELECT COUNT(*) FROM {TABLE_DATA_NAME}"
+                ).fetchone()
+                row_count = row_count_result[0] if row_count_result else 0
+
+            return {
+                "name": table_name,
+                "bucket": bucket_name,
+                "columns": columns,
+                "primary_key": primary_key,
+                "row_count": row_count,
+            }
+
+        except Exception as e:
+            logger.error(
+                "failed_to_get_table_info",
+                table_path=str(table_path),
+                bucket_name=bucket_name,
+                error=str(e),
+            )
+            return None
 
     @contextmanager
     def branch_table_connection(

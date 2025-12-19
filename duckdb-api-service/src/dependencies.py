@@ -5,6 +5,8 @@ It implements a hierarchical API key model:
 
 1. ADMIN_API_KEY (from ENV) - Can create projects, list all projects
 2. PROJECT_ADMIN_API_KEY (stored in DB) - Full access to a specific project
+3. BRANCH_ADMIN_API_KEY (stored in DB) - Full access to a specific branch
+4. BRANCH_READ_API_KEY (stored in DB) - Read-only access to a specific branch
 
 Usage in routers:
     @router.post("/projects", dependencies=[Depends(require_admin)])
@@ -14,9 +16,13 @@ Usage in routers:
     @router.get("/projects/{project_id}/buckets", dependencies=[Depends(require_project_access)])
     async def list_buckets(project_id: str, ...):
         ...
+
+    @router.get("/projects/{project_id}/branches/{branch_id}", dependencies=[Depends(require_branch_access)])
+    async def get_branch(project_id: str, branch_id: str, ...):
+        ...
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, HTTPException, Path, status
@@ -98,7 +104,7 @@ def verify_admin_key(api_key: str) -> bool:
     return api_key == settings.admin_api_key
 
 
-def verify_project_key(api_key: str, project_id: str) -> bool:
+def verify_project_key(api_key: str, project_id: str) -> dict[str, Any] | None:
     """
     Verify if the API key is valid for the given project.
 
@@ -107,22 +113,23 @@ def verify_project_key(api_key: str, project_id: str) -> bool:
         project_id: The project ID to check access for
 
     Returns:
-        True if the key is valid for this project, False otherwise
+        The key record dict if valid for this project, None otherwise.
+        Key record includes: id, project_id, branch_id, scope, key_hash, etc.
     """
     # Get the key prefix for database lookup
     key_prefix = get_key_prefix(api_key)
 
-    # Look up key by prefix
+    # Look up key by prefix (already filters revoked/expired keys)
     key_record = metadata_db.get_api_key_by_prefix(key_prefix)
 
     if not key_record:
         logger.debug("auth_key_not_found", key_prefix=key_prefix)
-        return False
+        return None
 
     # Verify the key hash
     if not verify_key_hash(api_key, key_record["key_hash"]):
         logger.warning("auth_key_hash_mismatch", key_prefix=key_prefix)
-        return False
+        return None
 
     # Check project ID matches
     if key_record["project_id"] != project_id:
@@ -132,7 +139,7 @@ def verify_project_key(api_key: str, project_id: str) -> bool:
             key_project=key_record["project_id"],
             requested_project=project_id,
         )
-        return False
+        return None
 
     # Update last_used_at timestamp
     try:
@@ -145,8 +152,9 @@ def verify_project_key(api_key: str, project_id: str) -> bool:
         "auth_project_key_verified",
         key_prefix=key_prefix,
         project_id=project_id,
+        scope=key_record["scope"],
     )
-    return True
+    return key_record
 
 
 async def require_admin(
@@ -216,11 +224,13 @@ async def require_project_access(
         return api_key
 
     # Check project-specific key
-    if verify_project_key(api_key, project_id):
+    key_record = verify_project_key(api_key, project_id)
+    if key_record:
         logger.info(
             "auth_project_access_granted",
             project_id=project_id,
             key_prefix=get_key_prefix(api_key),
+            scope=key_record["scope"],
         )
         return api_key
 
@@ -233,6 +243,158 @@ async def require_project_access(
     raise AuthorizationError(f"Access denied to project {project_id}")
 
 
+def verify_branch_key(api_key: str, project_id: str, branch_id: str) -> dict[str, Any] | None:
+    """
+    Verify if the API key has access to the given branch.
+
+    Args:
+        api_key: The API key to verify
+        project_id: The project ID to check access for
+        branch_id: The branch ID to check access for
+
+    Returns:
+        The key record dict if valid for this branch, None otherwise.
+        Key record includes: id, project_id, branch_id, scope, key_hash, etc.
+
+    Scope-based access:
+        - project_admin: Has access to all branches in the project
+        - branch_admin: Has access only to the specific branch_id
+        - branch_read: Has read-only access to the specific branch_id
+    """
+    # Get the key prefix for database lookup
+    key_prefix = get_key_prefix(api_key)
+
+    # Look up key by prefix (already filters revoked/expired keys)
+    key_record = metadata_db.get_api_key_by_prefix(key_prefix)
+
+    if not key_record:
+        logger.debug("auth_key_not_found", key_prefix=key_prefix)
+        return None
+
+    # Verify the key hash
+    if not verify_key_hash(api_key, key_record["key_hash"]):
+        logger.warning("auth_key_hash_mismatch", key_prefix=key_prefix)
+        return None
+
+    # Check project ID matches
+    if key_record["project_id"] != project_id:
+        logger.warning(
+            "auth_branch_project_mismatch",
+            key_prefix=key_prefix,
+            key_project=key_record["project_id"],
+            requested_project=project_id,
+        )
+        return None
+
+    # Check scope-based access
+    scope = key_record["scope"]
+
+    if scope == "project_admin":
+        # project_admin has access to all branches
+        logger.debug(
+            "auth_branch_access_via_project_admin",
+            key_prefix=key_prefix,
+            project_id=project_id,
+            branch_id=branch_id,
+        )
+    elif scope in ("branch_admin", "branch_read"):
+        # branch_admin/branch_read only have access to their specific branch
+        if key_record["branch_id"] != branch_id:
+            logger.warning(
+                "auth_branch_mismatch",
+                key_prefix=key_prefix,
+                key_branch=key_record["branch_id"],
+                requested_branch=branch_id,
+                scope=scope,
+            )
+            return None
+    else:
+        logger.warning(
+            "auth_invalid_scope_for_branch",
+            key_prefix=key_prefix,
+            scope=scope,
+        )
+        return None
+
+    # Update last_used_at timestamp
+    try:
+        metadata_db.update_api_key_last_used(key_record["id"])
+    except Exception as e:
+        # Don't fail auth if we can't update timestamp
+        logger.warning("auth_update_last_used_failed", error=str(e))
+
+    logger.debug(
+        "auth_branch_key_verified",
+        key_prefix=key_prefix,
+        project_id=project_id,
+        branch_id=branch_id,
+        scope=scope,
+    )
+    return key_record
+
+
+async def require_branch_access(
+    api_key: Annotated[str, Depends(get_api_key_from_header)],
+    project_id: Annotated[str, Path(description="Project ID")],
+    branch_id: Annotated[str, Path(description="Branch ID")],
+) -> str:
+    """
+    Dependency that requires access to a specific branch.
+
+    This accepts:
+    1. Admin key (has access to all projects and branches)
+    2. Project admin key (has access to all branches in the project)
+    3. Branch admin key (has full access to the specific branch)
+    4. Branch read key (has read-only access to the specific branch)
+
+    Note: For branch_read keys, the router is responsible for enforcing
+    read-only restrictions (GET operations only). This dependency only
+    validates that the key has access to the branch.
+
+    Use this for all branch-scoped endpoints:
+    - GET/PUT/DELETE /projects/{project_id}/branches/{branch_id}
+    - /projects/{project_id}/branches/{branch_id}/*
+
+    Args:
+        api_key: The API key from the Authorization header
+        project_id: The project ID from the URL path
+        branch_id: The branch ID from the URL path
+
+    Returns:
+        The verified API key
+
+    Raises:
+        AuthenticationError: If the key is invalid
+        AuthorizationError: If the key doesn't have access to this branch
+    """
+    # Admin key has access to everything
+    if verify_admin_key(api_key):
+        logger.info("auth_admin_branch_access", project_id=project_id, branch_id=branch_id)
+        return api_key
+
+    # Check branch-specific key
+    key_record = verify_branch_key(api_key, project_id, branch_id)
+    if key_record:
+        logger.info(
+            "auth_branch_access_granted",
+            project_id=project_id,
+            branch_id=branch_id,
+            key_prefix=get_key_prefix(api_key),
+            scope=key_record["scope"],
+        )
+        return api_key
+
+    # Key is valid but doesn't have access to this branch
+    logger.warning(
+        "auth_branch_access_denied",
+        project_id=project_id,
+        branch_id=branch_id,
+        key_prefix=get_key_prefix(api_key),
+    )
+    raise AuthorizationError(f"Access denied to branch {branch_id}")
+
+
 # Type aliases for cleaner router signatures
 AdminKey = Annotated[str, Depends(require_admin)]
 ProjectKey = Annotated[str, Depends(require_project_access)]
+BranchKey = Annotated[str, Depends(require_branch_access)]

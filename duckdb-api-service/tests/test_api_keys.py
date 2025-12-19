@@ -227,3 +227,442 @@ class TestAPIKeyIndexes:
         # Project lookup should be fast (index scan)
         keys = metadata_db.get_api_keys_for_project("test_proj_1")
         assert len(keys) == 5
+
+
+# ============================================
+# API Key Router/Endpoint Tests
+# ============================================
+
+
+class TestAPIKeyEndpoints:
+    """Test API key management REST endpoints."""
+
+    def test_create_project_admin_key(self, client, initialized_backend, admin_headers):
+        """Test creating a project_admin API key."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_1", "name": "API Key Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create additional API key
+        response = client.post(
+            "/projects/apikey_proj_1/api-keys",
+            json={
+                "description": "Secondary admin key",
+                "scope": "project_admin",
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["scope"] == "project_admin"
+        assert data["description"] == "Secondary admin key"
+        assert data["project_id"] == "apikey_proj_1"
+        assert data["branch_id"] is None
+        assert "api_key" in data  # Full key returned
+        assert data["api_key"].startswith("proj_apikey_proj_1_admin_")
+
+    def test_create_branch_admin_key(self, client, initialized_backend, admin_headers):
+        """Test creating a branch_admin API key."""
+        # Create project and branch
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_2", "name": "Branch Key Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create branch
+        response = client.post(
+            "/projects/apikey_proj_2/branches",
+            json={"name": "feature-x", "description": "Feature branch"},
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        branch_id = response.json()["id"]
+
+        # Create branch admin key
+        response = client.post(
+            "/projects/apikey_proj_2/api-keys",
+            json={
+                "description": "Feature X admin key",
+                "scope": "branch_admin",
+                "branch_id": branch_id,
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["scope"] == "branch_admin"
+        assert data["branch_id"] == branch_id
+        assert data["api_key"].startswith(f"proj_apikey_proj_2_branch_{branch_id}_admin_")
+
+    def test_create_branch_read_key(self, client, initialized_backend, admin_headers):
+        """Test creating a branch_read API key."""
+        # Create project and branch
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_3", "name": "Read Key Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create branch
+        response = client.post(
+            "/projects/apikey_proj_3/branches",
+            json={"name": "staging", "description": "Staging branch"},
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        branch_id = response.json()["id"]
+
+        # Create branch read-only key
+        response = client.post(
+            "/projects/apikey_proj_3/api-keys",
+            json={
+                "description": "Staging read-only key",
+                "scope": "branch_read",
+                "branch_id": branch_id,
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["scope"] == "branch_read"
+        assert data["branch_id"] == branch_id
+        assert data["api_key"].startswith(f"proj_apikey_proj_3_branch_{branch_id}_read_")
+
+    def test_create_key_with_expiration(self, client, initialized_backend, admin_headers):
+        """Test creating an API key with expiration."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_4", "name": "Expiration Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create key with 30-day expiration
+        response = client.post(
+            "/projects/apikey_proj_4/api-keys",
+            json={
+                "description": "Temporary key",
+                "scope": "project_admin",
+                "expires_in_days": 30,
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["expires_at"] is not None
+        # Verify expiration is roughly 30 days from now
+        from datetime import datetime, timezone
+        expires = datetime.fromisoformat(data["expires_at"])
+        now = datetime.now(timezone.utc)
+        delta = (expires - now).days
+        assert 29 <= delta <= 31  # Allow small variance
+
+    def test_create_branch_key_without_branch_id_fails(self, client, initialized_backend, admin_headers):
+        """Test that creating branch-scoped key without branch_id fails."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_5", "name": "Validation Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Try to create branch key without branch_id
+        response = client.post(
+            "/projects/apikey_proj_5/api-keys",
+            json={
+                "description": "Invalid branch key",
+                "scope": "branch_admin",
+                # branch_id missing
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "branch_id is required" in detail["message"]
+
+    def test_create_project_key_with_branch_id_fails(self, client, initialized_backend, admin_headers):
+        """Test that creating project_admin key with branch_id fails."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_6", "name": "Validation Test 2"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Try to create project_admin key with branch_id
+        response = client.post(
+            "/projects/apikey_proj_6/api-keys",
+            json={
+                "description": "Invalid project key",
+                "scope": "project_admin",
+                "branch_id": "some_branch",
+            },
+            headers=project_headers,
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "branch_id must be null" in detail["message"]
+
+    def test_list_api_keys(self, client, initialized_backend, admin_headers):
+        """Test listing API keys."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_7", "name": "List Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create multiple keys
+        for i in range(3):
+            response = client.post(
+                "/projects/apikey_proj_7/api-keys",
+                json={
+                    "description": f"Key {i}",
+                    "scope": "project_admin",
+                },
+                headers=project_headers,
+            )
+            assert response.status_code == 201
+
+        # List keys
+        response = client.get(
+            "/projects/apikey_proj_7/api-keys",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] >= 3  # At least 3 created + initial project key
+        assert len(data["api_keys"]) >= 3
+        # Verify no full keys returned
+        for key in data["api_keys"]:
+            assert "api_key" not in key
+            assert "key_prefix" in key
+            assert "scope" in key
+
+    def test_get_api_key_details(self, client, initialized_backend, admin_headers):
+        """Test getting API key details."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_8", "name": "Get Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create key
+        response = client.post(
+            "/projects/apikey_proj_8/api-keys",
+            json={
+                "description": "Test key for details",
+                "scope": "project_admin",
+            },
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        key_id = response.json()["id"]
+
+        # Get details
+        response = client.get(
+            f"/projects/apikey_proj_8/api-keys/{key_id}",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == key_id
+        assert data["description"] == "Test key for details"
+        assert "api_key" not in data  # Full key not returned
+
+    def test_revoke_api_key(self, client, initialized_backend, admin_headers):
+        """Test revoking an API key."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_9", "name": "Revoke Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create key
+        response = client.post(
+            "/projects/apikey_proj_9/api-keys",
+            json={
+                "description": "Key to revoke",
+                "scope": "project_admin",
+            },
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        key_id = response.json()["id"]
+
+        # Revoke it
+        response = client.delete(
+            f"/projects/apikey_proj_9/api-keys/{key_id}",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 204
+
+        # Verify it's not in active list
+        response = client.get(
+            "/projects/apikey_proj_9/api-keys",
+            headers=project_headers,
+        )
+        assert response.status_code == 200
+        keys = response.json()["api_keys"]
+        assert not any(k["id"] == key_id for k in keys)
+
+    def test_cannot_revoke_last_project_admin_key(self, client, initialized_backend, admin_headers):
+        """Test that the last project_admin key cannot be revoked."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_10", "name": "Last Key Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Get the initial project key ID
+        response = client.get(
+            "/projects/apikey_proj_10/api-keys",
+            headers=project_headers,
+        )
+        assert response.status_code == 200
+        keys = response.json()["api_keys"]
+        initial_key_id = keys[0]["id"]
+
+        # Try to revoke the only project_admin key
+        response = client.delete(
+            f"/projects/apikey_proj_10/api-keys/{initial_key_id}",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "cannot_revoke_last_admin_key" in detail["error"]
+
+    def test_rotate_api_key(self, client, initialized_backend, admin_headers):
+        """Test rotating an API key."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_11", "name": "Rotate Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create key
+        response = client.post(
+            "/projects/apikey_proj_11/api-keys",
+            json={
+                "description": "Original key",
+                "scope": "project_admin",
+            },
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        old_key_id = response.json()["id"]
+        old_api_key = response.json()["api_key"]
+
+        # Rotate it
+        response = client.post(
+            f"/projects/apikey_proj_11/api-keys/{old_key_id}/rotate",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] != old_key_id  # New ID
+        assert data["api_key"] != old_api_key  # New key
+        assert data["description"] == "Original key (rotated)"
+        assert data["scope"] == "project_admin"
+
+        # Verify old key is revoked
+        response = client.get(
+            "/projects/apikey_proj_11/api-keys",
+            headers=project_headers,
+        )
+        assert response.status_code == 200
+        keys = response.json()["api_keys"]
+        assert not any(k["id"] == old_key_id for k in keys)  # Old key not in list
+
+    def test_rotate_preserves_expiration_ttl(self, client, initialized_backend, admin_headers):
+        """Test that rotation preserves the original TTL."""
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": "apikey_proj_12", "name": "Rotate TTL Test"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 201
+        project_key = response.json()["api_key"]
+        project_headers = {"Authorization": f"Bearer {project_key}"}
+
+        # Create key with 60-day expiration
+        response = client.post(
+            "/projects/apikey_proj_12/api-keys",
+            json={
+                "description": "Temporary key",
+                "scope": "project_admin",
+                "expires_in_days": 60,
+            },
+            headers=project_headers,
+        )
+        assert response.status_code == 201
+        old_key_id = response.json()["id"]
+
+        # Rotate it
+        response = client.post(
+            f"/projects/apikey_proj_12/api-keys/{old_key_id}/rotate",
+            headers=project_headers,
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["expires_at"] is not None
+        # Verify new expiration is roughly 60 days from now
+        from datetime import datetime, timezone
+        expires = datetime.fromisoformat(data["expires_at"])
+        now = datetime.now(timezone.utc)
+        delta = (expires - now).days
+        assert 58 <= delta <= 61  # Allow small variance (can be 58-61 due to timing)

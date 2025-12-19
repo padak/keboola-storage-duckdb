@@ -1,7 +1,7 @@
 """Response models for API endpoints."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -212,6 +212,10 @@ class TableResponse(BaseModel):
         default_factory=list, description="Primary key column names"
     )
     created_at: str | None = Field(default=None, description="Creation timestamp (ISO)")
+    source: Literal["main", "branch"] = Field(
+        default="main",
+        description="Data source: 'main' for production, 'branch' for CoW copy"
+    )
 
 
 class TableListResponse(BaseModel):
@@ -830,3 +834,58 @@ class PGWireSessionUpdateRequest(BaseModel):
     """Request to update session activity."""
 
     increment_queries: bool = Field(default=True, description="Increment query count")
+
+
+# ============================================
+# API Key models
+# ============================================
+
+
+class ApiKeyCreateRequest(BaseModel):
+    """Request to create a new API key."""
+
+    description: str = Field(..., description="Description of the API key purpose")
+    branch_id: str | None = Field(None, description="Branch ID for branch-scoped keys")
+    scope: Literal["project_admin", "branch_admin", "branch_read"] = Field(
+        "project_admin",
+        description="Key scope: project_admin (default), branch_admin, or branch_read",
+    )
+    expires_in_days: int | None = Field(
+        None, ge=1, le=365, description="Expiration in days (1-365, optional)"
+    )
+
+
+class ApiKeyResponse(BaseModel):
+    """API key information response (without raw key)."""
+
+    id: str = Field(..., description="API key identifier")
+    project_id: str = Field(..., description="Project ID")
+    branch_id: str | None = Field(None, description="Branch ID (null for project-wide keys)")
+    key_prefix: str = Field(..., description="Key prefix for identification")
+    scope: str = Field(..., description="Key scope (project_admin, branch_admin, branch_read)")
+    description: str | None = Field(None, description="Key description")
+    created_at: str | None = Field(None, description="Creation timestamp (ISO)")
+    last_used_at: str | None = Field(None, description="Last usage timestamp (ISO)")
+    expires_at: str | None = Field(None, description="Expiration timestamp (ISO)")
+    is_revoked: bool = Field(False, description="Whether the key is revoked")
+
+
+class ApiKeyCreateResponse(BaseModel):
+    """Response for API key creation - includes raw key (shown only once)."""
+
+    id: str = Field(..., description="API key identifier")
+    project_id: str = Field(..., description="Project ID")
+    branch_id: str | None = Field(None, description="Branch ID (null for project-wide keys)")
+    key_prefix: str = Field(..., description="Key prefix for identification")
+    scope: str = Field(..., description="Key scope (project_admin, branch_admin, branch_read)")
+    description: str | None = Field(None, description="Key description")
+    created_at: str | None = Field(None, description="Creation timestamp (ISO)")
+    expires_at: str | None = Field(None, description="Expiration timestamp (ISO)")
+    api_key: str = Field(..., description="Full API key - SAVE THIS! It will not be shown again.")
+
+
+class ApiKeyListResponse(BaseModel):
+    """List of API keys response."""
+
+    api_keys: list[ApiKeyResponse] = Field(..., description="List of API keys")
+    count: int = Field(..., description="Total number of API keys")

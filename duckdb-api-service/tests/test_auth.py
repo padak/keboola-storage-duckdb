@@ -5,7 +5,14 @@ hashing, prefix extraction, and verification.
 """
 
 import pytest
-from src.auth import generate_api_key, hash_key, get_key_prefix, verify_key_hash
+from src.auth import (
+    generate_api_key,
+    generate_branch_key,
+    hash_key,
+    get_key_prefix,
+    parse_key_info,
+    verify_key_hash,
+)
 
 
 def test_generate_api_key_format():
@@ -157,3 +164,200 @@ def test_key_format_matches_documentation():
     assert parts[1] == "123"
     assert parts[2] == "admin"
     assert len(parts[3]) == 32  # Random hex part
+
+
+# Branch key tests
+
+
+def test_generate_branch_key_admin_format():
+    """Test that generated branch admin keys follow the expected format."""
+    key = generate_branch_key("123", "456", "admin")
+
+    # Check prefix format
+    assert key.startswith("proj_123_branch_456_admin_")
+
+    # Check structure: proj_123_branch_456_admin_hexstring
+    parts = key.split("_")
+    assert len(parts) == 6, "Branch key should have 6 underscore-separated parts"
+    assert parts[0] == "proj"
+    assert parts[1] == "123"
+    assert parts[2] == "branch"
+    assert parts[3] == "456"
+    assert parts[4] == "admin"
+
+    # Check random part length (16 bytes = 32 hex chars)
+    random_part = parts[5]
+    assert len(random_part) == 32
+    assert all(c in "0123456789abcdef" for c in random_part)
+
+
+def test_generate_branch_key_read_format():
+    """Test that generated branch read keys follow the expected format."""
+    key = generate_branch_key("123", "456", "read")
+
+    assert key.startswith("proj_123_branch_456_read_")
+
+    parts = key.split("_")
+    assert len(parts) == 6
+    assert parts[4] == "read"
+
+
+def test_generate_branch_key_invalid_scope():
+    """Test that invalid scope raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid scope: write"):
+        generate_branch_key("123", "456", "write")
+
+    with pytest.raises(ValueError, match="Invalid scope: invalid"):
+        generate_branch_key("123", "456", "invalid")
+
+
+def test_generate_branch_key_uniqueness():
+    """Test that each generated branch key is unique."""
+    keys = [generate_branch_key("123", "456", "admin") for _ in range(10)]
+    assert len(set(keys)) == 10
+
+
+def test_parse_key_info_project_admin():
+    """Test parsing legacy project admin keys."""
+    key = "proj_123_admin_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+    info = parse_key_info(key)
+
+    assert info["project_id"] == "123"
+    assert info["branch_id"] is None
+    assert info["scope"] == "admin"
+    assert info["is_valid_format"] is True
+
+
+def test_parse_key_info_branch_admin():
+    """Test parsing branch admin keys."""
+    key = "proj_123_branch_456_admin_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+    info = parse_key_info(key)
+
+    assert info["project_id"] == "123"
+    assert info["branch_id"] == "456"
+    assert info["scope"] == "admin"
+    assert info["is_valid_format"] is True
+
+
+def test_parse_key_info_branch_read():
+    """Test parsing branch read-only keys."""
+    key = "proj_123_branch_456_read_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+    info = parse_key_info(key)
+
+    assert info["project_id"] == "123"
+    assert info["branch_id"] == "456"
+    assert info["scope"] == "read"
+    assert info["is_valid_format"] is True
+
+
+def test_parse_key_info_invalid_format():
+    """Test parsing invalid key formats."""
+    invalid_keys = [
+        "invalid_key",
+        "proj_123",
+        "proj_123_branch_456",
+        "proj_123_branch_456_invalid_abc",  # Invalid scope
+        "",
+    ]
+
+    for key in invalid_keys:
+        info = parse_key_info(key)
+        assert info["project_id"] is None
+        assert info["branch_id"] is None
+        assert info["scope"] is None
+        assert info["is_valid_format"] is False
+
+
+def test_parse_key_info_with_generated_keys():
+    """Test parsing with actually generated keys."""
+    project_key = generate_api_key("789")
+    branch_admin_key = generate_branch_key("789", "101", "admin")
+    branch_read_key = generate_branch_key("789", "101", "read")
+
+    # Parse project key
+    info = parse_key_info(project_key)
+    assert info["project_id"] == "789"
+    assert info["branch_id"] is None
+    assert info["scope"] == "admin"
+    assert info["is_valid_format"] is True
+
+    # Parse branch admin key
+    info = parse_key_info(branch_admin_key)
+    assert info["project_id"] == "789"
+    assert info["branch_id"] == "101"
+    assert info["scope"] == "admin"
+    assert info["is_valid_format"] is True
+
+    # Parse branch read key
+    info = parse_key_info(branch_read_key)
+    assert info["project_id"] == "789"
+    assert info["branch_id"] == "101"
+    assert info["scope"] == "read"
+    assert info["is_valid_format"] is True
+
+
+def test_get_key_prefix_branch_keys():
+    """Test key prefix extraction for branch keys."""
+    admin_key = "proj_123_branch_456_admin_a1b2c3d4e5f6g7h8"
+    read_key = "proj_123_branch_456_read_a1b2c3d4e5f6g7h8"
+
+    admin_prefix = get_key_prefix(admin_key)
+    read_prefix = get_key_prefix(read_key)
+
+    assert admin_prefix == "proj_123_branch_456_admin_..."
+    assert read_prefix == "proj_123_branch_456_read_..."
+    assert "a1b2c3d4" not in admin_prefix
+    assert "a1b2c3d4" not in read_prefix
+
+
+def test_backwards_compatibility():
+    """Test that old project keys still work with new functions."""
+    # Generate old-style key
+    project_key = generate_api_key("999")
+
+    # Parse should work
+    info = parse_key_info(project_key)
+    assert info["is_valid_format"] is True
+    assert info["project_id"] == "999"
+    assert info["branch_id"] is None
+    assert info["scope"] == "admin"
+
+    # Prefix should work
+    prefix = get_key_prefix(project_key)
+    assert prefix == "proj_999_admin_..."
+
+    # Hash and verify should work
+    key_hash = hash_key(project_key)
+    assert verify_key_hash(project_key, key_hash) is True
+
+
+def test_branch_key_end_to_end():
+    """Test complete branch key workflow: generate, hash, parse, verify."""
+    project_id = "123"
+    branch_id = "456"
+
+    # 1. Generate admin key
+    admin_key = generate_branch_key(project_id, branch_id, "admin")
+    assert admin_key.startswith(f"proj_{project_id}_branch_{branch_id}_admin_")
+
+    # 2. Hash for storage
+    stored_hash = hash_key(admin_key)
+    assert len(stored_hash) == 64
+
+    # 3. Parse key info
+    info = parse_key_info(admin_key)
+    assert info["project_id"] == project_id
+    assert info["branch_id"] == branch_id
+    assert info["scope"] == "admin"
+    assert info["is_valid_format"] is True
+
+    # 4. Get prefix for logging
+    log_prefix = get_key_prefix(admin_key)
+    assert log_prefix == f"proj_{project_id}_branch_{branch_id}_admin_..."
+
+    # 5. Verify correct key
+    assert verify_key_hash(admin_key, stored_hash) is True
+
+    # 6. Verify wrong key fails
+    wrong_key = generate_branch_key(project_id, branch_id, "admin")
+    assert verify_key_hash(wrong_key, stored_hash) is False
