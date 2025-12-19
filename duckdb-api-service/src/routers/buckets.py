@@ -1,4 +1,16 @@
-"""Bucket management endpoints: CRUD operations for buckets (schemas) within projects."""
+"""Bucket management endpoints: CRUD operations for buckets (schemas) within projects.
+
+ADR-012: Branch-First API
+==========================
+All bucket operations are scoped to a branch via /projects/{id}/branches/{branch_id}/buckets.
+
+Branch ID:
+- "default" = main (production) project
+- {uuid} = dev branch
+
+Note: Buckets are always defined in main project. Dev branches share buckets with main.
+Creating/deleting buckets always operates on main, regardless of branch_id.
+"""
 
 import time
 from typing import Any
@@ -6,6 +18,12 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.branch_utils import (
+    resolve_branch,
+    require_default_branch,
+    validate_project_db_exists,
+    validate_bucket_exists,
+)
 from src.database import metadata_db, project_db_manager
 from src.dependencies import require_project_access
 from src.models.responses import (
@@ -30,7 +48,7 @@ def _get_request_id() -> str | None:
 
 
 @router.post(
-    "/projects/{project_id}/buckets",
+    "/projects/{project_id}/branches/{branch_id}/buckets",
     response_model=BucketResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -39,60 +57,51 @@ def _get_request_id() -> str | None:
         500: {"model": ErrorResponse},
     },
     summary="Create bucket",
-    description="Create a new bucket (schema) in a project's DuckDB database.",
+    description="""
+    Create a new bucket (schema) in a project's DuckDB database.
+
+    Note: Buckets are always created in main project (shared across branches).
+    For dev branches, this creates the bucket in main.
+    """,
     dependencies=[Depends(require_project_access)],
 )
-async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse:
+async def create_bucket(
+    project_id: str, branch_id: str, bucket: BucketCreate
+) -> BucketResponse:
     """
     Create a new bucket in a project.
 
     This endpoint:
-    1. Verifies the project exists
-    2. Creates a schema in the project's DuckDB file
+    1. Verifies the project and branch exist
+    2. Creates a schema in the project's main DuckDB (buckets are shared)
     3. Updates project metadata
     4. Logs the operation
-
-    Equivalent to BigQuery's CreateDatasetHandler but simpler:
-    - No GCP dataset creation
-    - No IAM permissions setup
-    - Just create a DuckDB schema
     """
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch (validates project and branch exist)
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
     logger.info(
         "create_bucket_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket.name,
         request_id=request_id,
     )
 
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
-
     # Check if project DB exists
-    if not project_db_manager.project_exists(project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_db_not_found",
-                "message": f"Database file for project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
+    validate_project_db_exists(resolved_project_id)
 
+    # Always create in main project (buckets are shared)
     # Check if bucket already exists
-    if project_db_manager.bucket_exists(project_id, bucket.name):
-        logger.warning("create_bucket_conflict", project_id=project_id, bucket_name=bucket.name)
+    if project_db_manager.bucket_exists(resolved_project_id, bucket.name):
+        logger.warning(
+            "create_bucket_conflict",
+            project_id=resolved_project_id,
+            bucket_name=bucket.name,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -103,17 +112,17 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
         )
 
     try:
-        # Create bucket (schema) in project's DuckDB
+        # Create bucket (schema) in project's main DuckDB
         bucket_data = project_db_manager.create_bucket(
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket.name,
             description=bucket.description,
         )
 
         # Update project metadata with new bucket count
-        stats = project_db_manager.get_project_stats(project_id)
+        stats = project_db_manager.get_project_stats(resolved_project_id)
         metadata_db.update_project(
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_count=stats["bucket_count"],
             table_count=stats["table_count"],
             size_bytes=stats["size_bytes"],
@@ -125,23 +134,29 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
         metadata_db.log_operation(
             operation="create_bucket",
             status="success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="bucket",
             resource_id=bucket.name,
-            details={"bucket_name": bucket.name, "description": bucket.description},
+            details={
+                "bucket_name": bucket.name,
+                "description": bucket.description,
+                "branch_id": branch_id,
+            },
             duration_ms=duration_ms,
         )
 
         logger.info(
             "create_bucket_success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket.name,
             duration_ms=duration_ms,
         )
 
         return BucketResponse(**bucket_data)
 
+    except HTTPException:
+        raise
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -149,7 +164,7 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
         metadata_db.log_operation(
             operation="create_bucket",
             status="failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="bucket",
             resource_id=bucket.name,
@@ -159,7 +174,7 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
 
         logger.error(
             "create_bucket_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket.name,
             error=str(e),
             duration_ms=duration_ms,
@@ -177,45 +192,38 @@ async def create_bucket(project_id: str, bucket: BucketCreate) -> BucketResponse
 
 
 @router.get(
-    "/projects/{project_id}/buckets",
+    "/projects/{project_id}/branches/{branch_id}/buckets",
     response_model=BucketListResponse,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="List buckets",
-    description="List all buckets in a project.",
+    description="""
+    List all buckets visible in branch context.
+
+    Note: Buckets are shared across branches, so this always returns
+    buckets from main project regardless of branch_id.
+    """,
     dependencies=[Depends(require_project_access)],
 )
-async def list_buckets(project_id: str) -> BucketListResponse:
-    """List all buckets in a project."""
-    logger.info("list_buckets", project_id=project_id)
+async def list_buckets(project_id: str, branch_id: str) -> BucketListResponse:
+    """List all buckets in a project (always from main, buckets are shared)."""
+    # Resolve branch (validates project and branch exist)
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
 
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
+    logger.info(
+        "list_buckets",
+        project_id=project_id,
+        branch_id=branch_id,
+    )
 
     # Check if project DB exists
-    if not project_db_manager.project_exists(project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_db_not_found",
-                "message": f"Database file for project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
+    validate_project_db_exists(resolved_project_id)
 
     try:
-        buckets = project_db_manager.list_buckets(project_id)
+        # Always list from main (buckets are shared)
+        buckets = project_db_manager.list_buckets(resolved_project_id)
 
         return BucketListResponse(
             buckets=[BucketResponse(**b) for b in buckets],
@@ -225,7 +233,7 @@ async def list_buckets(project_id: str) -> BucketListResponse:
     except Exception as e:
         logger.error(
             "list_buckets_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             error=str(e),
             exc_info=True,
         )
@@ -241,42 +249,32 @@ async def list_buckets(project_id: str) -> BucketListResponse:
 
 
 @router.get(
-    "/projects/{project_id}/buckets/{bucket_name}",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}",
     response_model=BucketResponse,
     responses={404: {"model": ErrorResponse}},
     summary="Get bucket",
     description="Get information about a specific bucket.",
     dependencies=[Depends(require_project_access)],
 )
-async def get_bucket(project_id: str, bucket_name: str) -> BucketResponse:
-    """Get bucket information."""
-    logger.info("get_bucket", project_id=project_id, bucket_name=bucket_name)
+async def get_bucket(
+    project_id: str, branch_id: str, bucket_name: str
+) -> BucketResponse:
+    """Get bucket information (always from main, buckets are shared)."""
+    # Resolve branch (validates project and branch exist)
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
 
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
+    logger.info(
+        "get_bucket",
+        project_id=project_id,
+        branch_id=branch_id,
+        bucket_name=bucket_name,
+    )
 
     # Check if project DB exists
-    if not project_db_manager.project_exists(project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_db_not_found",
-                "message": f"Database file for project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
+    validate_project_db_exists(resolved_project_id)
 
-    # Get bucket
-    bucket = project_db_manager.get_bucket(project_id, bucket_name)
+    # Get bucket from main
+    bucket = project_db_manager.get_bucket(resolved_project_id, bucket_name)
     if not bucket:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -291,15 +289,21 @@ async def get_bucket(project_id: str, bucket_name: str) -> BucketResponse:
 
 
 @router.delete(
-    "/projects/{project_id}/buckets/{bucket_name}",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorResponse}},
     summary="Delete bucket",
-    description="Delete a bucket and optionally all its tables.",
+    description="""
+    Delete a bucket and optionally all its tables.
+
+    Note: Buckets can only be deleted from the default branch (main).
+    Dev branches share buckets with main, so deleting from a branch is not allowed.
+    """,
     dependencies=[Depends(require_project_access)],
 )
 async def delete_bucket(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     cascade: bool = Query(default=True, description="Drop all tables in the bucket"),
 ) -> None:
@@ -307,7 +311,7 @@ async def delete_bucket(
     Delete a bucket.
 
     This:
-    1. Verifies the project exists
+    1. Verifies the project exists and operation is on default branch
     2. Deletes the schema (and optionally all tables if cascade=True)
     3. Updates project metadata
     4. Logs the operation
@@ -315,59 +319,36 @@ async def delete_bucket(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch (validates project and branch exist)
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Only allow bucket deletion on default/main branch
+    require_default_branch(resolved_branch_id, "delete buckets")
+
     logger.info(
         "delete_bucket",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         cascade=cascade,
     )
 
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
-
-    # Check if project DB exists
-    if not project_db_manager.project_exists(project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_db_not_found",
-                "message": f"Database file for project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
-
-    # Check if bucket exists
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
+    # Check if project DB exists and bucket exists
+    validate_project_db_exists(resolved_project_id)
+    validate_bucket_exists(resolved_project_id, bucket_name)
 
     try:
         # Delete bucket
         project_db_manager.delete_bucket(
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             cascade=cascade,
         )
 
         # Update project metadata with new bucket count
-        stats = project_db_manager.get_project_stats(project_id)
+        stats = project_db_manager.get_project_stats(resolved_project_id)
         metadata_db.update_project(
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_count=stats["bucket_count"],
             table_count=stats["table_count"],
             size_bytes=stats["size_bytes"],
@@ -378,28 +359,34 @@ async def delete_bucket(
         metadata_db.log_operation(
             operation="delete_bucket",
             status="success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="bucket",
             resource_id=bucket_name,
-            details={"bucket_name": bucket_name, "cascade": cascade},
+            details={
+                "bucket_name": bucket_name,
+                "cascade": cascade,
+                "branch_id": branch_id,
+            },
             duration_ms=duration_ms,
         )
 
         logger.info(
             "delete_bucket_success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             duration_ms=duration_ms,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
 
         metadata_db.log_operation(
             operation="delete_bucket",
             status="failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="bucket",
             resource_id=bucket_name,
@@ -409,7 +396,7 @@ async def delete_bucket(
 
         logger.error(
             "delete_bucket_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             error=str(e),
             exc_info=True,

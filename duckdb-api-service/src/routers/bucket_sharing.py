@@ -1,10 +1,25 @@
-"""Bucket sharing and linking endpoints: Share buckets between projects."""
+"""Bucket sharing and linking endpoints: Share buckets between projects.
+
+ADR-012: Branch-First API Design
+--------------------------------
+All bucket sharing operations use branch-first URL pattern:
+  /projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/share
+  /projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/link
+  /projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/grant-readonly
+
+Bucket sharing only works on default branch since buckets are shared at project level.
+"""
 
 import time
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.branch_utils import (
+    require_default_branch,
+    resolve_branch,
+    validate_project_and_bucket,
+)
 from src.database import metadata_db, project_db_manager
 from src.dependencies import require_project_access
 from src.models.responses import (
@@ -30,7 +45,7 @@ def _get_request_id() -> str | None:
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/share",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/share",
     response_model=BucketShareInfo,
     status_code=status.HTTP_200_OK,
     responses={
@@ -39,11 +54,12 @@ def _get_request_id() -> str | None:
         500: {"model": ErrorResponse},
     },
     summary="Share bucket with another project",
-    description="Share a bucket with another project (records the share, actual linking done on target side).",
+    description="Share a bucket with another project (records the share, actual linking done on target side). Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def share_bucket(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     request: BucketShareRequest,
 ) -> BucketShareInfo:
@@ -58,25 +74,20 @@ async def share_bucket(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Sharing only works on default branch
+    require_default_branch(resolved_branch_id, "share bucket")
+
     logger.info(
         "share_bucket_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         target_project=request.target_project_id,
         request_id=request_id,
     )
-
-    # Verify source project exists
-    source_project = metadata_db.get_project(project_id)
-    if not source_project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Source project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
 
     # Verify target project exists
     target_project = metadata_db.get_project(request.target_project_id)
@@ -90,16 +101,8 @@ async def share_bucket(
             },
         )
 
-    # Verify bucket exists in source project
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
     try:
         # Check if already shared
@@ -194,18 +197,19 @@ async def share_bucket(
 
 
 @router.delete(
-    "/projects/{project_id}/buckets/{bucket_name}/share",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/share",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="Unshare bucket",
-    description="Remove bucket share with a specific project.",
+    description="Remove bucket share with a specific project. Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def unshare_bucket(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     target_project_id: str = Query(..., description="Target project ID to unshare with"),
 ) -> None:
@@ -218,25 +222,20 @@ async def unshare_bucket(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Sharing only works on default branch
+    require_default_branch(resolved_branch_id, "unshare bucket")
+
     logger.info(
         "unshare_bucket_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         target_project=target_project_id,
         request_id=request_id,
     )
-
-    # Verify source project exists
-    source_project = metadata_db.get_project(project_id)
-    if not source_project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Source project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
 
     try:
         # Delete share record
@@ -300,7 +299,7 @@ async def unshare_bucket(
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/link",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/link",
     response_model=BucketResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -309,11 +308,12 @@ async def unshare_bucket(
         500: {"model": ErrorResponse},
     },
     summary="Link bucket from another project",
-    description="Link (attach) a bucket from another project using DuckDB ATTACH and views.",
+    description="Link (attach) a bucket from another project using DuckDB ATTACH and views. Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def link_bucket(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     request: BucketLinkRequest,
 ) -> BucketResponse:
@@ -330,26 +330,21 @@ async def link_bucket(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Linking only works on default branch
+    require_default_branch(resolved_branch_id, "link bucket")
+
     logger.info(
         "link_bucket_start",
         target_project=project_id,
+        branch_id=branch_id,
         target_bucket=bucket_name,
         source_project=request.source_project_id,
         source_bucket=request.source_bucket_name,
         request_id=request_id,
     )
-
-    # Verify target project exists
-    target_project = metadata_db.get_project(project_id)
-    if not target_project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Target project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
 
     # Verify source project exists
     source_project = metadata_db.get_project(request.source_project_id)
@@ -505,18 +500,19 @@ async def link_bucket(
 
 
 @router.delete(
-    "/projects/{project_id}/buckets/{bucket_name}/link",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/link",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="Unlink bucket",
-    description="Unlink a previously linked bucket (drop views and detach database).",
+    description="Unlink a previously linked bucket (drop views and detach database). Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def unlink_bucket(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
 ) -> None:
     """
@@ -531,24 +527,19 @@ async def unlink_bucket(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Unlinking only works on default branch
+    require_default_branch(resolved_branch_id, "unlink bucket")
+
     logger.info(
         "unlink_bucket_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         request_id=request_id,
     )
-
-    # Verify project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
 
     # Get link info
     link = metadata_db.get_bucket_link(project_id, bucket_name)
@@ -646,18 +637,19 @@ async def unlink_bucket(
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/grant-readonly",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/grant-readonly",
     status_code=status.HTTP_200_OK,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="Grant readonly access",
-    description="Grant readonly access to a bucket (metadata operation for DuckDB).",
+    description="Grant readonly access to a bucket (metadata operation for DuckDB). Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def grant_readonly_access(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
 ) -> dict:
     """
@@ -671,35 +663,22 @@ async def grant_readonly_access(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Readonly grant only works on default branch
+    require_default_branch(resolved_branch_id, "grant readonly access")
+
     logger.info(
         "grant_readonly_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         request_id=request_id,
     )
 
-    # Verify project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
-
-    # Verify bucket exists
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
     duration_ms = int((time.time() - start_time) * 1000)
 
@@ -729,18 +708,19 @@ async def grant_readonly_access(
 
 
 @router.delete(
-    "/projects/{project_id}/buckets/{bucket_name}/grant-readonly",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/grant-readonly",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="Revoke readonly access",
-    description="Revoke readonly access to a bucket (metadata operation for DuckDB).",
+    description="Revoke readonly access to a bucket (metadata operation for DuckDB). Only works on default branch.",
     dependencies=[Depends(require_project_access)],
 )
 async def revoke_readonly_access(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
 ) -> None:
     """
@@ -752,24 +732,19 @@ async def revoke_readonly_access(
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch - will validate project exists
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # Readonly revoke only works on default branch
+    require_default_branch(resolved_branch_id, "revoke readonly access")
+
     logger.info(
         "revoke_readonly_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         request_id=request_id,
     )
-
-    # Verify project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
 
     duration_ms = int((time.time() - start_time) * 1000)
 

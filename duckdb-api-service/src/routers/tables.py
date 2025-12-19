@@ -1,12 +1,35 @@
-"""Table management endpoints: CRUD operations for tables within buckets."""
+"""Table management endpoints: CRUD operations for tables within buckets.
+
+ADR-012: Branch-First API
+==========================
+All table operations are scoped to a branch via:
+/projects/{id}/branches/{branch_id}/buckets/{bucket}/tables
+
+Branch ID:
+- "default" = main (production) project
+- {uuid} = dev branch with CoW semantics
+
+Branch Behavior:
+- READ: For dev branches, reads from branch if CoW'd, otherwise from main (Live View)
+- WRITE: For dev branches, triggers CoW before first write
+- CREATE: Creates table in branch context (isolated from main if dev branch)
+- DELETE: On default deletes from main; on dev branch deletes only branch copy
+"""
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 import structlog
+import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from src.database import metadata_db, project_db_manager
+from src.branch_utils import (
+    get_table_source,
+    resolve_branch,
+    validate_project_and_bucket,
+    validate_project_db_exists,
+)
+from src.database import metadata_db, project_db_manager, TABLE_DATA_NAME
 from src.dependencies import require_project_access
 from src.models.responses import (
     ColumnInfo,
@@ -32,57 +55,26 @@ def _get_request_id() -> str | None:
         return None
 
 
-def _validate_project_and_bucket(
-    project_id: str, bucket_name: str
-) -> tuple[dict[str, Any], None]:
-    """
-    Validate that project and bucket exist.
-
-    Returns:
-        Tuple of (project_dict, None) if valid
-
-    Raises:
-        HTTPException if project or bucket not found
-    """
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
+def _table_exists_in_context(
+    project_id: str, branch_id: str | None, bucket_name: str, table_name: str
+) -> bool:
+    """Check if table exists in the given branch context."""
+    if branch_id is None:
+        # Default branch - check main
+        return project_db_manager.table_exists(project_id, bucket_name, table_name)
+    else:
+        # Dev branch - check if exists in main OR branch
+        exists_in_main = project_db_manager.table_exists(
+            project_id, bucket_name, table_name
         )
-
-    # Check if project DB exists
-    if not project_db_manager.project_exists(project_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_db_not_found",
-                "message": f"Database file for project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
+        exists_in_branch = metadata_db.is_table_in_branch(
+            branch_id, bucket_name, table_name
         )
-
-    # Check if bucket exists
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
-
-    return project, None
+        return exists_in_main or exists_in_branch
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/tables",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables",
     response_model=TableResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -91,44 +83,54 @@ def _validate_project_and_bucket(
         500: {"model": ErrorResponse},
     },
     summary="Create table",
-    description="Create a new table in a bucket.",
+    description="""
+    Create a new table in a bucket.
+
+    - For default branch: creates table in main project
+    - For dev branches: creates table in branch (isolated from main)
+    """,
     dependencies=[Depends(require_project_access)],
 )
 async def create_table(
-    project_id: str, bucket_name: str, table: TableCreate
+    project_id: str, branch_id: str, bucket_name: str, table: TableCreate
 ) -> TableResponse:
     """
     Create a new table in a bucket.
 
     This endpoint:
-    1. Verifies the project and bucket exist
+    1. Verifies the project, branch, and bucket exist
     2. Creates a table with the specified columns
     3. Optionally adds a primary key constraint
     4. Updates project metadata
     5. Logs the operation
-
-    Note: Unlike BigQuery, DuckDB enforces primary keys as real constraints.
     """
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch (validates project and branch exist)
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
     logger.info(
         "create_table_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table.name,
         column_count=len(table.columns),
         request_id=request_id,
     )
 
-    # Validate project and bucket
-    _validate_project_and_bucket(project_id, bucket_name)
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
-    # Check if table already exists
-    if project_db_manager.table_exists(project_id, bucket_name, table.name):
+    # Check if table already exists in context
+    if _table_exists_in_context(
+        resolved_project_id, resolved_branch_id, bucket_name, table.name
+    ):
         logger.warning(
             "create_table_conflict",
-            project_id=project_id,
+            project_id=resolved_project_id,
+            branch_id=resolved_branch_id,
             bucket_name=bucket_name,
             table_name=table.name,
         )
@@ -166,23 +168,76 @@ async def create_table(
         # Convert Pydantic models to dicts for database layer
         columns_data = [col.model_dump() for col in table.columns]
 
-        # Create table
-        table_data = project_db_manager.create_table(
-            project_id=project_id,
-            bucket_name=bucket_name,
-            table_name=table.name,
-            columns=columns_data,
-            primary_key=table.primary_key,
-        )
+        # Determine target and source
+        if resolved_branch_id is None:
+            # Default branch - create in main
+            table_data = project_db_manager.create_table(
+                project_id=resolved_project_id,
+                bucket_name=bucket_name,
+                table_name=table.name,
+                columns=columns_data,
+                primary_key=table.primary_key,
+            )
+            source: Literal["main", "branch"] = "main"
 
-        # Update project metadata
-        stats = project_db_manager.get_project_stats(project_id)
-        metadata_db.update_project(
-            project_id=project_id,
-            bucket_count=stats["bucket_count"],
-            table_count=stats["table_count"],
-            size_bytes=stats["size_bytes"],
-        )
+            # Update project metadata
+            stats = project_db_manager.get_project_stats(resolved_project_id)
+            metadata_db.update_project(
+                project_id=resolved_project_id,
+                bucket_count=stats["bucket_count"],
+                table_count=stats["table_count"],
+                size_bytes=stats["size_bytes"],
+            )
+        else:
+            # Dev branch - create in branch directory
+            branch_bucket_dir = project_db_manager.get_branch_bucket_dir(
+                resolved_project_id, resolved_branch_id, bucket_name
+            )
+            branch_bucket_dir.mkdir(parents=True, exist_ok=True)
+
+            table_path = project_db_manager.get_branch_table_path(
+                resolved_project_id, resolved_branch_id, bucket_name, table.name
+            )
+
+            # Create the table file
+            conn = duckdb.connect(str(table_path))
+            try:
+                # Build CREATE TABLE statement
+                col_defs = []
+                for col in columns_data:
+                    col_def = f'"{col["name"]}" {col["type"]}'
+                    if not col.get("nullable", True):
+                        col_def += " NOT NULL"
+                    col_defs.append(col_def)
+
+                # Add primary key constraint
+                if table.primary_key:
+                    pk_cols = ", ".join(f'"{c}"' for c in table.primary_key)
+                    col_defs.append(f"PRIMARY KEY ({pk_cols})")
+
+                create_sql = (
+                    f"CREATE TABLE {TABLE_DATA_NAME} ({', '.join(col_defs)})"
+                )
+                conn.execute(create_sql)
+
+                # Get table info for response
+                table_data = {
+                    "name": table.name,
+                    "bucket": bucket_name,
+                    "columns": columns_data,
+                    "row_count": 0,
+                    "size_bytes": table_path.stat().st_size,
+                    "primary_key": table.primary_key or [],
+                    "created_at": None,
+                }
+            finally:
+                conn.close()
+
+            # Record in branch_tables metadata
+            metadata_db.mark_table_copied_to_branch(
+                resolved_branch_id, bucket_name, table.name
+            )
+            source = "branch"
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -190,7 +245,7 @@ async def create_table(
         metadata_db.log_operation(
             operation="create_table",
             status="success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="table",
             resource_id=f"{bucket_name}.{table.name}",
@@ -199,15 +254,19 @@ async def create_table(
                 "table_name": table.name,
                 "column_count": len(table.columns),
                 "primary_key": table.primary_key,
+                "branch_id": branch_id,
+                "source": source,
             },
             duration_ms=duration_ms,
         )
 
         logger.info(
             "create_table_success",
-            project_id=project_id,
+            project_id=resolved_project_id,
+            branch_id=resolved_branch_id,
             bucket_name=bucket_name,
             table_name=table.name,
+            source=source,
             duration_ms=duration_ms,
         )
 
@@ -220,6 +279,7 @@ async def create_table(
             size_bytes=table_data["size_bytes"],
             primary_key=table_data["primary_key"],
             created_at=table_data["created_at"],
+            source=source,
         )
 
     except HTTPException:
@@ -231,7 +291,7 @@ async def create_table(
         metadata_db.log_operation(
             operation="create_table",
             status="failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="table",
             resource_id=f"{bucket_name}.{table.name}",
@@ -241,7 +301,7 @@ async def create_table(
 
         logger.error(
             "create_table_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             table_name=table.name,
             error=str(e),
@@ -264,42 +324,86 @@ async def create_table(
 
 
 @router.get(
-    "/projects/{project_id}/buckets/{bucket_name}/tables",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables",
     response_model=TableListResponse,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse},
     },
     summary="List tables",
-    description="List all tables in a bucket.",
+    description="""
+    List all tables visible in branch context.
+
+    - For default branch: lists tables from main
+    - For dev branches: merges main + branch tables with source indicators
+    """,
     dependencies=[Depends(require_project_access)],
 )
-async def list_tables(project_id: str, bucket_name: str) -> TableListResponse:
-    """List all tables in a bucket."""
+async def list_tables(
+    project_id: str, branch_id: str, bucket_name: str
+) -> TableListResponse:
+    """List all tables in a bucket (branch-aware)."""
+    # Resolve branch
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
     logger.info(
         "list_tables",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
     )
 
-    # Validate project and bucket
-    _validate_project_and_bucket(project_id, bucket_name)
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
     try:
-        tables_data = project_db_manager.list_tables(project_id, bucket_name)
-
-        tables = [
-            TableResponse(
-                name=t["name"],
-                bucket=t["bucket"],
-                columns=[ColumnInfo(**col) for col in t["columns"]],
-                row_count=t["row_count"],
-                size_bytes=t["size_bytes"],
-                primary_key=t["primary_key"],
-                created_at=t["created_at"],
+        if resolved_branch_id is None:
+            # Default branch - list from main
+            tables_data = project_db_manager.list_tables(
+                resolved_project_id, bucket_name
             )
-            for t in tables_data
-        ]
+            tables = [
+                TableResponse(
+                    name=t["name"],
+                    bucket=t["bucket"],
+                    columns=[ColumnInfo(**col) for col in t["columns"]],
+                    row_count=t["row_count"],
+                    size_bytes=t["size_bytes"],
+                    primary_key=t["primary_key"],
+                    created_at=t["created_at"],
+                    source="main",
+                )
+                for t in tables_data
+            ]
+        else:
+            # Dev branch - merge main + branch tables
+            main_tables = project_db_manager.list_tables(
+                resolved_project_id, bucket_name
+            )
+            branch_tables_meta = metadata_db.get_branch_tables(resolved_branch_id)
+
+            # Build set of branch table names in this bucket
+            branch_table_names = {
+                t["table_name"]
+                for t in branch_tables_meta
+                if t["bucket_name"] == bucket_name
+            }
+
+            tables = []
+            for t in main_tables:
+                source = "branch" if t["name"] in branch_table_names else "main"
+                tables.append(
+                    TableResponse(
+                        name=t["name"],
+                        bucket=t["bucket"],
+                        columns=[ColumnInfo(**col) for col in t["columns"]],
+                        row_count=t["row_count"],
+                        size_bytes=t["size_bytes"],
+                        primary_key=t["primary_key"],
+                        created_at=t["created_at"],
+                        source=source,
+                    )
+                )
 
         return TableListResponse(
             tables=tables,
@@ -309,7 +413,7 @@ async def list_tables(project_id: str, bucket_name: str) -> TableListResponse:
     except Exception as e:
         logger.error(
             "list_tables_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             error=str(e),
             exc_info=True,
@@ -326,37 +430,46 @@ async def list_tables(project_id: str, bucket_name: str) -> TableListResponse:
 
 
 @router.get(
-    "/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}",
     response_model=TableResponse,
     responses={404: {"model": ErrorResponse}},
     summary="Get table (ObjectInfo)",
-    description="Get detailed information about a table.",
+    description="""
+    Get detailed information about a table.
+
+    - For default branch: gets from main
+    - For dev branches: gets from branch if CoW'd, otherwise from main (Live View)
+    """,
     dependencies=[Depends(require_project_access)],
 )
 async def get_table(
-    project_id: str, bucket_name: str, table_name: str
+    project_id: str, branch_id: str, bucket_name: str, table_name: str
 ) -> TableResponse:
-    """
-    Get table information (ObjectInfo).
+    """Get table information (ObjectInfo) - branch-aware."""
+    # Resolve branch
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
 
-    Returns detailed metadata including:
-    - Column definitions (name, type, nullable)
-    - Row count
-    - Size in bytes (estimated)
-    - Primary key columns
-    """
     logger.info(
         "get_table",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
     )
 
-    # Validate project and bucket
-    _validate_project_and_bucket(project_id, bucket_name)
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
-    # Get table
-    table_data = project_db_manager.get_table(project_id, bucket_name, table_name)
+    # Determine source
+    source = get_table_source(
+        resolved_project_id, resolved_branch_id, bucket_name, table_name
+    )
+
+    # Get table data (always from main for now - Live View)
+    # TODO: For branches, read from branch file if source == "branch"
+    table_data = project_db_manager.get_table(
+        resolved_project_id, bucket_name, table_name
+    )
     if not table_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -379,104 +492,140 @@ async def get_table(
         size_bytes=table_data["size_bytes"],
         primary_key=table_data["primary_key"],
         created_at=table_data["created_at"],
+        source=source,
     )
 
 
 @router.delete(
-    "/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={404: {"model": ErrorResponse}},
     summary="Delete table",
-    description="Delete a table from a bucket.",
+    description="""
+    Delete a table from a bucket.
+
+    - For default branch: deletes from main
+    - For dev branches: deletes branch copy only (cannot delete main table from branch)
+    """,
     dependencies=[Depends(require_project_access)],
 )
 async def delete_table(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     table_name: str,
 ) -> None:
-    """
-    Delete a table.
-
-    This:
-    1. Verifies the project, bucket, and table exist
-    2. Drops the table
-    3. Updates project metadata
-    4. Logs the operation
-    """
+    """Delete a table - branch-aware."""
     start_time = time.time()
     request_id = _get_request_id()
+
+    # Resolve branch
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
 
     logger.info(
         "delete_table_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         request_id=request_id,
     )
 
-    # Validate project and bucket
-    _validate_project_and_bucket(project_id, bucket_name)
-
-    # Check if table exists
-    if not project_db_manager.table_exists(project_id, bucket_name, table_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "table_not_found",
-                "message": f"Table {table_name} not found in bucket {bucket_name}",
-                "details": {
-                    "project_id": project_id,
-                    "bucket_name": bucket_name,
-                    "table_name": table_name,
-                },
-            },
-        )
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
     try:
-        # Check if auto-snapshot should be created before deletion
-        if should_create_snapshot(project_id, bucket_name, table_name, "drop_table"):
-            from src.routers.snapshots import create_snapshot_internal
-
-            try:
-                await create_snapshot_internal(
-                    project_id=project_id,
-                    bucket_name=bucket_name,
-                    table_name=table_name,
-                    snapshot_type="auto_predrop",
-                    description=f"Auto-backup before DROP TABLE {bucket_name}.{table_name}",
-                )
-                logger.info(
-                    "auto_snapshot_created_before_drop",
-                    project_id=project_id,
-                    bucket_name=bucket_name,
-                    table_name=table_name,
-                )
-            except Exception as e:
-                # Log but don't fail the delete if snapshot fails
-                logger.warning(
-                    "auto_snapshot_failed_before_drop",
-                    project_id=project_id,
-                    bucket_name=bucket_name,
-                    table_name=table_name,
-                    error=str(e),
+        if resolved_branch_id is None:
+            # Default branch - delete from main
+            if not project_db_manager.table_exists(
+                resolved_project_id, bucket_name, table_name
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "error": "table_not_found",
+                        "message": f"Table {table_name} not found in bucket {bucket_name}",
+                        "details": {
+                            "project_id": project_id,
+                            "bucket_name": bucket_name,
+                            "table_name": table_name,
+                        },
+                    },
                 )
 
-        # Delete table
-        project_db_manager.delete_table(
-            project_id=project_id,
-            bucket_name=bucket_name,
-            table_name=table_name,
-        )
+            # Check if auto-snapshot should be created before deletion
+            if should_create_snapshot(
+                resolved_project_id, bucket_name, table_name, "drop_table"
+            ):
+                from src.routers.snapshots import create_snapshot_internal
 
-        # Update project metadata
-        stats = project_db_manager.get_project_stats(project_id)
-        metadata_db.update_project(
-            project_id=project_id,
-            bucket_count=stats["bucket_count"],
-            table_count=stats["table_count"],
-            size_bytes=stats["size_bytes"],
-        )
+                try:
+                    await create_snapshot_internal(
+                        project_id=resolved_project_id,
+                        bucket_name=bucket_name,
+                        table_name=table_name,
+                        snapshot_type="auto_predrop",
+                        description=f"Auto-backup before DROP TABLE {bucket_name}.{table_name}",
+                    )
+                    logger.info(
+                        "auto_snapshot_created_before_drop",
+                        project_id=resolved_project_id,
+                        bucket_name=bucket_name,
+                        table_name=table_name,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "auto_snapshot_failed_before_drop",
+                        project_id=resolved_project_id,
+                        bucket_name=bucket_name,
+                        table_name=table_name,
+                        error=str(e),
+                    )
+
+            # Delete table from main
+            project_db_manager.delete_table(
+                project_id=resolved_project_id,
+                bucket_name=bucket_name,
+                table_name=table_name,
+            )
+
+            # Update project metadata
+            stats = project_db_manager.get_project_stats(resolved_project_id)
+            metadata_db.update_project(
+                project_id=resolved_project_id,
+                bucket_count=stats["bucket_count"],
+                table_count=stats["table_count"],
+                size_bytes=stats["size_bytes"],
+            )
+        else:
+            # Dev branch - only delete if in branch
+            is_in_branch = metadata_db.is_table_in_branch(
+                resolved_branch_id, bucket_name, table_name
+            )
+
+            if not is_in_branch:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "operation_not_allowed",
+                        "message": "Cannot delete table from branch - it's only in main. Use pull endpoint to copy to branch first.",
+                        "details": {
+                            "branch_id": branch_id,
+                            "bucket_name": bucket_name,
+                            "table_name": table_name,
+                        },
+                    },
+                )
+
+            # Delete from branch
+            project_db_manager.delete_table_from_branch(
+                resolved_project_id, resolved_branch_id, bucket_name, table_name
+            )
+
+            # Remove from metadata
+            metadata_db.remove_table_from_branch(
+                resolved_branch_id, bucket_name, table_name
+            )
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -484,17 +633,22 @@ async def delete_table(
         metadata_db.log_operation(
             operation="delete_table",
             status="success",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="table",
             resource_id=f"{bucket_name}.{table_name}",
-            details={"bucket_name": bucket_name, "table_name": table_name},
+            details={
+                "bucket_name": bucket_name,
+                "table_name": table_name,
+                "branch_id": branch_id,
+            },
             duration_ms=duration_ms,
         )
 
         logger.info(
             "delete_table_success",
-            project_id=project_id,
+            project_id=resolved_project_id,
+            branch_id=resolved_branch_id,
             bucket_name=bucket_name,
             table_name=table_name,
             duration_ms=duration_ms,
@@ -509,7 +663,7 @@ async def delete_table(
         metadata_db.log_operation(
             operation="delete_table",
             status="failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             request_id=request_id,
             resource_type="table",
             resource_id=f"{bucket_name}.{table_name}",
@@ -519,7 +673,7 @@ async def delete_table(
 
         logger.error(
             "delete_table_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             table_name=table_name,
             error=str(e),
@@ -542,15 +696,21 @@ async def delete_table(
 
 
 @router.get(
-    "/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/preview",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/preview",
     response_model=TablePreviewResponse,
     responses={404: {"model": ErrorResponse}},
     summary="Preview table",
-    description="Get a preview of table data (first N rows).",
+    description="""
+    Get a preview of table data (first N rows).
+
+    - For default branch: previews from main
+    - For dev branches: previews from branch if CoW'd, otherwise from main
+    """,
     dependencies=[Depends(require_project_access)],
 )
 async def preview_table(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     table_name: str,
     limit: int = Query(
@@ -560,30 +720,26 @@ async def preview_table(
         description="Maximum number of rows to return (1-10000)",
     ),
 ) -> TablePreviewResponse:
-    """
-    Get a preview of table data.
+    """Get a preview of table data - branch-aware."""
+    # Resolve branch
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
 
-    Returns:
-    - Column information (name, type)
-    - Row data (up to `limit` rows)
-    - Total row count in table
-    - Number of rows in preview
-
-    Equivalent to `SELECT * FROM table LIMIT N`.
-    """
     logger.info(
         "preview_table",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         limit=limit,
     )
 
-    # Validate project and bucket
-    _validate_project_and_bucket(project_id, bucket_name)
+    # Validate bucket exists
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
     # Check if table exists
-    if not project_db_manager.table_exists(project_id, bucket_name, table_name):
+    if not _table_exists_in_context(
+        resolved_project_id, resolved_branch_id, bucket_name, table_name
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -598,8 +754,10 @@ async def preview_table(
         )
 
     try:
+        # Get preview data (from main for now - Live View)
+        # TODO: For branches with CoW, read from branch file
         preview_data = project_db_manager.get_table_preview(
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             table_name=table_name,
             limit=limit,
@@ -615,7 +773,7 @@ async def preview_table(
     except Exception as e:
         logger.error(
             "preview_table_failed",
-            project_id=project_id,
+            project_id=resolved_project_id,
             bucket_name=bucket_name,
             table_name=table_name,
             error=str(e),

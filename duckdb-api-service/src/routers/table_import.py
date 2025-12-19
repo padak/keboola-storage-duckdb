@@ -1,5 +1,9 @@
 """Table Import/Export endpoints: data loading and extraction.
 
+Branch-First API (ADR-012):
+- All endpoints use /projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/...
+- Import/Export operations require default branch (MVP limitation)
+
 Import Pipeline (3-stage):
 1. STAGING: Load file into staging table using COPY FROM
 2. TRANSFORM: Deduplicate and merge into target table
@@ -20,6 +24,11 @@ import duckdb
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.branch_utils import (
+    require_default_branch,
+    resolve_branch,
+    validate_project_and_bucket,
+)
 from src.config import settings
 from src.database import (
     TABLE_DATA_NAME,
@@ -49,42 +58,26 @@ def _get_request_id() -> str | None:
         return None
 
 
-def _validate_project_bucket_table(
-    project_id: str, bucket_name: str, table_name: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_table_exists(
+    project_id: str, branch_id: str | None, bucket_name: str, table_name: str
+) -> dict[str, Any]:
     """
-    Validate that project, bucket, and table exist.
+    Validate that table exists in branch context.
+
+    Args:
+        project_id: The project ID
+        branch_id: The resolved branch ID (None for main)
+        bucket_name: The bucket name
+        table_name: The table name
 
     Returns:
-        Tuple of (project_dict, table_dict) if valid
+        Table metadata dict if valid
 
     Raises:
-        HTTPException if any resource not found
+        HTTPException if table not found
     """
-    # Check if project exists
-    project = metadata_db.get_project(project_id)
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "project_not_found",
-                "message": f"Project {project_id} not found",
-                "details": {"project_id": project_id},
-            },
-        )
-
-    # Check if bucket exists
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
-
-    # Check if table exists
+    # For import/export, we only work with main (default branch)
+    # Branches not supported in MVP
     table = project_db_manager.get_table(project_id, bucket_name, table_name)
     if not table:
         raise HTTPException(
@@ -100,7 +93,7 @@ def _validate_project_bucket_table(
             },
         )
 
-    return project, table
+    return table
 
 
 def _get_file_path(project_id: str, file_id: str) -> Path:
@@ -231,7 +224,7 @@ def _build_dedup_sql(
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/import/file",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/import/file",
     response_model=ImportResponse,
     status_code=status.HTTP_200_OK,
     responses={
@@ -240,11 +233,12 @@ def _build_dedup_sql(
         500: {"model": ErrorResponse},
     },
     summary="Import from file",
-    description="Import data from a file into a table using 3-stage pipeline.",
+    description="Import data from a file into a table using 3-stage pipeline. Requires default branch for MVP.",
     dependencies=[Depends(require_project_access)],
 )
 async def import_from_file(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     table_name: str,
     request: ImportFromFileRequest,
@@ -261,14 +255,23 @@ async def import_from_file(
     - CSV and Parquet formats
     - Full load (truncate + insert) or incremental (merge/upsert)
     - Deduplication based on primary key
+
+    Note: MVP only supports default branch (branch_id = "default")
     """
     start_time = time.time()
     request_id = _get_request_id()
     warnings: list[str] = []
 
+    # Resolve branch context
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # MVP: Import/Export only allowed on default branch
+    require_default_branch(resolved_branch_id, "import data")
+
     logger.info(
         "import_from_file_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         file_id=request.file_id,
@@ -278,9 +281,12 @@ async def import_from_file(
         request_id=request_id,
     )
 
-    # Validate resources
-    project, table_info = _validate_project_bucket_table(
-        project_id, bucket_name, table_name
+    # Validate project and bucket
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
+
+    # Validate table exists
+    table_info = _validate_table_exists(
+        resolved_project_id, resolved_branch_id, bucket_name, table_name
     )
 
     # Get file path
@@ -411,6 +417,7 @@ async def import_from_file(
     logger.info(
         "import_from_file_complete",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         file_id=request.file_id,
@@ -448,7 +455,7 @@ async def import_from_file(
 
 
 @router.post(
-    "/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/export",
+    "/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/export",
     response_model=ExportResponse,
     status_code=status.HTTP_200_OK,
     responses={
@@ -457,11 +464,12 @@ async def import_from_file(
         500: {"model": ErrorResponse},
     },
     summary="Export to file",
-    description="Export table data to a file (CSV or Parquet).",
+    description="Export table data to a file (CSV or Parquet). Requires default branch for MVP.",
     dependencies=[Depends(require_project_access)],
 )
 async def export_to_file(
     project_id: str,
+    branch_id: str,
     bucket_name: str,
     table_name: str,
     request: ExportRequest,
@@ -475,13 +483,22 @@ async def export_to_file(
     - Row filtering with WHERE clause
     - Row limit
     - Compression (gzip for CSV, gzip/zstd/snappy for Parquet)
+
+    Note: MVP only supports default branch (branch_id = "default")
     """
     start_time = time.time()
     request_id = _get_request_id()
 
+    # Resolve branch context
+    resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
+
+    # MVP: Import/Export only allowed on default branch
+    require_default_branch(resolved_branch_id, "export data")
+
     logger.info(
         "export_to_file_start",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         format=request.format,
@@ -489,9 +506,12 @@ async def export_to_file(
         request_id=request_id,
     )
 
-    # Validate resources
-    project, table_info = _validate_project_bucket_table(
-        project_id, bucket_name, table_name
+    # Validate project and bucket
+    validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
+
+    # Validate table exists
+    table_info = _validate_table_exists(
+        resolved_project_id, resolved_branch_id, bucket_name, table_name
     )
 
     # Validate format
@@ -622,6 +642,7 @@ async def export_to_file(
     logger.info(
         "export_to_file_complete",
         project_id=project_id,
+        branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
         file_id=file_id,
