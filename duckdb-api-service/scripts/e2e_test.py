@@ -16,6 +16,9 @@ This script tests the complete API flow against a running server:
 11. Idempotency
 12. Cleanup
 
+NOTE: Uses Branch-First API (ADR-012) - all bucket/table operations
+      go through /branches/{branch_id}/ with 'default' for main.
+
 Usage:
     # Start the server first:
     cd duckdb-api-service
@@ -100,6 +103,18 @@ class E2ETestRunner:
         if not self.project_api_key:
             raise RuntimeError("Project API key not set - run test_create_project first")
         return {"Authorization": f"Bearer {self.project_api_key}"}
+
+    def branch_url(self, branch: str = "default") -> str:
+        """Get branch-first URL prefix (ADR-012)."""
+        return f"/projects/{self.test_project_id}/branches/{branch}"
+
+    def bucket_url(self, bucket: str, branch: str = "default") -> str:
+        """Get bucket URL with branch prefix."""
+        return f"{self.branch_url(branch)}/buckets/{bucket}"
+
+    def table_url(self, bucket: str, table: str, branch: str = "default") -> str:
+        """Get table URL with branch prefix."""
+        return f"{self.bucket_url(bucket, branch)}/tables/{table}"
 
     def test(self, name: str, func) -> bool:
         """Run a test and track result."""
@@ -296,7 +311,7 @@ class E2ETestRunner:
 
     def test_project_auth_required(self):
         """Test that project endpoints require auth."""
-        resp = self.client.get(f"/projects/{self.test_project_id}/buckets")
+        resp = self.client.get(f"{self.branch_url()}/buckets")
         assert resp.status_code == 401, f"Expected 401 without auth, got {resp.status_code}"
 
     def test_project_key_works(self):
@@ -347,7 +362,7 @@ class E2ETestRunner:
     def test_create_bucket(self):
         """Test bucket creation."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets",
+            f"{self.branch_url()}/buckets",
             json={"name": "in_c_sales", "description": "Sales data bucket"},
             headers=self.project_headers(),
         )
@@ -361,7 +376,7 @@ class E2ETestRunner:
     def test_list_buckets(self):
         """Test listing buckets."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets",
+            f"{self.branch_url()}/buckets",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -374,7 +389,7 @@ class E2ETestRunner:
     def test_get_bucket(self):
         """Test getting bucket info."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales",
+            self.bucket_url("in_c_sales"),
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -387,7 +402,7 @@ class E2ETestRunner:
     def test_create_table(self):
         """Test simple table creation (no PK)."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables",
+            f"{self.bucket_url('in_c_sales')}/tables",
             json={
                 "name": "customers",
                 "columns": [
@@ -410,7 +425,7 @@ class E2ETestRunner:
     def test_create_table_with_pk(self):
         """Test table creation with primary key."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables",
+            f"{self.bucket_url('in_c_sales')}/tables",
             json={
                 "name": "orders",
                 "columns": [
@@ -433,7 +448,7 @@ class E2ETestRunner:
     def test_list_tables(self):
         """Test listing tables."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables",
+            f"{self.bucket_url('in_c_sales')}/tables",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -448,7 +463,7 @@ class E2ETestRunner:
     def test_get_table(self):
         """Test getting table info (ObjectInfo)."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders",
+            self.table_url("in_c_sales", "orders"),
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -462,7 +477,7 @@ class E2ETestRunner:
     def test_preview_empty(self):
         """Test preview of empty table."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/preview",
+            f"{self.table_url('in_c_sales', 'orders')}/preview",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -561,7 +576,7 @@ class E2ETestRunner:
     def test_import_from_file(self):
         """Test importing data from file."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/import/file",
+            f"{self.table_url('in_c_sales', 'orders')}/import/file",
             json={
                 "file_id": self.test_file_id,
                 "format": "csv",
@@ -580,7 +595,7 @@ class E2ETestRunner:
     def test_preview_with_data(self):
         """Test preview with data."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/preview",
+            f"{self.table_url('in_c_sales', 'orders')}/preview",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -598,7 +613,7 @@ class E2ETestRunner:
     def test_export_to_file(self):
         """Test exporting data to file."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/export",
+            f"{self.table_url('in_c_sales', 'orders')}/export",
             json={"format": "csv", "compression": None},
             headers=self.project_headers(),
         )
@@ -614,7 +629,7 @@ class E2ETestRunner:
     def test_add_column(self):
         """Test adding a column."""
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/columns",
+            f"{self.table_url('in_c_sales', 'orders')}/columns",
             json={"name": "notes", "type": "VARCHAR"},
             headers=self.project_headers(),
         )
@@ -628,7 +643,7 @@ class E2ETestRunner:
     def test_alter_column(self):
         """Test altering a column (rename)."""
         resp = self.client.put(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/columns/notes",
+            f"{self.table_url('in_c_sales', 'orders')}/columns/notes",
             json={"new_name": "comments"},
             headers=self.project_headers(),
         )
@@ -644,7 +659,7 @@ class E2ETestRunner:
         """Test deleting rows with WHERE clause."""
         resp = self.client.request(
             "DELETE",
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/rows",
+            f"{self.table_url('in_c_sales', 'orders')}/rows",
             json={"where_clause": "id = 5"},
             headers=self.project_headers(),
         )
@@ -656,7 +671,7 @@ class E2ETestRunner:
 
         # Verify row count
         preview = self.client.get(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/preview",
+            f"{self.table_url('in_c_sales', 'orders')}/preview",
             headers=self.project_headers(),
         ).json()
         assert preview["total_row_count"] == 4
@@ -668,7 +683,7 @@ class E2ETestRunner:
         We check that the endpoint responds (200 or 500 for known bug).
         """
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/profile",
+            f"{self.table_url('in_c_sales', 'orders')}/profile",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -704,9 +719,9 @@ class E2ETestRunner:
 
     def test_create_snapshot(self):
         """Test creating a snapshot."""
-        # Snapshot endpoint uses /projects/{id}/snapshots with bucket/table in body
+        # Snapshot endpoint uses /branches/{branch}/snapshots with bucket/table in body
         resp = self.client.post(
-            f"/projects/{self.test_project_id}/snapshots",
+            f"{self.branch_url()}/snapshots",
             json={
                 "bucket": "in_c_sales",
                 "table": "orders",
@@ -727,7 +742,7 @@ class E2ETestRunner:
     def test_list_snapshots(self):
         """Test listing snapshots."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/snapshots",
+            f"{self.branch_url()}/snapshots",
             params={"bucket": "in_c_sales", "table": "orders"},
             headers=self.project_headers(),
         )
@@ -740,7 +755,7 @@ class E2ETestRunner:
     def test_get_snapshot_detail(self):
         """Test getting snapshot detail."""
         resp = self.client.get(
-            f"/projects/{self.test_project_id}/snapshots/{self.test_snapshot_id}",
+            f"{self.branch_url()}/snapshots/{self.test_snapshot_id}",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -877,7 +892,7 @@ class E2ETestRunner:
 
         # First request
         resp1 = self.client.post(
-            f"/projects/{self.test_project_id}/buckets",
+            f"{self.branch_url()}/buckets",
             json={"name": "idempotency_test", "description": "Test"},
             headers=headers,
         )
@@ -885,7 +900,7 @@ class E2ETestRunner:
 
         # Second request with same key - should return cached response
         resp2 = self.client.post(
-            f"/projects/{self.test_project_id}/buckets",
+            f"{self.branch_url()}/buckets",
             json={"name": "idempotency_test", "description": "Test"},
             headers=headers,
         )
@@ -894,15 +909,15 @@ class E2ETestRunner:
 
         # Clean up test bucket
         self.client.delete(
-            f"/projects/{self.test_project_id}/buckets/idempotency_test",
+            self.bucket_url("idempotency_test"),
             headers=self.project_headers(),
         )
 
-    # Section 11: Cleanup
+    # Section 12: Cleanup
     def test_delete_snapshot(self):
         """Test deleting snapshot."""
         resp = self.client.delete(
-            f"/projects/{self.test_project_id}/snapshots/{self.test_snapshot_id}",
+            f"{self.branch_url()}/snapshots/{self.test_snapshot_id}",
             headers=self.project_headers(),
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
@@ -918,7 +933,7 @@ class E2ETestRunner:
     def test_drop_column(self):
         """Test dropping a column."""
         resp = self.client.delete(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders/columns/comments",
+            f"{self.table_url('in_c_sales', 'orders')}/columns/comments",
             headers=self.project_headers(),
         )
         self.log_verbose(f"Response: {resp.json()}")
@@ -932,14 +947,14 @@ class E2ETestRunner:
         """Test deleting tables."""
         # Delete customers
         resp = self.client.delete(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/customers",
+            self.table_url("in_c_sales", "customers"),
             headers=self.project_headers(),
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
 
         # Delete orders (will trigger auto-snapshot if enabled)
         resp = self.client.delete(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales/tables/orders",
+            self.table_url("in_c_sales", "orders"),
             headers=self.project_headers(),
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
@@ -947,7 +962,7 @@ class E2ETestRunner:
     def test_delete_bucket(self):
         """Test deleting bucket."""
         resp = self.client.delete(
-            f"/projects/{self.test_project_id}/buckets/in_c_sales",
+            self.bucket_url("in_c_sales"),
             headers=self.project_headers(),
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
