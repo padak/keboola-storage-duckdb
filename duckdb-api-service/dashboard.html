@@ -366,6 +366,31 @@
         </div>
     </div>
 
+    <!-- Workspaces & PG Wire -->
+    <div class="section-title">Workspaces & PG Wire (Phase 11)</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Total Workspaces</div>
+            <div class="card-value" id="workspacesTotal">--</div>
+            <div class="card-subtitle" id="activeSessions">-- active sessions</div>
+        </div>
+        <div class="card">
+            <div class="card-title">PG Wire Connections</div>
+            <div class="card-value" id="pgwireConnections">--</div>
+            <div class="card-subtitle" id="pgwireAuthRate">Auth rate: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">PG Wire Queries</div>
+            <div class="card-value" id="pgwireQueries">--</div>
+            <div class="card-subtitle" id="pgwireQueryErrors">Errors: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Query P95</div>
+            <div class="card-value small" id="pgwireQueryP95">--</div>
+            <div class="card-subtitle" id="pgwireAuthP95">Auth P95: --</div>
+        </div>
+    </div>
+
     <!-- Charts -->
     <div class="section-title">Request Distribution</div>
     <div class="grid grid-2">
@@ -774,6 +799,49 @@
             const cowDurationCount = m['duckdb_branch_cow_duration_seconds_count']?.[0]?.value ?? 0;
             document.getElementById('cowDurationAvg').textContent =
                 cowDurationCount > 0 ? formatDuration(cowDurationSum / cowDurationCount) : '--';
+
+            // Workspaces & PG Wire
+            const workspacesTotal = m['duckdb_workspaces_total']?.[0]?.value ?? 0;
+            const pgwireSessions = m['pgwire_sessions_total']?.[0]?.value ?? 0;
+            document.getElementById('workspacesTotal').textContent = workspacesTotal;
+            document.getElementById('activeSessions').textContent = `${pgwireSessions} active sessions`;
+
+            // PG Wire connections
+            const pgwireConns = m['pgwire_connections_total'] || [];
+            const pgwireSuccess = pgwireConns.filter(c => c.labels.status === 'success')
+                .reduce((s, c) => s + c.value, 0);
+            const pgwireTotal = pgwireConns.reduce((s, c) => s + c.value, 0);
+            document.getElementById('pgwireConnections').textContent = pgwireTotal.toLocaleString();
+            const authRate = pgwireTotal > 0 ? (pgwireSuccess / pgwireTotal * 100).toFixed(1) : 0;
+            document.getElementById('pgwireAuthRate').textContent = `Auth rate: ${authRate}%`;
+
+            // PG Wire queries
+            const pgwireQueries = m['pgwire_queries_total'] || [];
+            const pgwireQuerySuccess = pgwireQueries.filter(q => q.labels.status === 'success')
+                .reduce((s, q) => s + q.value, 0);
+            const pgwireQueryErrors = pgwireQueries.filter(q => q.labels.status !== 'success')
+                .reduce((s, q) => s + q.value, 0);
+            const pgwireQueryTotal = pgwireQueries.reduce((s, q) => s + q.value, 0);
+            document.getElementById('pgwireQueries').textContent = pgwireQueryTotal.toLocaleString();
+            document.getElementById('pgwireQueryErrors').textContent = `Errors: ${pgwireQueryErrors}`;
+            document.getElementById('pgwireQueries').className =
+                'card-value ' + (pgwireQueryErrors > 0 ? 'warning' : '');
+
+            // PG Wire query duration P95
+            const pgwireQueryBuckets = (m['pgwire_query_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('pgwireQueryP95').textContent =
+                formatDuration(calculatePercentile(pgwireQueryBuckets, 0.95) || 0);
+
+            // PG Wire auth duration P95
+            const pgwireAuthBuckets = (m['pgwire_auth_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('pgwireAuthP95').textContent =
+                'Auth P95: ' + formatDuration(calculatePercentile(pgwireAuthBuckets, 0.95) || 0);
 
             // Python GC
             const gc0 = m['python_gc_collections_total']?.find(g => g.labels.generation === '0')?.value ?? 0;

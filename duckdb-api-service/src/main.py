@@ -11,7 +11,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, snapshot_settings, snapshots
+from src.routers import backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, pgwire_auth, snapshot_settings, snapshots, workspaces
 from src.database import metadata_db
 from src.middleware.idempotency import IdempotencyMiddleware
 from src.middleware.metrics import MetricsMiddleware, normalize_path
@@ -57,6 +57,31 @@ async def cleanup_idempotency_keys_task():
             logger.error("idempotency_cleanup_failed", error=str(e))
 
 
+async def cleanup_pgwire_sessions_task():
+    """Background task to cleanup stale PG Wire sessions.
+
+    Marks sessions as 'timeout' if they've been idle for too long.
+    This handles cases where clients disconnect without properly closing.
+    """
+    logger = structlog.get_logger()
+    # Run cleanup every 5 minutes
+    cleanup_interval = 300
+
+    while True:
+        try:
+            await asyncio.sleep(cleanup_interval)
+            count = metadata_db.cleanup_stale_pgwire_sessions(
+                settings.pgwire_idle_timeout_seconds
+            )
+            if count > 0:
+                logger.info("pgwire_session_cleanup_completed", cleaned_count=count)
+        except asyncio.CancelledError:
+            logger.info("pgwire_session_cleanup_task_cancelled")
+            break
+        except Exception as e:
+            logger.error("pgwire_session_cleanup_failed", error=str(e))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -76,16 +101,22 @@ async def lifespan(app: FastAPI):
         logger.error("metadata_db_init_failed", error=str(e), exc_info=True)
         raise
 
-    # Start background cleanup task
-    cleanup_task = asyncio.create_task(cleanup_idempotency_keys_task())
-    logger.info("idempotency_cleanup_task_started")
+    # Start background cleanup tasks
+    idempotency_cleanup_task = asyncio.create_task(cleanup_idempotency_keys_task())
+    pgwire_cleanup_task = asyncio.create_task(cleanup_pgwire_sessions_task())
+    logger.info("background_tasks_started", tasks=["idempotency_cleanup", "pgwire_session_cleanup"])
 
     yield
 
-    # Cancel cleanup task on shutdown
-    cleanup_task.cancel()
+    # Cancel cleanup tasks on shutdown
+    idempotency_cleanup_task.cancel()
+    pgwire_cleanup_task.cancel()
     try:
-        await cleanup_task
+        await idempotency_cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await pgwire_cleanup_task
     except asyncio.CancelledError:
         pass
 
@@ -205,6 +236,8 @@ app.include_router(files.router)
 app.include_router(snapshot_settings.router)
 app.include_router(snapshots.router)
 app.include_router(branches.router)
+app.include_router(workspaces.router)
+app.include_router(pgwire_auth.router)
 app.include_router(metrics.router)
 
 # Root endpoint

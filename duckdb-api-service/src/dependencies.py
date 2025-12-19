@@ -19,13 +19,20 @@ Usage in routers:
 from typing import Annotated
 
 import structlog
-from fastapi import Depends, Header, HTTPException, Path, status
+from fastapi import Depends, HTTPException, Path, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.auth import get_key_prefix, verify_key_hash
 from src.config import settings
 from src.database import metadata_db
 
 logger = structlog.get_logger(__name__)
+
+# Security scheme for Swagger UI
+security = HTTPBearer(
+    scheme_name="Bearer Auth",
+    description="Enter your API key (ADMIN_API_KEY or project-specific key)",
+)
 
 
 class AuthenticationError(HTTPException):
@@ -50,37 +57,27 @@ class AuthorizationError(HTTPException):
 
 
 def get_api_key_from_header(
-    authorization: Annotated[str | None, Header()] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ) -> str:
     """
-    Extract API key from Authorization header.
+    Extract API key from Authorization header using HTTPBearer.
 
-    Expected format: "Bearer <api_key>"
+    This integrates with Swagger UI's Authorize button.
 
     Args:
-        authorization: The Authorization header value
+        credentials: The HTTP Bearer credentials from FastAPI security
 
     Returns:
         The extracted API key
 
     Raises:
-        AuthenticationError: If header is missing or malformed
+        AuthenticationError: If credentials are invalid
     """
-    if not authorization:
-        logger.warning("auth_missing_header")
-        raise AuthenticationError("Missing Authorization header")
+    if not credentials or not credentials.credentials:
+        logger.warning("auth_missing_credentials")
+        raise AuthenticationError("Missing or invalid credentials")
 
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        logger.warning("auth_invalid_header_format")
-        raise AuthenticationError("Invalid Authorization header format. Use: Bearer <api_key>")
-
-    api_key = parts[1].strip()
-    if not api_key:
-        logger.warning("auth_empty_key")
-        raise AuthenticationError("Empty API key")
-
-    return api_key
+    return credentials.credentials
 
 
 def verify_admin_key(api_key: str) -> bool:

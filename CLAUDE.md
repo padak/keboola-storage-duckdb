@@ -65,13 +65,15 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── snapshots.py       # Snapshots CRUD + restore
   │       ├── snapshot_settings.py  # Hierarchical snapshot config
   │       ├── branches.py    # Dev branches CRUD + pull
+  │       ├── workspaces.py  # Workspace management
+  │       ├── pgwire_auth.py # PG Wire auth bridge (internal)
   │       └── metrics.py     # Prometheus /metrics endpoint
-  └── tests/                 # pytest tests (310 tests)
+  └── tests/                 # pytest tests (439 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
 
-## Current Status (2024-12-16)
+## Current Status (2024-12-19)
 
 **Strategy: Python API first, PHP Driver last**
 
@@ -89,12 +91,23 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Table Schema Ops | DONE | 33 |
 | Files API | DONE | 20 |
 | Import/Export | DONE | 17 |
-| **Snapshots + Settings** | **DONE** | 34 |
-| **Dev Branches** | **DONE** | 26 |
+| Snapshots + Settings | DONE | 34 |
+| Dev Branches (basic) | DONE | 34 |
+| **Branch-First API (ADR-012)** | **REFACTORING** | - |
+| Workspaces (REST API) | DONE | 41 |
+| PG Wire Server | DONE | 26 |
+| E2E Tests (Phase 11c) | DONE | 62 |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 310 tests PASS**
+**Total: 439 tests PASS** (including 62 comprehensive E2E tests)
+
+**Current: Branch-First API Refactoring (ADR-012)**
+
+All bucket/table operations will use `/branches/{branch_id}/` path:
+- `default` = main (production project)
+- Dev branches can create tables that don't exist in main
+- Full CRUD on branch-specific resources
 
 **Next implementation order:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -106,9 +119,12 @@ connection/                   # Keboola Connection (git submodule/clone)
 7. ~~Files API~~ - DONE
 8. ~~Import/Export~~ - DONE
 9. ~~Snapshots + Settings~~ - DONE
-10. ~~Dev Branches~~ - DONE
-11. **Schema Migrations** - NEXT
-12. PHP Driver
+10. ~~Dev Branches (basic)~~ - DONE
+11. ~~Workspaces (REST API)~~ - DONE
+12. ~~PG Wire Server (buenavista)~~ - DONE
+13. ~~E2E Tests + PG Wire Polish~~ - DONE
+14. **Branch-First API (ADR-012)** - IN PROGRESS
+15. PHP Driver - NEXT
 
 ## Key Decisions (APPROVED)
 
@@ -131,7 +147,9 @@ All decisions documented in `docs/plan/decisions.md`.
 | Security | Auth model | Hierarchical API keys |
 | Observability | Metrics | Prometheus from start |
 | Schema migrations | Strategy | Verzovani v DB + migrace pri startu |
-| Dev Branches | Strategy | Directory copy (simplified by ADR-009) |
+| Dev Branches | Storage | Directory copy (simplified by ADR-009) |
+| **Dev Branches** | **API Design** | **Branch-First URL (`/branches/{branch_id}/`) - ADR-012** |
+| Dev Branches | Default branch | `default` = main (production) |
 
 ## Authentication Model (IMPLEMENTED)
 
@@ -196,12 +214,17 @@ open dashboard.html        # Metrics dashboard (auto-refresh)
 - **Storage**: Projects/buckets/tables count, size breakdown (metadata/tables/staging/files)
 - **Latency**: P50/P90/P95/P99 percentiles + average (calculated from histograms)
 - **Concurrency**: Active locks, lock acquisitions, lock wait P95, idempotency cache
+- **Dev Branches**: Total branches, CoW operations, CoW duration metrics
+- **Workspaces & PG Wire**: Total workspaces, active sessions, auth rate, query P95
 - **Charts**: Request distribution by status code and HTTP method
 - **Tables**: Endpoint details with latency, table lock activity, Python GC stats
 
 Auto-refreshes every 5s, works with API running on `localhost:8000`.
 
-### Implemented Endpoints
+### Implemented Endpoints (Current)
+
+> **Note:** After ADR-012 refactoring, bucket/table endpoints will move under `/branches/{branch_id}/`.
+> See [ADR-012](docs/adr/012-branch-first-api-design.md) for new URL structure.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -212,6 +235,13 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 | `/projects` | GET/POST | List/Create projects |
 | `/projects/{id}` | GET/PUT/DELETE | Project CRUD |
 | `/projects/{id}/stats` | GET | Live statistics |
+| `/projects/{id}/branches` | GET/POST | List/Create branches |
+| `/projects/{id}/branches/{branch_id}` | GET/DELETE | Branch CRUD |
+
+**Bucket/Table endpoints (will move to `/branches/{branch_id}/` path):**
+
+| Current Endpoint | Method | Description |
+|------------------|--------|-------------|
 | `/projects/{id}/buckets` | GET/POST | List/Create buckets |
 | `/projects/{id}/buckets/{name}` | GET/DELETE | Bucket CRUD |
 | `/projects/{id}/buckets/{name}/share` | POST/DELETE | Share bucket |
@@ -238,9 +268,18 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots` | GET/POST | List/Create snapshots |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
 | `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}/restore` | POST | Restore from snapshot |
-| `/projects/{id}/branches` | GET/POST | List/Create branches |
-| `/projects/{id}/branches/{branch_id}` | GET/DELETE | Branch CRUD |
-| `/projects/{id}/branches/{branch_id}/tables/{bucket}/{table}/pull` | POST | Pull table from main |
+
+### Planned Endpoints (ADR-012)
+
+After refactoring, all bucket/table operations will use:
+```
+/projects/{id}/branches/{branch_id}/buckets/...
+/projects/{id}/branches/{branch_id}/buckets/{bucket}/tables/...
+```
+
+Where `branch_id`:
+- `default` = main (production project)
+- `{uuid}` = dev branch
 
 ## Development Notes
 
@@ -280,8 +319,10 @@ This ensures each phase has documented progress and test coverage for future ses
 - **Phase specs**: `docs/plan/phase-*.md` - detailed specs per phase
 - **Decisions**: `docs/plan/decisions.md` - all approved decisions
 - **Risks**: `docs/plan/risks.md` - accepted MVP risks
-- **ADRs**: `docs/adr/001-009` - architecture decisions
-- **Key ADR**: `docs/adr/009-duckdb-file-per-table.md` - current architecture
+- **ADRs**: `docs/adr/001-012` - architecture decisions
+- **Key ADRs**:
+  - `docs/adr/009-duckdb-file-per-table.md` - per-table file architecture
+  - `docs/adr/012-branch-first-api-design.md` - Branch-First API design
 - **Research**: `docs/duckdb-technical-research.md`, `docs/bigquery-driver-research.md`
 
 ## Local Connection

@@ -1,6 +1,7 @@
 version: "3.8"
 
 services:
+  # REST API service
   duckdb-api:
     build:
       context: .
@@ -17,7 +18,7 @@ services:
       - DUCKDB_THREADS=4
       - DUCKDB_MEMORY_LIMIT=4GB
     volumes:
-      # Persist data
+      # Persist data - shared with pgwire
       - duckdb-data:/data
       # Development: mount source for hot reload
       - ./src:/app/src:ro
@@ -27,6 +28,37 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  # PostgreSQL Wire Protocol server for workspace connections
+  duckdb-pgwire:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: duckdb-pgwire
+    ports:
+      - "5432:5432"
+    environment:
+      - DATA_DIR=/data
+      - DUCKDB_DIR=/data/duckdb
+      - DUCKDB_THREADS=4
+      - DUCKDB_MEMORY_LIMIT=4GB
+      - PGWIRE_HOST=0.0.0.0
+      - PGWIRE_PORT=5432
+      - PGWIRE_MAX_CONNECTIONS_TOTAL=100
+      - PGWIRE_MAX_CONNECTIONS_PER_WORKSPACE=5
+      - PGWIRE_IDLE_TIMEOUT_SECONDS=3600
+      - PGWIRE_SESSION_MEMORY_LIMIT=4GB
+    volumes:
+      # Share data volume with API service
+      - duckdb-data:/data
+      - ./src:/app/src:ro
+      # SSL certificates (optional)
+      - ./certs:/app/certs:ro
+    command: ["python", "-m", "src.pgwire_server", "--host", "0.0.0.0", "--port", "5432"]
+    depends_on:
+      duckdb-api:
+        condition: service_healthy
     restart: unless-stopped
 
   # Development service with hot reload

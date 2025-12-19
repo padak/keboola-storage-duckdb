@@ -32,8 +32,8 @@ RUN mkdir -p /data/duckdb /data/files /data/snapshots /data/metadata && \
 # Switch to non-root user
 USER appuser
 
-# Expose port
-EXPOSE 8000
+# Expose ports (REST API + PG Wire)
+EXPOSE 8000 5432
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

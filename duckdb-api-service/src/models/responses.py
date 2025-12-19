@@ -676,3 +676,157 @@ class PullTableResponse(BaseModel):
     table_name: str
     message: str = Field(description="Confirmation message")
     was_local: bool = Field(description="Whether table was in branch before pull")
+
+
+# ============================================
+# Workspace Models
+# ============================================
+
+
+class WorkspaceCreateRequest(BaseModel):
+    """Request to create a new workspace."""
+
+    name: str = Field(..., description="Workspace name")
+    ttl_hours: int | None = Field(default=None, ge=1, le=168, description="Time to live in hours (1-168), None for no expiration")
+    size_limit_gb: int = Field(default=10, ge=1, le=100, description="Size limit in GB (1-100)")
+    preload_tables: list[str] = Field(default_factory=list, description="Tables to preload (format: bucket.table)")
+
+
+class WorkspaceConnectionInfo(BaseModel):
+    """Connection information for workspace."""
+
+    host: str = Field(..., description="Database host")
+    port: int = Field(default=5432, description="Database port")
+    database: str = Field(..., description="Database name")
+    username: str = Field(..., description="Username")
+    password: str | None = Field(None, description="Password (only shown on create)")
+    ssl_mode: str = Field(default="prefer", description="SSL mode")
+    connection_string: str | None = Field(None, description="Full connection string")
+
+
+class WorkspaceTableInfo(BaseModel):
+    """Information about an attached table."""
+
+    schema_name: str = Field(..., alias="schema", description="Schema/bucket name")
+    table: str = Field(..., description="Table name")
+    rows: int = Field(default=0, description="Row count")
+
+
+class WorkspaceObjectInfo(BaseModel):
+    """Information about workspace object."""
+
+    name: str = Field(..., description="Object name")
+    type: str = Field(default="table", description="Object type (table, view)")
+    rows: int = Field(default=0, description="Row count")
+
+
+class WorkspaceResponse(BaseModel):
+    """Response for workspace operations."""
+
+    id: str = Field(..., description="Workspace ID")
+    name: str = Field(..., description="Workspace name")
+    project_id: str = Field(..., description="Project ID")
+    branch_id: str | None = Field(None, description="Branch ID (null for main)")
+    created_at: str | None = Field(None, description="Creation timestamp")
+    expires_at: str | None = Field(None, description="Expiration timestamp")
+    size_bytes: int = Field(default=0, description="Current size in bytes")
+    size_limit_gb: int = Field(default=10, description="Size limit in GB")
+    status: str = Field(default="active", description="Status: active, expired, error")
+    connection: WorkspaceConnectionInfo | None = Field(None, description="Connection info")
+
+
+class WorkspaceDetailResponse(WorkspaceResponse):
+    """Detailed workspace response including objects."""
+
+    active_sessions: int = Field(default=0, description="Active session count")
+    attached_tables: list[WorkspaceTableInfo] = Field(default_factory=list, description="Attached project tables")
+    workspace_objects: list[WorkspaceObjectInfo] = Field(default_factory=list, description="Objects in workspace")
+
+
+class WorkspaceListResponse(BaseModel):
+    """Response for listing workspaces."""
+
+    workspaces: list[WorkspaceResponse] = Field(default_factory=list)
+    count: int = Field(default=0, description="Total count")
+
+
+class WorkspaceLoadRequest(BaseModel):
+    """Request to load data into workspace."""
+
+    tables: list[dict] = Field(..., description="Tables to load with source, destination, columns, where")
+
+
+class WorkspaceLoadTableResult(BaseModel):
+    """Result of loading a table."""
+
+    source: str = Field(..., description="Source table")
+    destination: str = Field(..., description="Destination table name")
+    rows: int = Field(default=0, description="Rows loaded")
+    size_bytes: int = Field(default=0, description="Size in bytes")
+
+
+class WorkspaceLoadResponse(BaseModel):
+    """Response for load operation."""
+
+    loaded: list[WorkspaceLoadTableResult] = Field(default_factory=list)
+    workspace_size_bytes: int = Field(default=0, description="Total workspace size")
+
+
+# ============================================
+# PG Wire Auth Models (Phase 11b)
+# ============================================
+
+
+class PGWireAuthRequest(BaseModel):
+    """Request from PG Wire server to authenticate a user."""
+
+    username: str = Field(..., description="Workspace username (ws_xxx_xxx)")
+    password: str = Field(..., description="Workspace password")
+    client_ip: str | None = Field(None, description="Client IP address")
+
+
+class PGWireTableInfo(BaseModel):
+    """Information about a table to attach."""
+
+    bucket: str = Field(..., description="Bucket name")
+    name: str = Field(..., description="Table name")
+    path: str = Field(..., description="Path to DuckDB file")
+    rows: int = Field(default=0, description="Row count")
+
+
+class PGWireAuthResponse(BaseModel):
+    """Response with workspace info for session initialization."""
+
+    workspace_id: str = Field(..., description="Workspace ID")
+    project_id: str = Field(..., description="Project ID")
+    branch_id: str | None = Field(None, description="Branch ID (null for main)")
+    db_path: str = Field(..., description="Path to workspace DuckDB file")
+    tables: list[PGWireTableInfo] = Field(default_factory=list, description="Tables to ATTACH")
+    memory_limit: str = Field(default="4GB", description="Memory limit for session")
+    query_timeout_seconds: int = Field(default=300, description="Query timeout")
+
+
+class PGWireSessionInfo(BaseModel):
+    """Information about a PG Wire session."""
+
+    session_id: str = Field(..., description="Session ID")
+    workspace_id: str = Field(..., description="Workspace ID")
+    client_ip: str | None = Field(None, description="Client IP")
+    connected_at: str | None = Field(None, description="Connection timestamp")
+    last_activity_at: str | None = Field(None, description="Last activity timestamp")
+    query_count: int = Field(default=0, description="Number of queries executed")
+    status: str = Field(default="active", description="Session status")
+
+
+class PGWireSessionCreateRequest(BaseModel):
+    """Request to create/register a session."""
+
+    session_id: str = Field(..., description="Session ID from PG Wire server")
+    workspace_id: str = Field(..., description="Workspace ID")
+    client_ip: str | None = Field(None, description="Client IP address")
+
+
+class PGWireSessionUpdateRequest(BaseModel):
+    """Request to update session activity."""
+
+    increment_queries: bool = Field(default=True, description="Increment query count")

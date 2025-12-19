@@ -356,6 +356,55 @@ CREATE TABLE IF NOT EXISTS branch_tables (
 );
 
 CREATE INDEX IF NOT EXISTS idx_branch_tables_branch ON branch_tables(branch_id);
+
+-- Workspaces for data transformation
+CREATE TABLE IF NOT EXISTS workspaces (
+    id VARCHAR PRIMARY KEY,
+    project_id VARCHAR NOT NULL,
+    branch_id VARCHAR,                  -- NULL for main branch workspaces
+    name VARCHAR NOT NULL,
+    db_path VARCHAR NOT NULL,           -- Path to workspace .duckdb file
+    created_at TIMESTAMPTZ DEFAULT now(),
+    expires_at TIMESTAMPTZ,             -- TTL expiration
+    size_limit_bytes BIGINT DEFAULT 10737418240,  -- 10GB default
+    status VARCHAR DEFAULT 'active',    -- active, expired, error
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (branch_id) REFERENCES branches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_branch ON workspaces(branch_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at);
+CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
+
+-- Workspace credentials for PG Wire authentication
+-- Note: DuckDB doesn't support CASCADE on FK, so deletion is handled manually
+CREATE TABLE IF NOT EXISTS workspace_credentials (
+    workspace_id VARCHAR PRIMARY KEY,
+    username VARCHAR NOT NULL UNIQUE,   -- ws_{workspace_id}_{random}
+    password_hash VARCHAR NOT NULL,     -- SHA256 hash
+    created_at TIMESTAMPTZ DEFAULT now(),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_creds_username ON workspace_credentials(username);
+
+-- PG Wire sessions tracking (Phase 11b)
+-- Tracks active PostgreSQL Wire Protocol connections to workspaces
+CREATE TABLE IF NOT EXISTS pgwire_sessions (
+    session_id VARCHAR PRIMARY KEY,       -- Unique session identifier
+    workspace_id VARCHAR NOT NULL,         -- Link to workspace
+    client_ip VARCHAR,                     -- Client IP for auditing
+    connected_at TIMESTAMPTZ DEFAULT now(), -- Connection start time
+    last_activity_at TIMESTAMPTZ DEFAULT now(), -- Last query time
+    query_count INTEGER DEFAULT 0,         -- Number of queries executed
+    status VARCHAR DEFAULT 'active',       -- active, disconnected, timeout
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pgwire_sessions_workspace ON pgwire_sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_pgwire_sessions_status ON pgwire_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_pgwire_sessions_activity ON pgwire_sessions(last_activity_at);
 """
 
 
@@ -2011,6 +2060,361 @@ class MetadataDB:
             "description": row[5],
         }
 
+    # ==================== Workspace Methods ====================
+
+    def _row_to_workspace_dict(self, row: tuple) -> dict[str, Any]:
+        """Convert workspace row to dictionary."""
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "branch_id": row[2],
+            "name": row[3],
+            "db_path": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
+            "expires_at": row[6].isoformat() if row[6] else None,
+            "size_limit_bytes": row[7],
+            "status": row[8],
+        }
+
+    def create_workspace(
+        self,
+        workspace_id: str,
+        project_id: str,
+        name: str,
+        db_path: str,
+        branch_id: str | None = None,
+        expires_at: str | None = None,
+        size_limit_bytes: int = 10737418240,
+    ) -> dict[str, Any]:
+        """Create a new workspace."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspaces (id, project_id, branch_id, name, db_path, expires_at, size_limit_bytes, status)
+                VALUES (?, ?, ?, ?, ?, ?::TIMESTAMPTZ, ?, 'active')
+                """,
+                [workspace_id, project_id, branch_id, name, db_path, expires_at, size_limit_bytes],
+            )
+            result = conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?", [workspace_id]
+            ).fetchone()
+            return self._row_to_workspace_dict(result)
+
+    def get_workspace(self, workspace_id: str) -> dict[str, Any] | None:
+        """Get workspace by ID."""
+        with self.connection() as conn:
+            result = conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?", [workspace_id]
+            ).fetchone()
+            return self._row_to_workspace_dict(result) if result else None
+
+    def get_workspace_by_project(
+        self, project_id: str, workspace_id: str
+    ) -> dict[str, Any] | None:
+        """Get workspace by project and workspace ID."""
+        with self.connection() as conn:
+            result = conn.execute(
+                "SELECT * FROM workspaces WHERE id = ? AND project_id = ?",
+                [workspace_id, project_id],
+            ).fetchone()
+            return self._row_to_workspace_dict(result) if result else None
+
+    def list_workspaces(
+        self,
+        project_id: str,
+        branch_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List workspaces for a project, optionally filtered by branch and status."""
+        with self.connection() as conn:
+            query = "SELECT * FROM workspaces WHERE project_id = ?"
+            params: list[Any] = [project_id]
+
+            if branch_id is not None:
+                query += " AND branch_id = ?"
+                params.append(branch_id)
+            elif branch_id is None:
+                # For main branch, branch_id is NULL
+                pass  # Don't filter, show all
+
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+            results = conn.execute(query, params).fetchall()
+            return [self._row_to_workspace_dict(row) for row in results]
+
+    def update_workspace_status(self, workspace_id: str, status: str) -> bool:
+        """Update workspace status."""
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE workspaces SET status = ? WHERE id = ?",
+                [status, workspace_id],
+            )
+            result = conn.execute(
+                "SELECT COUNT(*) FROM workspaces WHERE id = ?", [workspace_id]
+            ).fetchone()
+            return result[0] > 0
+
+    def delete_workspace(self, workspace_id: str) -> bool:
+        """Delete workspace and its credentials and sessions."""
+        with self.connection() as conn:
+            # Delete pgwire sessions first (foreign key)
+            conn.execute(
+                "DELETE FROM pgwire_sessions WHERE workspace_id = ?",
+                [workspace_id],
+            )
+            # Delete credentials (foreign key)
+            conn.execute(
+                "DELETE FROM workspace_credentials WHERE workspace_id = ?",
+                [workspace_id],
+            )
+            # Delete workspace
+            conn.execute("DELETE FROM workspaces WHERE id = ?", [workspace_id])
+            return True
+
+    def count_workspaces(self, project_id: str | None = None) -> int:
+        """Count workspaces, optionally filtered by project."""
+        with self.connection() as conn:
+            if project_id:
+                result = conn.execute(
+                    "SELECT COUNT(*) FROM workspaces WHERE project_id = ?",
+                    [project_id],
+                ).fetchone()
+            else:
+                result = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()
+            return result[0]
+
+    def get_expired_workspaces(self) -> list[dict[str, Any]]:
+        """Get all expired workspaces that need cleanup."""
+        with self.connection() as conn:
+            results = conn.execute(
+                """
+                SELECT * FROM workspaces
+                WHERE expires_at IS NOT NULL
+                AND expires_at < now()
+                AND status = 'active'
+                """
+            ).fetchall()
+            return [self._row_to_workspace_dict(row) for row in results]
+
+    # ==================== Workspace Credentials Methods ====================
+
+    def create_workspace_credentials(
+        self, workspace_id: str, username: str, password_hash: str
+    ) -> dict[str, Any]:
+        """Create credentials for workspace."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO workspace_credentials (workspace_id, username, password_hash)
+                VALUES (?, ?, ?)
+                """,
+                [workspace_id, username, password_hash],
+            )
+            return {
+                "workspace_id": workspace_id,
+                "username": username,
+            }
+
+    def get_workspace_credentials(self, workspace_id: str) -> dict[str, Any] | None:
+        """Get credentials for workspace."""
+        with self.connection() as conn:
+            result = conn.execute(
+                "SELECT workspace_id, username, password_hash, created_at FROM workspace_credentials WHERE workspace_id = ?",
+                [workspace_id],
+            ).fetchone()
+            if not result:
+                return None
+            return {
+                "workspace_id": result[0],
+                "username": result[1],
+                "password_hash": result[2],
+                "created_at": result[3].isoformat() if result[3] else None,
+            }
+
+    def get_workspace_by_username(self, username: str) -> dict[str, Any] | None:
+        """Get workspace by credentials username (for auth)."""
+        with self.connection() as conn:
+            result = conn.execute(
+                """
+                SELECT w.*, wc.username, wc.password_hash
+                FROM workspaces w
+                JOIN workspace_credentials wc ON w.id = wc.workspace_id
+                WHERE wc.username = ?
+                """,
+                [username],
+            ).fetchone()
+            if not result:
+                return None
+            ws = self._row_to_workspace_dict(result[:9])
+            ws["username"] = result[9]
+            ws["password_hash"] = result[10]
+            return ws
+
+    def update_workspace_credentials(
+        self, workspace_id: str, password_hash: str
+    ) -> bool:
+        """Update workspace password."""
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE workspace_credentials SET password_hash = ? WHERE workspace_id = ?",
+                [password_hash, workspace_id],
+            )
+            return True
+
+    # ==================== PG Wire Session Methods (Phase 11b) ====================
+
+    def create_pgwire_session(
+        self,
+        session_id: str,
+        workspace_id: str,
+        client_ip: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new PG Wire session."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO pgwire_sessions (session_id, workspace_id, client_ip, status)
+                VALUES (?, ?, ?, 'active')
+                """,
+                [session_id, workspace_id, client_ip],
+            )
+            return {
+                "session_id": session_id,
+                "workspace_id": workspace_id,
+                "client_ip": client_ip,
+                "status": "active",
+            }
+
+    def get_pgwire_session(self, session_id: str) -> dict[str, Any] | None:
+        """Get PG Wire session by ID."""
+        with self.connection() as conn:
+            result = conn.execute(
+                """
+                SELECT session_id, workspace_id, client_ip, connected_at,
+                       last_activity_at, query_count, status
+                FROM pgwire_sessions WHERE session_id = ?
+                """,
+                [session_id],
+            ).fetchone()
+            if not result:
+                return None
+            return {
+                "session_id": result[0],
+                "workspace_id": result[1],
+                "client_ip": result[2],
+                "connected_at": result[3].isoformat() if result[3] else None,
+                "last_activity_at": result[4].isoformat() if result[4] else None,
+                "query_count": result[5],
+                "status": result[6],
+            }
+
+    def update_pgwire_session_activity(
+        self, session_id: str, increment_queries: bool = True
+    ) -> bool:
+        """Update last activity time and optionally increment query count."""
+        with self.connection() as conn:
+            if increment_queries:
+                conn.execute(
+                    """
+                    UPDATE pgwire_sessions
+                    SET last_activity_at = now(), query_count = query_count + 1
+                    WHERE session_id = ?
+                    """,
+                    [session_id],
+                )
+            else:
+                conn.execute(
+                    "UPDATE pgwire_sessions SET last_activity_at = now() WHERE session_id = ?",
+                    [session_id],
+                )
+            return True
+
+    def close_pgwire_session(
+        self, session_id: str, status: str = "disconnected"
+    ) -> bool:
+        """Close a PG Wire session."""
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE pgwire_sessions SET status = ? WHERE session_id = ?",
+                [status, session_id],
+            )
+            return True
+
+    def count_active_pgwire_sessions(self, workspace_id: str) -> int:
+        """Count active sessions for a workspace."""
+        with self.connection() as conn:
+            result = conn.execute(
+                """
+                SELECT COUNT(*) FROM pgwire_sessions
+                WHERE workspace_id = ? AND status = 'active'
+                """,
+                [workspace_id],
+            ).fetchone()
+            return result[0]
+
+    def list_pgwire_sessions(
+        self, workspace_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List PG Wire sessions, optionally filtered."""
+        with self.connection() as conn:
+            query = "SELECT session_id, workspace_id, client_ip, connected_at, last_activity_at, query_count, status FROM pgwire_sessions WHERE 1=1"
+            params: list[Any] = []
+
+            if workspace_id:
+                query += " AND workspace_id = ?"
+                params.append(workspace_id)
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+
+            query += " ORDER BY connected_at DESC"
+            results = conn.execute(query, params).fetchall()
+
+            return [
+                {
+                    "session_id": r[0],
+                    "workspace_id": r[1],
+                    "client_ip": r[2],
+                    "connected_at": r[3].isoformat() if r[3] else None,
+                    "last_activity_at": r[4].isoformat() if r[4] else None,
+                    "query_count": r[5],
+                    "status": r[6],
+                }
+                for r in results
+            ]
+
+    def cleanup_stale_pgwire_sessions(self, idle_timeout_seconds: int = 3600) -> int:
+        """Mark sessions as timeout if idle for too long. Returns count."""
+        with self.connection() as conn:
+            # DuckDB doesn't support parameterized INTERVAL, format directly
+            # idle_timeout_seconds is an int so this is safe
+            result = conn.execute(
+                f"""
+                UPDATE pgwire_sessions
+                SET status = 'timeout'
+                WHERE status = 'active'
+                AND last_activity_at < now() - INTERVAL '{idle_timeout_seconds} seconds'
+                RETURNING session_id
+                """
+            ).fetchall()
+            return len(result)
+
+    def delete_pgwire_sessions_for_workspace(self, workspace_id: str) -> int:
+        """Delete all sessions for a workspace (called on workspace delete)."""
+        with self.connection() as conn:
+            result = conn.execute(
+                "DELETE FROM pgwire_sessions WHERE workspace_id = ? RETURNING session_id",
+                [workspace_id],
+            ).fetchall()
+            return len(result)
+
 
 class ProjectDBManager:
     """
@@ -2347,6 +2751,257 @@ class ProjectDBManager:
             finally:
                 lock.release()
                 TABLE_LOCKS_ACTIVE.dec()
+
+    # ========================================
+    # Workspace Methods
+    # ========================================
+
+    def get_workspaces_dir(self, project_id: str, branch_id: str | None = None) -> Path:
+        """Get the workspaces directory for a project or branch."""
+        if branch_id:
+            base_dir = self.get_branch_dir(project_id, branch_id)
+        else:
+            base_dir = self.get_project_dir(project_id)
+        return base_dir / "_workspaces"
+
+    def get_workspace_path(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> Path:
+        """Get the path to a workspace .duckdb file."""
+        workspaces_dir = self.get_workspaces_dir(project_id, branch_id)
+        return workspaces_dir / f"{workspace_id}.duckdb"
+
+    def create_workspace_db(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> Path:
+        """Create an empty workspace database file."""
+        workspaces_dir = self.get_workspaces_dir(project_id, branch_id)
+        workspaces_dir.mkdir(parents=True, exist_ok=True)
+
+        workspace_path = workspaces_dir / f"{workspace_id}.duckdb"
+
+        # Create empty DuckDB file with a marker table
+        conn = duckdb.connect(str(workspace_path))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _workspace_info (
+                key VARCHAR PRIMARY KEY,
+                value VARCHAR
+            )
+        """)
+        conn.execute("""
+            INSERT INTO _workspace_info (key, value) VALUES
+            ('workspace_id', ?),
+            ('created_at', now()::VARCHAR)
+        """, [workspace_id])
+        conn.close()
+
+        return workspace_path
+
+    def delete_workspace_db(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> bool:
+        """Delete a workspace database file."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        if workspace_path.exists():
+            workspace_path.unlink()
+            # Also remove WAL file if exists
+            wal_path = workspace_path.with_suffix(".duckdb.wal")
+            if wal_path.exists():
+                wal_path.unlink()
+            return True
+        return False
+
+    def workspace_exists(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> bool:
+        """Check if a workspace database file exists."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        return workspace_path.exists()
+
+    def get_workspace_size(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> int:
+        """Get workspace file size in bytes."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        if workspace_path.exists():
+            return workspace_path.stat().st_size
+        return 0
+
+    def list_workspace_objects(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List tables/views in a workspace."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        if not workspace_path.exists():
+            return []
+
+        # Note: Use SHOW TABLES instead of information_schema.tables or duckdb_tables()
+        # because those may return empty after ATTACH/DETACH operations (DuckDB quirk)
+        conn = duckdb.connect(str(workspace_path))
+        try:
+            # Get all objects using SHOW TABLES (includes both tables and views)
+            results = conn.execute("SHOW TABLES").fetchall()
+
+            objects = []
+            for (name,) in results:
+                # Skip internal objects
+                if name.startswith("_"):
+                    continue
+
+                # Check if it's a view using sqlite_master
+                is_view = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?",
+                    [name],
+                ).fetchone()
+
+                obj_type = "view" if is_view else "table"
+
+                # Get row count
+                row_count = 0
+                try:
+                    count_result = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()
+                    row_count = count_result[0] if count_result else 0
+                except Exception:
+                    pass
+
+                objects.append({
+                    "name": name,
+                    "type": obj_type,
+                    "rows": row_count,
+                })
+
+            return objects
+        finally:
+            conn.close()
+
+    def clear_workspace(
+        self, project_id: str, workspace_id: str, branch_id: str | None = None
+    ) -> bool:
+        """Clear all user objects from workspace (keep system tables)."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        if not workspace_path.exists():
+            return False
+
+        conn = duckdb.connect(str(workspace_path))
+        try:
+            # Get all objects using SHOW TABLES (includes tables and views)
+            results = conn.execute("SHOW TABLES").fetchall()
+
+            for (name,) in results:
+                # Skip internal objects
+                if name.startswith("_"):
+                    continue
+
+                # Check if it's a view using sqlite_master
+                is_view = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?",
+                    [name],
+                ).fetchone()
+
+                if is_view:
+                    conn.execute(f'DROP VIEW IF EXISTS "{name}"')
+                else:
+                    conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+
+            return True
+        finally:
+            conn.close()
+
+    def drop_workspace_object(
+        self,
+        project_id: str,
+        workspace_id: str,
+        object_name: str,
+        branch_id: str | None = None,
+    ) -> bool:
+        """Drop a specific object from workspace."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+        if not workspace_path.exists():
+            return False
+
+        conn = duckdb.connect(str(workspace_path))
+        try:
+            # Check if object exists using SHOW TABLES
+            results = conn.execute("SHOW TABLES").fetchall()
+            object_exists = any(name == object_name for (name,) in results)
+
+            if not object_exists:
+                return False
+
+            # Check if it's a view using sqlite_master
+            is_view = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?",
+                [object_name],
+            ).fetchone()
+
+            if is_view:
+                conn.execute(f'DROP VIEW "{object_name}"')
+            else:
+                conn.execute(f'DROP TABLE "{object_name}"')
+
+            return True
+        finally:
+            conn.close()
+
+    def load_table_to_workspace(
+        self,
+        project_id: str,
+        workspace_id: str,
+        source_bucket: str,
+        source_table: str,
+        dest_table: str,
+        columns: list[str] | None = None,
+        where_clause: str | None = None,
+        branch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Load data from a project table into the workspace."""
+        workspace_path = self.get_workspace_path(project_id, workspace_id, branch_id)
+
+        # Get source table path
+        if branch_id:
+            source_path = self.get_branch_table_path(project_id, branch_id, source_bucket, source_table)
+            if not source_path.exists():
+                # Fall back to main branch table
+                source_path = self.get_table_path(project_id, source_bucket, source_table)
+        else:
+            source_path = self.get_table_path(project_id, source_bucket, source_table)
+
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source table not found: {source_bucket}.{source_table}")
+
+        conn = duckdb.connect(str(workspace_path))
+        try:
+            # Attach source table
+            conn.execute(f"ATTACH '{source_path}' AS source_db (READ_ONLY)")
+
+            # Build column list
+            col_list = ", ".join(f'"{c}"' for c in columns) if columns else "*"
+
+            # Build WHERE clause
+            where = f"WHERE {where_clause}" if where_clause else ""
+
+            # Copy data
+            conn.execute(f"""
+                CREATE OR REPLACE TABLE "{dest_table}" AS
+                SELECT {col_list} FROM source_db.main.data {where}
+            """)
+
+            # Get stats
+            row_count = conn.execute(f'SELECT COUNT(*) FROM "{dest_table}"').fetchone()[0]
+
+            conn.execute("DETACH source_db")
+            conn.close()
+
+            # Get file size
+            size_bytes = workspace_path.stat().st_size
+
+            return {
+                "rows": row_count,
+                "size_bytes": size_bytes,
+            }
+        except Exception as e:
+            conn.close()
+            raise e
 
     # ========================================
     # Project operations (ADR-009)

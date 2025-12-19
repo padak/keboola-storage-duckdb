@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     operation_timeout: int = 240
     connection_timeout: int = 10
 
+    # PG Wire server settings (Phase 11b)
+    pgwire_host: str = "localhost"
+    pgwire_port: int = 5432
+    pgwire_max_connections_total: int = 100
+    pgwire_max_connections_per_workspace: int = 5
+    pgwire_idle_timeout_seconds: int = 3600  # 1 hour
+    pgwire_query_timeout_seconds: int = 300  # 5 minutes
+    pgwire_session_memory_limit: str = "4GB"
+    pgwire_ssl_mode: str = "prefer"
+
     @model_validator(mode="after")
     def set_default_paths(self) -> "Settings":
         """Set default paths based on data_dir if not explicitly provided."""

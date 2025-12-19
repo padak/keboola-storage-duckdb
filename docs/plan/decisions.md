@@ -15,6 +15,8 @@ All architectural and implementation decisions for DuckDB Storage Backend.
 | 007 | Copy-on-Write branching = lazy table-level copy | **Accepted** |
 | 008 | Central metadata database (`metadata.duckdb`) | **Accepted** |
 | **009** | **1 DuckDB file per table** | **Accepted (2024-12-16)** |
+| **010** | **SQL Interface = PostgreSQL Wire Protocol** | **Accepted (2024-12-18)** |
+| **012** | **Branch-First API Design** | **Accepted (2024-12-19)** |
 
 ## Critical Decisions (APPROVED)
 
@@ -33,6 +35,13 @@ All architectural and implementation decisions for DuckDB Storage Backend.
 | **Snapshots** | Manual retention | 90 days |
 | **Snapshots** | Auto retention | 7 days |
 | **Snapshots** | Auto triggers | Per-project configurable, default DROP TABLE only |
+| **Workspaces** | SQL protocol | PostgreSQL Wire Protocol (duckgres) |
+| **Workspaces** | Project data access | ATTACH READ_ONLY |
+| **Workspaces** | TTL default | 24 hours |
+| **Workspaces** | Size limit default | 10GB per workspace |
+| **Branches** | URL design | Branch in path (`/branches/{branch_id}/`) |
+| **Branches** | Default branch ID | `default` (represents main) |
+| **Branches** | Table source tracking | `source` field: main/branch/branch_only |
 
 ## Security Decisions (APPROVED)
 
@@ -41,6 +50,7 @@ All architectural and implementation decisions for DuckDB Storage Backend.
 | Auth model | Hierarchical API keys (ADMIN > PROJECT) |
 | Key storage | SHA256 hash in metadata.duckdb |
 | API key format | `admin_*` for admin, `proj_{id}_admin_*` for project |
+| Workspace credentials | One-time password display, SHA256 hash stored |
 
 ## Deferred Decisions
 

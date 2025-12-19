@@ -1,186 +1,165 @@
-# Phase 10: Dev Branches - DONE
+# Phase 10: Dev Branches - REFACTORING
 
 ## Status
-- **Status:** DONE (2024-12-17)
-- **Tests:** 28 tests passing
-- **Architecture:** ADR-007 (CoW branching with Live View)
-- **Simplified by:** ADR-009 (per-table files)
+- **Status:** REFACTORING (2024-12-19)
+- **Previous:** DONE (2024-12-17) - basic branch CRUD + CoW
+- **Tests:** 28 tests (will need update after refactoring)
+- **Architecture:** ADR-007 (CoW branching), **ADR-012 (Branch-First API)**
 
 ## Goal
 
-Implement dev branches matching Keboola Storage production behavior:
-- **Live View**: Branch sees current main data until table is modified
-- **Copy-on-Write**: First write to table copies it to branch
-- **No table merge**: Merge = only configurations, branch tables are deleted
+Implement **Branch-First API Design** (ADR-012) - all bucket/table operations go through branches, with `default` representing main.
 
-## Key Behavior (from Keboola Production)
+## Current State (Before Refactoring)
 
-```
-1. CREATE BRANCH
-   - Empty directory created
-   - Branch sees LIVE data from main (via ATTACH READ_ONLY)
+### What Works
+- Branch CRUD: create, list, get, delete
+- Copy-on-Write for existing tables
+- Pull table from main
+- Branch isolation after CoW
 
-2. READ from branch
-   - Table NOT in branch -> read from main (live!)
-   - Table IN branch -> read from branch copy
+### What's Missing
+- Cannot specify branch for bucket/table operations
+- Cannot create table only in branch (not in main)
+- No branch-aware bucket/table listing
+- "Main" is implicit, not explicit branch
 
-3. WRITE to branch (CoW trigger)
-   - Table NOT in branch -> COPY current main state, then write
-   - Table IN branch -> write directly
+## New API Design (ADR-012)
 
-4. MERGE branch
-   - Merges ONLY configurations (handled by Connection, not Storage API)
-   - Storage tables are NOT merged back to main!
+### URL Structure
 
-5. DELETE branch
-   - All branch tables are DELETED
-   - Data changes in branch are LOST (unless manually exported)
-```
-
-## Endpoints to Implement
+**All resources accessed through branches:**
 
 ```
-POST   /projects/{id}/branches                     # CreateDevBranch
-GET    /projects/{id}/branches                     # ListBranches
-GET    /projects/{id}/branches/{branch_id}         # BranchDetail
-DELETE /projects/{id}/branches/{branch_id}         # DropDevBranch
-POST   /projects/{id}/branches/{branch_id}/tables/{bucket}/{table}/pull  # PullTable (refresh from main)
+/projects/{project_id}/branches/{branch_id}/buckets
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/preview
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/import/file
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/export
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/columns
+/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/snapshots
+...
 ```
 
-**Note:** No `/merge` endpoint for tables - merge only handles configurations in Connection layer.
+### Special Branch ID: `default`
 
-## Implementation Strategy
+- `branch_id = "default"` = production project (main)
+- Dev branches use UUID/short-id
+- Example: `/projects/123/branches/default/buckets` = main project
 
-With ADR-009 (per-table files), branching is simplified:
+### Endpoints to Implement/Migrate
 
-```
-/data/duckdb/
-├── project_123/                    # Main branch
-│   ├── in_c_sales/
-│   │   ├── orders.duckdb
-│   │   └── customers.duckdb
-│   └── out_c_reports/
-│       └── summary.duckdb
-│
-├── project_123_branch_456/         # Dev branch = directory (only copied tables)
-│   └── in_c_sales/
-│       └── orders.duckdb           # Only tables that were WRITTEN to
-```
+| Old Endpoint | New Endpoint | Status |
+|--------------|--------------|--------|
+| `GET /projects/{id}/buckets` | `GET /projects/{id}/branches/{branch}/buckets` | TODO |
+| `POST /projects/{id}/buckets` | `POST /projects/{id}/branches/{branch}/buckets` | TODO |
+| `GET /projects/{id}/buckets/{b}` | `GET /projects/{id}/branches/{branch}/buckets/{b}` | TODO |
+| `DELETE /projects/{id}/buckets/{b}` | `DELETE /projects/{id}/branches/{branch}/buckets/{b}` | TODO |
+| `GET /projects/{id}/buckets/{b}/tables` | `GET /projects/{id}/branches/{branch}/buckets/{b}/tables` | TODO |
+| `POST /projects/{id}/buckets/{b}/tables` | `POST /projects/{id}/branches/{branch}/buckets/{b}/tables` | TODO |
+| ... | ... | ... |
 
-### CreateDevBranch
-1. Create branch directory `project_{id}_branch_{branch_id}/`
-2. Register in metadata.duckdb (`branches` table)
-3. **NO data copy** - tables read from main via ATTACH
+### Response Extensions
 
-### Read from Branch
-1. Check if table exists in branch directory
-2. If YES -> read from branch `.duckdb` file
-3. If NO -> ATTACH main table READ_ONLY, read from there
+Table responses include `source` field:
 
-### Write to Branch (Copy-on-Write)
-1. Check if table exists in branch directory
-2. If NO -> copy `.duckdb` file from main to branch (CoW)
-3. Write to branch copy
-
-### PullTable (refresh from main)
-1. Delete table from branch directory (if exists)
-2. Table now reads from main again (live view restored)
-
-### DeleteBranch
-1. Delete entire branch directory (all .duckdb files)
-2. Remove from metadata.duckdb
-3. **Tables are LOST** - this is expected behavior
-
-## Metadata Schema
-
-```sql
-CREATE TABLE branches (
-    id VARCHAR PRIMARY KEY,
-    project_id VARCHAR NOT NULL,
-    name VARCHAR NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    created_by VARCHAR,
-    description TEXT,
-
-    FOREIGN KEY (project_id) REFERENCES projects(id)
-);
-
-CREATE INDEX idx_branches_project ON branches(project_id);
-
--- Track which tables have been copied to branch (for informational purposes)
-CREATE TABLE branch_tables (
-    branch_id VARCHAR NOT NULL,
-    bucket_name VARCHAR NOT NULL,
-    table_name VARCHAR NOT NULL,
-    copied_at TIMESTAMPTZ DEFAULT now(),
-
-    PRIMARY KEY (branch_id, bucket_name, table_name),
-    FOREIGN KEY (branch_id) REFERENCES branches(id)
-);
+```json
+{
+  "name": "orders",
+  "bucket_name": "sales",
+  "source": "main",      // "main" | "branch" | "branch_only"
+  "row_count": 1500
+}
 ```
 
-## Key Decisions
+- `main`: Table exists in main, branch reads from main (Live View)
+- `branch`: Table was copied to branch (CoW performed)
+- `branch_only`: Table exists only in branch (created in branch)
 
-| Decision | Value | Source |
-|----------|-------|--------|
-| Branch storage | Directory with per-table files (ADR-009) | ADR-009 |
-| Read strategy | **Live View** - read from main until write | Keboola prod |
-| Write strategy | **Copy-on-Write** - copy on first write | ADR-007 |
-| Merge behavior | **NO table merge** - only configurations | Keboola prod |
-| Delete behavior | Delete all branch tables | Keboola prod |
+### Branch Behavior
 
-## Example Flow
+| Operation | Default Branch | Dev Branch |
+|-----------|----------------|------------|
+| READ | Direct read | Live View (main) or branch copy |
+| WRITE | Direct write | CoW trigger, then write |
+| CREATE table | Create in main | Create only in branch |
+| DELETE table | Delete from main | Delete from branch (main unaffected) |
 
-```python
-# T0: Create branch
-POST /projects/123/branches
-{"name": "feature-new-report", "description": "Testing new report logic"}
-# Result: branch_id = "456", empty directory created
+## Implementation Plan
 
-# T1: Read table (not modified yet) - reads from MAIN
-GET /projects/123/branches/456/buckets/in_c_sales/tables/orders/preview
-# Returns: current main data (live view)
+### Phase 10a: Router Refactoring
 
-# T2: Main gets updated (100 -> 150 rows)
-# (some other process writes to main)
+1. Create new router file `routers/branch_resources.py`
+2. Add `branch_id` path parameter to all bucket/table endpoints
+3. Implement branch resolution (`default` -> main, else -> branch)
+4. Update dependencies for branch-aware auth
 
-# T3: Read from branch again - still live!
-GET /projects/123/branches/456/buckets/in_c_sales/tables/orders/preview
-# Returns: 150 rows (current main state)
+### Phase 10b: Storage Layer Updates
 
-# T4: Write to branch table (triggers CoW)
-POST /projects/123/branches/456/buckets/in_c_sales/tables/orders/import
-# CoW: copies orders.duckdb from main (150 rows) to branch
-# Then: applies the import
+1. Extend `ProjectDBManager` with branch-aware methods:
+   - `get_table_path(project_id, branch_id, bucket, table)`
+   - `table_exists_in_branch(project_id, branch_id, bucket, table)`
+   - `get_table_source(project_id, branch_id, bucket, table)` -> main|branch|branch_only
+2. Implement Live View read logic
+3. Implement CoW trigger on write
+4. Support branch-only table creation
 
-# T5: Main gets updated again (150 -> 170 rows)
-# (some other process writes to main)
+### Phase 10c: Metadata Updates
 
-# T6: Read from branch - now isolated!
-GET /projects/123/branches/456/buckets/in_c_sales/tables/orders/preview
-# Returns: data from branch copy (150 + import changes)
-# Main changes (170) NOT visible
+1. Track branch-only tables in `branch_tables` with flag
+2. Update bucket metadata for branch-specific buckets
+3. Extend listing queries to merge main + branch resources
 
-# T7: Delete branch
-DELETE /projects/123/branches/456
-# Result: branch directory deleted, all branch tables LOST
-```
+### Phase 10d: Test Migration
+
+1. Update all existing tests to use `/branches/default/` paths
+2. Add branch-specific test scenarios:
+   - Create table in branch only
+   - List tables shows main + branch
+   - Delete branch-only table
+   - CoW on first write to existing table
 
 ## Test Plan
 
 | Test | Description |
 |------|-------------|
-| `test_create_branch` | Creates branch, verifies empty directory |
-| `test_branch_read_from_main` | Branch reads live data from main |
-| `test_branch_cow_on_write` | First write triggers copy |
-| `test_branch_isolation_after_cow` | After CoW, main changes not visible |
-| `test_pull_table` | Pull restores live view |
-| `test_delete_branch` | Deletes all branch tables |
-| `test_main_changes_visible_before_cow` | Main changes visible until CoW |
+| `test_default_branch_buckets` | CRUD buckets via default branch |
+| `test_default_branch_tables` | CRUD tables via default branch |
+| `test_dev_branch_live_view` | Branch reads main data before CoW |
+| `test_dev_branch_cow_on_write` | First write triggers CoW |
+| `test_branch_only_table_create` | Create table only in branch |
+| `test_branch_only_table_delete` | Delete branch-only table |
+| `test_branch_table_listing_merged` | List shows main + branch tables |
+| `test_branch_table_source_field` | Response includes source field |
+| `test_branch_isolation` | Branch changes don't affect main |
+| `test_delete_branch_cleans_tables` | Delete branch removes all branch tables |
+
+## Migration Notes
+
+### Existing Data
+
+- No data migration needed
+- `/data/duckdb/project_{id}/` = default branch storage
+- `/data/duckdb/project_{id}_branch_{branch_id}/` = dev branch storage
+
+### Breaking Changes
+
+- All bucket/table URLs change (add `/branches/{branch_id}/`)
+- Old URLs will return 404
+
+## Key Decisions
+
+| Decision | Value | Source |
+|----------|-------|--------|
+| Branch URL position | In path (not query param) | ADR-012 |
+| Main branch ID | `default` | ADR-012 |
+| Branch storage | Directory per branch | ADR-007, ADR-009 |
+| Table source tracking | `source` field in response | ADR-012 |
 
 ## Reference
 
-- **ADR-007**: `docs/adr/007-duckdb-cow-branching.md` - CoW implementation details
-- **ADR-009**: `docs/adr/009-duckdb-file-per-table.md` - Per-table file architecture
-- **Keboola Source**: `DevBranchCreate.php`, `DevBranchDelete.php`, `MergeConfigurationsService`
-- **Knowledge Sharing**: Martin Zajic - branchovana storage (2024-11-28)
+- **ADR-007**: `docs/adr/007-duckdb-cow-branching.md` - CoW implementation
+- **ADR-009**: `docs/adr/009-duckdb-file-per-table.md` - Per-table files
+- **ADR-012**: `docs/adr/012-branch-first-api-design.md` - Branch-First API

@@ -117,6 +117,11 @@ TABLES_TOTAL = Gauge(
     "Total number of tables across all projects"
 )
 
+WORKSPACES_TOTAL = Gauge(
+    "duckdb_workspaces_total",
+    "Total number of workspaces across all projects"
+)
+
 STORAGE_SIZE_BYTES = Gauge(
     "duckdb_storage_size_bytes",
     "Total storage size in bytes",
@@ -183,6 +188,46 @@ TABLE_LOCK_WAIT_TIME = Histogram(
 TABLE_LOCKS_ACTIVE = Gauge(
     "duckdb_table_locks_active",
     "Number of currently held table locks"
+)
+
+# =============================================================================
+# PG Wire Server Metrics (Phase 11c)
+# =============================================================================
+
+PGWIRE_CONNECTIONS_TOTAL = Counter(
+    "pgwire_connections_total",
+    "Total PG Wire connection attempts",
+    ["status"]  # success, auth_failed, expired, limit_reached
+)
+
+PGWIRE_CONNECTIONS_ACTIVE = Gauge(
+    "pgwire_connections_active",
+    "Active PG Wire connections",
+    ["workspace_id"]
+)
+
+PGWIRE_QUERIES_TOTAL = Counter(
+    "pgwire_queries_total",
+    "Total PG Wire queries executed",
+    ["workspace_id", "status"]  # success, error, timeout
+)
+
+PGWIRE_QUERY_DURATION = Histogram(
+    "pgwire_query_duration_seconds",
+    "PG Wire query duration in seconds",
+    ["workspace_id"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0]
+)
+
+PGWIRE_SESSIONS_TOTAL = Gauge(
+    "pgwire_sessions_total",
+    "Total active PG Wire sessions"
+)
+
+PGWIRE_AUTH_DURATION = Histogram(
+    "pgwire_auth_duration_seconds",
+    "PG Wire authentication duration",
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
 )
 
 # =============================================================================
