@@ -1,28 +1,44 @@
-# Phase 10: Dev Branches - REFACTORING
+# Phase 10: Dev Branches - DONE
 
 ## Status
-- **Status:** REFACTORING (2024-12-19)
-- **Previous:** DONE (2024-12-17) - basic branch CRUD + CoW
-- **Tests:** 28 tests (will need update after refactoring)
+- **Status:** DONE (2024-12-19)
+- **Tests:** 438 tests passing (all tests use branch-first URLs)
 - **Architecture:** ADR-007 (CoW branching), **ADR-012 (Branch-First API)**
+
+## Implementation Progress
+
+| Sub-phase | Status | Description |
+|-----------|--------|-------------|
+| Phase 10a | DONE | Branch-first URL in all existing routers |
+| Phase 10b | DONE | `branch_utils.py` with shared utilities |
+| Phase 10c | DONE | Metadata tracking via existing `branch_tables` |
+| Phase 10d | DONE | All tests migrated to `/branches/default/` URLs |
+
+### Completed Features
+- Branch-first URL structure: `/projects/{id}/branches/{branch_id}/buckets/...`
+- Branch resolution: `default` = main, other = dev branch
+- `source` field in TableResponse: `"main"` / `"branch"`
+- Schema/import/export operations restricted to default branch (MVP)
+- Live View for dev branches (read from main until CoW)
+- CoW trigger on writes to dev branch tables
+
+### Files Created/Modified
+- `src/branch_utils.py` - NEW (shared branch resolution utilities)
+- `src/routers/buckets.py` - Updated to branch-first URL
+- `src/routers/tables.py` - Updated to branch-first URL + source field
+- `src/routers/table_schema.py` - Updated to branch-first URL
+- `src/routers/table_import.py` - Updated to branch-first URL
+- `src/routers/bucket_sharing.py` - Updated to branch-first URL
+- `src/routers/snapshots.py` - Updated to branch-first URL
+- `src/routers/snapshot_settings.py` - Updated to branch-first URL
+- `src/routers/branch_resources.py` - REMOVED (functionality merged into existing routers)
+- `src/models/responses.py` - Added `source` field to TableResponse
+- `src/main.py` - Removed branch_resources router
+- `tests/*.py` - All tests updated to use `/branches/default/` URLs
 
 ## Goal
 
 Implement **Branch-First API Design** (ADR-012) - all bucket/table operations go through branches, with `default` representing main.
-
-## Current State (Before Refactoring)
-
-### What Works
-- Branch CRUD: create, list, get, delete
-- Copy-on-Write for existing tables
-- Pull table from main
-- Branch isolation after CoW
-
-### What's Missing
-- Cannot specify branch for bucket/table operations
-- Cannot create table only in branch (not in main)
-- No branch-aware bucket/table listing
-- "Main" is implicit, not explicit branch
 
 ## New API Design (ADR-012)
 
@@ -49,17 +65,25 @@ Implement **Branch-First API Design** (ADR-012) - all bucket/table operations go
 - Dev branches use UUID/short-id
 - Example: `/projects/123/branches/default/buckets` = main project
 
-### Endpoints to Implement/Migrate
+### Endpoints Migrated
 
 | Old Endpoint | New Endpoint | Status |
 |--------------|--------------|--------|
-| `GET /projects/{id}/buckets` | `GET /projects/{id}/branches/{branch}/buckets` | TODO |
-| `POST /projects/{id}/buckets` | `POST /projects/{id}/branches/{branch}/buckets` | TODO |
-| `GET /projects/{id}/buckets/{b}` | `GET /projects/{id}/branches/{branch}/buckets/{b}` | TODO |
-| `DELETE /projects/{id}/buckets/{b}` | `DELETE /projects/{id}/branches/{branch}/buckets/{b}` | TODO |
-| `GET /projects/{id}/buckets/{b}/tables` | `GET /projects/{id}/branches/{branch}/buckets/{b}/tables` | TODO |
-| `POST /projects/{id}/buckets/{b}/tables` | `POST /projects/{id}/branches/{branch}/buckets/{b}/tables` | TODO |
-| ... | ... | ... |
+| `GET /projects/{id}/buckets` | `GET /projects/{id}/branches/{branch}/buckets` | DONE |
+| `POST /projects/{id}/buckets` | `POST /projects/{id}/branches/{branch}/buckets` | DONE |
+| `GET /projects/{id}/buckets/{b}` | `GET /projects/{id}/branches/{branch}/buckets/{b}` | DONE |
+| `DELETE /projects/{id}/buckets/{b}` | `DELETE /projects/{id}/branches/{branch}/buckets/{b}` | DONE |
+| `GET /projects/{id}/buckets/{b}/tables` | `GET /projects/{id}/branches/{branch}/buckets/{b}/tables` | DONE |
+| `POST /projects/{id}/buckets/{b}/tables` | `POST /projects/{id}/branches/{branch}/buckets/{b}/tables` | DONE |
+| `GET /projects/{id}/buckets/{b}/tables/{t}` | `GET /projects/{id}/branches/{branch}/buckets/{b}/tables/{t}` | DONE |
+| `DELETE /projects/{id}/buckets/{b}/tables/{t}` | `DELETE /projects/{id}/branches/{branch}/buckets/{b}/tables/{t}` | DONE |
+| `GET .../tables/{t}/preview` | `GET /projects/{id}/branches/{branch}/.../preview` | DONE |
+| `POST .../tables/{t}/columns` | `POST /projects/{id}/branches/{branch}/.../columns` | DONE |
+| `POST .../tables/{t}/import/file` | `POST /projects/{id}/branches/{branch}/.../import/file` | DONE |
+| `POST .../tables/{t}/export` | `POST /projects/{id}/branches/{branch}/.../export` | DONE |
+| `POST .../buckets/{b}/share` | `POST /projects/{id}/branches/{branch}/.../share` | DONE |
+| `GET .../snapshots` | `GET /projects/{id}/branches/{branch}/snapshots` | DONE |
+| `GET .../settings/snapshots` | `GET /projects/{id}/branches/{branch}/.../settings/snapshots` | DONE |
 
 ### Response Extensions
 

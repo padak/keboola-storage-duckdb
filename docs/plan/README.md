@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 10 REFACTORING (Branch-First API)
+## Current Status: Phase 12 TODO (PHP Driver)
 
-**Total Tests: 439** (including 62 E2E tests)
+**Total Tests: 438**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -17,18 +17,18 @@
 | 7 | Import/Export | DONE | 17 | [phase-07-import-export.md](phase-07-import-export.md) |
 | 8 | Files API | DONE | 20 | [phase-08-files.md](phase-08-files.md) |
 | 9 | Snapshots + Settings | DONE | 34 | [phase-09-snapshots.md](phase-09-snapshots.md) |
-| **10** | **Dev Branches** | **REFACTORING** | 34 | [phase-10-branches.md](phase-10-branches.md) |
+| 10 | Dev Branches + Branch-First API | DONE | 26 | [phase-10-branches.md](phase-10-branches.md) |
 | 11a | Workspaces REST API | DONE | 41 | [phase-11-workspaces.md](phase-11-workspaces.md) |
 | 11b | PG Wire Server | DONE | 26 | [phase-11b-pgwire.md](phase-11b-pgwire.md) |
 | 11c | Workspace Polish | DONE | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
-| 12 | PHP Driver | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| **12** | **PHP Driver** | **TODO** | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 
-### Phase 10 Refactoring: Branch-First API (ADR-012)
+### Phase 10: Branch-First API (ADR-012) - DONE
 
-All bucket/table operations will go through `/branches/{branch_id}/`:
-- `default` = main (production)
-- Dev branches can create tables that don't exist in main
-- Full CRUD on branch-specific resources
+All bucket/table endpoints now use branch-first URL pattern:
+- `/projects/{id}/branches/{branch_id}/buckets/...`
+- `branch_id = "default"` for main, UUID for dev branches
+- `source` field in TableResponse: `"main"` or `"branch"`
 
 ## Architecture (ADR-009)
 
@@ -102,6 +102,7 @@ All bucket/table operations will go through `/branches/{branch_id}/`:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.2 | 2024-12-19 | Phase 10 DONE: Branch-First API refactoring complete (438 tests) |
 | v7.1 | 2024-12-19 | ADR-012: Branch-First API design, Phase 10 refactoring |
 | v7.0 | 2024-12-18 | Phase 11c: E2E tests (62), PG Wire metrics, graceful shutdown |
 | v6.9 | 2024-12-18 | PG Wire Server: 26 tests, buenavista integration |

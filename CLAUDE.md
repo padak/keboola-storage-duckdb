@@ -39,7 +39,7 @@ docs/                         # Project documentation
   │   └── risks.md           # Accepted MVP risks
   ├── local-connection.md    # Local Connection setup guide
   ├── bigquery-driver-research.md  # BigQuery driver analysis
-  └── adr/                   # Architecture Decision Records (001-009)
+  └── adr/                   # Architecture Decision Records (001-013)
 
 duckdb-api-service/          # Python FastAPI service for DuckDB operations
   ├── src/
@@ -49,6 +49,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── auth.py            # API key generation/verification
   │   ├── dependencies.py    # FastAPI auth dependencies
   │   ├── metrics.py         # Prometheus metrics definitions
+  │   ├── branch_utils.py    # Branch resolution utilities (ADR-012)
   │   ├── snapshot_config.py # Hierarchical snapshot config resolver
   │   ├── middleware/        # HTTP middleware
   │   │   ├── idempotency.py # X-Idempotency-Key handling
@@ -92,24 +93,23 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Files API | DONE | 20 |
 | Import/Export | DONE | 17 |
 | Snapshots + Settings | DONE | 34 |
-| Dev Branches (basic) | DONE | 34 |
-| **Branch-First API (ADR-012)** | **REFACTORING** | - |
+| Dev Branches + Branch-First API | DONE | 26 |
 | Workspaces (REST API) | DONE | 41 |
 | PG Wire Server | DONE | 26 |
 | E2E Tests (Phase 11c) | DONE | 62 |
 | Schema Migrations | TODO | - |
 | PHP Driver | TODO (last) | - |
 
-**Total: 439 tests PASS** (including 62 comprehensive E2E tests)
+**Total: 438 tests PASS** (including 62 comprehensive E2E tests)
 
-**Current: Branch-First API Refactoring (ADR-012)**
+**Current: Phase 12 - PHP Driver (TODO)**
 
-All bucket/table operations will use `/branches/{branch_id}/` path:
+All bucket/table operations now use branch-first URLs (ADR-012):
+- `/projects/{id}/branches/{branch_id}/buckets/...`
 - `default` = main (production project)
-- Dev branches can create tables that don't exist in main
-- Full CRUD on branch-specific resources
+- `source` field in TableResponse: `"main"` or `"branch"`
 
-**Next implementation order:**
+**Completed implementation:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
 2. ~~Write Queue (simplified with ADR-009)~~ - DONE
 3. ~~Auth middleware (hierarchical API keys)~~ - DONE
@@ -119,12 +119,11 @@ All bucket/table operations will use `/branches/{branch_id}/` path:
 7. ~~Files API~~ - DONE
 8. ~~Import/Export~~ - DONE
 9. ~~Snapshots + Settings~~ - DONE
-10. ~~Dev Branches (basic)~~ - DONE
+10. ~~Dev Branches + Branch-First API (ADR-012)~~ - DONE
 11. ~~Workspaces (REST API)~~ - DONE
 12. ~~PG Wire Server (buenavista)~~ - DONE
 13. ~~E2E Tests + PG Wire Polish~~ - DONE
-14. **Branch-First API (ADR-012)** - IN PROGRESS
-15. PHP Driver - NEXT
+14. **PHP Driver** - NEXT
 
 ## Key Decisions (APPROVED)
 
@@ -223,9 +222,6 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 
 ### Implemented Endpoints (Current)
 
-> **Note:** After ADR-012 refactoring, bucket/table endpoints will move under `/branches/{branch_id}/`.
-> See [ADR-012](docs/adr/012-branch-first-api-design.md) for new URL structure.
-
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
@@ -237,45 +233,37 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 | `/projects/{id}/stats` | GET | Live statistics |
 | `/projects/{id}/branches` | GET/POST | List/Create branches |
 | `/projects/{id}/branches/{branch_id}` | GET/DELETE | Branch CRUD |
-
-**Bucket/Table endpoints (will move to `/branches/{branch_id}/` path):**
-
-| Current Endpoint | Method | Description |
-|------------------|--------|-------------|
-| `/projects/{id}/buckets` | GET/POST | List/Create buckets |
-| `/projects/{id}/buckets/{name}` | GET/DELETE | Bucket CRUD |
-| `/projects/{id}/buckets/{name}/share` | POST/DELETE | Share bucket |
-| `/projects/{id}/buckets/{name}/link` | POST/DELETE | Link bucket |
-| `/projects/{id}/buckets/{name}/grant-readonly` | POST/DELETE | Readonly |
-| `/projects/{id}/buckets/{bucket}/tables` | GET/POST | List/Create tables |
-| `/projects/{id}/buckets/{bucket}/tables/{table}` | GET/DELETE | Table CRUD |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/preview` | GET | Preview data |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/columns` | POST | Add column |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/columns/{name}` | DELETE/PUT | Drop/Alter column |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/primary-key` | POST/DELETE | Add/Drop PK |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/rows` | DELETE | Delete rows (WHERE) |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/profile` | POST | Table profiling |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/import/file` | POST | Import from file |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/export` | POST | Export to file |
 | `/projects/{id}/files/prepare` | POST | Prepare file upload |
 | `/projects/{id}/files/upload/{key}` | POST | Upload file |
 | `/projects/{id}/files` | GET/POST | List/Register files |
 | `/projects/{id}/files/{id}` | GET/DELETE | Get/Delete file |
 | `/projects/{id}/files/{id}/download` | GET | Download file |
 | `/projects/{id}/settings/snapshots` | GET/PUT/DELETE | Project snapshot config |
-| `/projects/{id}/buckets/{bucket}/settings/snapshots` | GET/PUT/DELETE | Bucket snapshot config |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/settings/snapshots` | GET/PUT/DELETE | Table snapshot config |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots` | GET/POST | List/Create snapshots |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
-| `/projects/{id}/buckets/{bucket}/tables/{table}/snapshots/{id}/restore` | POST | Restore from snapshot |
 
-### Planned Endpoints (ADR-012)
+**Branch-First Endpoints (ADR-012)** - all bucket/table operations include `/branches/{branch_id}/`:
 
-After refactoring, all bucket/table operations will use:
-```
-/projects/{id}/branches/{branch_id}/buckets/...
-/projects/{id}/branches/{branch_id}/buckets/{bucket}/tables/...
-```
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `.../branches/{branch}/buckets` | GET/POST | List/Create buckets |
+| `.../branches/{branch}/buckets/{name}` | GET/DELETE | Bucket CRUD |
+| `.../branches/{branch}/buckets/{name}/share` | POST/DELETE | Share bucket |
+| `.../branches/{branch}/buckets/{name}/link` | POST/DELETE | Link bucket |
+| `.../branches/{branch}/buckets/{name}/grant-readonly` | POST/DELETE | Readonly |
+| `.../branches/{branch}/buckets/{b}/tables` | GET/POST | List/Create tables |
+| `.../branches/{branch}/buckets/{b}/tables/{t}` | GET/DELETE | Table CRUD |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/preview` | GET | Preview data |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/columns` | POST | Add column |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/columns/{c}` | DELETE/PUT | Drop/Alter column |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/primary-key` | POST/DELETE | Add/Drop PK |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/rows` | DELETE | Delete rows |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/profile` | POST | Table profiling |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/import/file` | POST | Import from file |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/export` | POST | Export to file |
+| `.../branches/{branch}/buckets/{b}/settings/snapshots` | GET/PUT/DELETE | Bucket snapshot config |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/settings/snapshots` | GET/PUT/DELETE | Table snapshot config |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/snapshots` | GET/POST | List/Create snapshots |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/snapshots/{id}` | GET/DELETE | Get/Delete snapshot |
+| `.../branches/{branch}/buckets/{b}/tables/{t}/snapshots/{id}/restore` | POST | Restore snapshot |
 
 Where `branch_id`:
 - `default` = main (production project)
@@ -319,7 +307,7 @@ This ensures each phase has documented progress and test coverage for future ses
 - **Phase specs**: `docs/plan/phase-*.md` - detailed specs per phase
 - **Decisions**: `docs/plan/decisions.md` - all approved decisions
 - **Risks**: `docs/plan/risks.md` - accepted MVP risks
-- **ADRs**: `docs/adr/001-012` - architecture decisions
+- **ADRs**: `docs/adr/001-013` - architecture decisions
 - **Key ADRs**:
   - `docs/adr/009-duckdb-file-per-table.md` - per-table file architecture
   - `docs/adr/012-branch-first-api-design.md` - Branch-First API design

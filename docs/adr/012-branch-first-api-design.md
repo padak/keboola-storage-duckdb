@@ -2,7 +2,14 @@
 
 ## Status
 
-APPROVED (2024-12-19)
+IMPLEMENTED (2024-12-19)
+
+**Implementation Complete:**
+- All bucket/table routers updated to branch-first URLs
+- `branch_utils.py` provides shared utilities (`resolve_branch`, `require_default_branch`)
+- `source` field added to TableResponse
+- 438 tests passing with branch-first URLs
+- `branch_resources.py` removed (functionality merged into existing routers)
 
 ## Kontext
 
