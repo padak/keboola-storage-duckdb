@@ -43,7 +43,7 @@ def project_with_table(client):
 
     # Create bucket
     response = client.post(
-        "/projects/test-project/buckets",
+        "/projects/test-project/branches/default/buckets",
         json={"name": "in_c_test"},
         headers={"Authorization": f"Bearer {api_key}"},
     )
@@ -51,7 +51,7 @@ def project_with_table(client):
 
     # Create table
     response = client.post(
-        "/projects/test-project/buckets/in_c_test/tables",
+        "/projects/test-project/branches/default/buckets/in_c_test/tables",
         json={
             "name": "users",
             "columns": [
@@ -114,7 +114,7 @@ class TestImportFromFile:
 
         # Import file
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={
                 "file_id": file_id,
                 "format": "csv",
@@ -139,7 +139,7 @@ class TestImportFromFile:
         )
 
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id1, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -157,7 +157,7 @@ class TestImportFromFile:
         )
 
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={
                 "file_id": file_id2,
                 "format": "csv",
@@ -182,7 +182,7 @@ class TestImportFromFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id1, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -198,7 +198,7 @@ class TestImportFromFile:
         )
 
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={
                 "file_id": file_id2,
                 "format": "csv",
@@ -214,7 +214,7 @@ class TestImportFromFile:
 
         # Verify data was updated
         preview = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview.json()["rows"]
@@ -224,7 +224,7 @@ class TestImportFromFile:
     def test_import_file_not_found(self, client, project_with_table):
         """Test import with non-existent file."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": "nonexistent", "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -242,7 +242,7 @@ class TestImportFromFile:
         )
 
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/nonexistent/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/nonexistent/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -260,7 +260,7 @@ class TestImportFromFile:
         )
 
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "xlsx"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -283,14 +283,14 @@ class TestExportToFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
 
         # Export to CSV
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -312,14 +312,14 @@ class TestExportToFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
 
         # Export with filter
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv", "where_filter": "id = 1"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -338,14 +338,14 @@ class TestExportToFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
 
         # Export with limit
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv", "limit": 2},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -364,14 +364,14 @@ class TestExportToFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
 
         # Export only id and name columns
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv", "columns": ["id", "name"]},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -389,14 +389,14 @@ class TestExportToFile:
         )
 
         client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
 
         # Export to Parquet
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "parquet"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -406,7 +406,7 @@ class TestExportToFile:
     def test_export_table_not_found(self, client, project_with_table):
         """Test export from non-existent table."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/nonexistent/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/nonexistent/export",
             json={"format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -416,7 +416,7 @@ class TestExportToFile:
     def test_export_invalid_compression(self, client, project_with_table):
         """Test export with invalid compression."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv", "compression": "zstd"},  # zstd not valid for CSV
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -426,7 +426,7 @@ class TestExportToFile:
     def test_export_invalid_where_clause(self, client, project_with_table):
         """Test export with SQL injection in WHERE clause."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv", "where_filter": "1=1; DROP TABLE users;"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -440,7 +440,7 @@ class TestImportExportAuth:
     def test_import_requires_auth(self, client, project_with_table):
         """Test that import requires authentication."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": "some-id", "format": "csv"},
         )
         assert response.status_code == 401
@@ -448,7 +448,7 @@ class TestImportExportAuth:
     def test_export_requires_auth(self, client, project_with_table):
         """Test that export requires authentication."""
         response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv"},
         )
         assert response.status_code == 401
@@ -469,7 +469,7 @@ class TestImportExportE2E:
         )
 
         import_response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
@@ -478,7 +478,7 @@ class TestImportExportE2E:
 
         # Export
         export_response = client.post(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/export",
             json={"format": "csv"},
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )

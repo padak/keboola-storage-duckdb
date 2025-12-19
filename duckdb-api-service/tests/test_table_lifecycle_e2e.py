@@ -59,7 +59,7 @@ def _create_project(client: TestClient, project_id: str = "e2e_project") -> str:
 def _create_bucket(client: TestClient, project_id: str, bucket_name: str, api_key: str):
     """Helper to create a bucket."""
     response = client.post(
-        f"/projects/{project_id}/buckets",
+        f"/projects/{project_id}/branches/default/buckets",
         json={"name": bucket_name},
         headers={"Authorization": f"Bearer {api_key}"},
     )
@@ -103,7 +103,7 @@ class TestCompleteTableCRUDLifecycle:
 
         # 1. Create table with columns and primary key
         create_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/in_c_sales/tables",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables",
             json={
                 "name": "orders",
                 "columns": [
@@ -125,7 +125,7 @@ class TestCompleteTableCRUDLifecycle:
         file_id = _upload_csv_file(e2e_client, project_id, api_key, csv_content)
 
         import_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/import/file",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -135,7 +135,7 @@ class TestCompleteTableCRUDLifecycle:
 
         # 3. Query via preview
         preview_response = e2e_client.get(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/preview",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert preview_response.status_code == 200
@@ -150,7 +150,7 @@ class TestCompleteTableCRUDLifecycle:
 
         # 4. Update column - Add new column
         add_col_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/columns",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/columns",
             json={"name": "notes", "type": "VARCHAR", "nullable": True},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -159,7 +159,7 @@ class TestCompleteTableCRUDLifecycle:
 
         # 5. Alter column type
         alter_response = e2e_client.put(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/columns/amount",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/columns/amount",
             json={"new_type": "DECIMAL(10,2)"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -168,7 +168,7 @@ class TestCompleteTableCRUDLifecycle:
         # 6. Delete rows with WHERE
         delete_response = e2e_client.request(
             "DELETE",
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/rows",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/rows",
             json={"where_clause": "status = 'cancelled'"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -178,7 +178,7 @@ class TestCompleteTableCRUDLifecycle:
 
         # 7. Drop column
         drop_col_response = e2e_client.delete(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders/columns/notes",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders/columns/notes",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert drop_col_response.status_code == 200
@@ -186,14 +186,14 @@ class TestCompleteTableCRUDLifecycle:
 
         # 8. Drop table
         drop_table_response = e2e_client.delete(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert drop_table_response.status_code == 204
 
         # 9. Verify complete cleanup - table should not exist
         get_table_response = e2e_client.get(
-            f"/projects/{project_id}/buckets/in_c_sales/tables/orders",
+            f"/projects/{project_id}/branches/default/buckets/in_c_sales/tables/orders",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert get_table_response.status_code == 404
@@ -221,7 +221,7 @@ class TestTableWithAllDataTypes:
 
         # 1. Create table with all supported types
         create_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "all_types",
                 "columns": [
@@ -248,7 +248,7 @@ class TestTableWithAllDataTypes:
         file_id = _upload_csv_file(e2e_client, project_id, api_key, csv_content)
 
         import_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/all_types/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/all_types/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -257,7 +257,7 @@ class TestTableWithAllDataTypes:
 
         # 3. Query and verify correct handling
         preview_response = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/all_types/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/all_types/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert preview_response.status_code == 200
@@ -278,7 +278,7 @@ class TestTableWithAllDataTypes:
 
         # 4. Export and verify type preservation
         export_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/all_types/export",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/all_types/export",
             json={"format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -308,7 +308,7 @@ class TestPrimaryKeyOperations:
 
         # 1. Create table without PK
         e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "users",
                 "columns": [
@@ -324,7 +324,7 @@ class TestPrimaryKeyOperations:
         file_id = _upload_csv_file(e2e_client, project_id, api_key, csv_content)
 
         import_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -333,7 +333,7 @@ class TestPrimaryKeyOperations:
 
         # 3. Add primary key (should succeed now since no duplicates)
         add_pk_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/primary-key",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/primary-key",
             json={"columns": ["id"]},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -346,7 +346,7 @@ class TestPrimaryKeyOperations:
 
         # With incremental + update_duplicates, should upsert
         import_dup_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/import/file",
             json={
                 "file_id": file_id_dup,
                 "format": "csv",
@@ -361,7 +361,7 @@ class TestPrimaryKeyOperations:
 
         # Verify update happened
         preview = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         rows = preview.json()["rows"]
@@ -374,7 +374,7 @@ class TestPrimaryKeyOperations:
 
         # 5. Drop primary key
         drop_pk_response = e2e_client.delete(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/primary-key",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/primary-key",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert drop_pk_response.status_code == 200
@@ -385,7 +385,7 @@ class TestPrimaryKeyOperations:
         file_id_dup2 = _upload_csv_file(e2e_client, project_id, api_key, csv_dup2, "dup2.csv")
 
         import_dup2_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/import/file",
             json={
                 "file_id": file_id_dup2,
                 "format": "csv",
@@ -396,7 +396,7 @@ class TestPrimaryKeyOperations:
         assert import_dup2_response.status_code == 200
         # Should now have 4 rows (2 original + 2 duplicates)
         final_preview = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/users/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/users/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert len(final_preview.json()["rows"]) == 4
@@ -413,7 +413,7 @@ class TestTableProfilingWorkflow:
 
         # 1. Create table
         e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "analytics",
                 "columns": [
@@ -440,7 +440,7 @@ class TestTableProfilingWorkflow:
         file_id = _upload_csv_file(e2e_client, project_id, api_key, csv_content)
 
         import_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/analytics/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/analytics/import/file",
             json={"file_id": file_id, "format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -449,7 +449,7 @@ class TestTableProfilingWorkflow:
 
         # 3. Run profiling
         profile_response = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/analytics/profile",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/analytics/profile",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert profile_response.status_code == 200
@@ -492,7 +492,7 @@ class TestConcurrentTableOperations:
 
         # Create table
         e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "events",
                 "columns": [
@@ -519,7 +519,7 @@ class TestConcurrentTableOperations:
                 "X-Idempotency-Key": idempotency_key,
             }
             response = e2e_client.post(
-                f"/projects/{project_id}/buckets/test_bucket/tables/events/import/file",
+                f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/events/import/file",
                 json={
                     "file_id": file_id,
                     "format": "csv",
@@ -544,7 +544,7 @@ class TestConcurrentTableOperations:
 
         # Verify no data corruption - all rows should be present
         preview = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/events/preview?limit=100",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/events/preview?limit=100",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert preview.status_code == 200
@@ -569,7 +569,7 @@ class TestTableSchemaEvolution:
 
         # 1. Create table v1 with initial schema
         e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "products",
                 "columns": [
@@ -587,7 +587,7 @@ class TestTableSchemaEvolution:
         file_id_v1 = _upload_csv_file(e2e_client, project_id, api_key, csv_v1, "products_v1.csv")
 
         import_v1 = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/import/file",
             json={"file_id": file_id_v1, "format": "csv"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -596,14 +596,14 @@ class TestTableSchemaEvolution:
 
         # 3. Add columns (v2 schema evolution)
         add_col1 = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/columns",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/columns",
             json={"name": "category", "type": "VARCHAR", "nullable": True},
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert add_col1.status_code == 201
 
         add_col2 = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/columns",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/columns",
             json={"name": "in_stock", "type": "BOOLEAN", "nullable": True},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -614,7 +614,7 @@ class TestTableSchemaEvolution:
         file_id_v2 = _upload_csv_file(e2e_client, project_id, api_key, csv_v2, "products_v2.csv")
 
         import_v2 = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/import/file",
             json={
                 "file_id": file_id_v2,
                 "format": "csv",
@@ -627,7 +627,7 @@ class TestTableSchemaEvolution:
 
         # 5. Verify backward compatibility - old data should have NULLs for new columns
         preview = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert preview.status_code == 200
@@ -648,7 +648,7 @@ class TestTableSchemaEvolution:
 
         # 6. Alter column type (price: INTEGER -> DOUBLE)
         alter_response = e2e_client.put(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/columns/price",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/columns/price",
             json={"new_type": "DOUBLE"},
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -656,7 +656,7 @@ class TestTableSchemaEvolution:
 
         # 7. Verify data preservation after type change
         preview_after = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert preview_after.status_code == 200
@@ -673,7 +673,7 @@ class TestTableSchemaEvolution:
         file_id_v3 = _upload_csv_file(e2e_client, project_id, api_key, csv_v3, "products_v3.csv")
 
         import_v3 = e2e_client.post(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/import/file",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/import/file",
             json={
                 "file_id": file_id_v3,
                 "format": "csv",
@@ -685,7 +685,7 @@ class TestTableSchemaEvolution:
 
         # Verify decimal price
         final_preview = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products/preview",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products/preview",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         final_rows = final_preview.json()["rows"]
@@ -694,7 +694,7 @@ class TestTableSchemaEvolution:
 
         # 9. Verify table structure
         table_info = e2e_client.get(
-            f"/projects/{project_id}/buckets/test_bucket/tables/products",
+            f"/projects/{project_id}/branches/default/buckets/test_bucket/tables/products",
             headers={"Authorization": f"Bearer {api_key}"},
         )
         assert table_info.status_code == 200

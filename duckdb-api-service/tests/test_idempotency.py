@@ -254,9 +254,9 @@ class TestIdempotencyMiddleware:
             "X-Idempotency-Key": idempotency_key,
         }
 
-        # Second: POST to /projects/{id}/buckets with same key - should fail with 409
+        # Second: POST to /projects/{id}/branches/default/buckets with same key - should fail with 409
         response2 = client.post(
-            f"/projects/{project_id}/buckets",
+            f"/projects/{project_id}/branches/default/buckets",
             json={"name": "test_bucket"},
             headers=bucket_headers,
         )

@@ -5,17 +5,17 @@ from fastapi.testclient import TestClient
 
 
 class TestCreateTable:
-    """Tests for POST /projects/{project_id}/buckets/{bucket_name}/tables endpoint."""
+    """Tests for POST /projects/{project_id}/branches/default/buckets/{bucket_name}/tables endpoint."""
 
     def test_create_table_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful table creation."""
         # Setup project and bucket
         client.post("/projects", json={"id": "table_test_1", "name": "Test Project"}, headers=admin_headers)
-        client.post("/projects/table_test_1/buckets", json={"name": "in_c_sales"}, headers=admin_headers)
+        client.post("/projects/table_test_1/branches/default/buckets", json={"name": "in_c_sales"}, headers=admin_headers)
 
         # Create table
         response = client.post(
-            "/projects/table_test_1/buckets/in_c_sales/tables",
+            "/projects/table_test_1/branches/default/buckets/in_c_sales/tables",
             json={
                 "name": "orders",
                 "columns": [
@@ -41,10 +41,10 @@ class TestCreateTable:
     ):
         """Test creating table with primary key."""
         client.post("/projects", json={"id": "table_test_2"}, headers=admin_headers)
-        client.post("/projects/table_test_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/table_test_2/buckets/test_bucket/tables",
+            "/projects/table_test_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "users",
                 "columns": [
@@ -68,10 +68,10 @@ class TestCreateTable:
     ):
         """Test creating table with composite primary key."""
         client.post("/projects", json={"id": "table_test_3"}, headers=admin_headers)
-        client.post("/projects/table_test_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/table_test_3/buckets/test_bucket/tables",
+            "/projects/table_test_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "order_items",
                 "columns": [
@@ -96,10 +96,10 @@ class TestCreateTable:
     ):
         """Test creating table with default column values."""
         client.post("/projects", json={"id": "table_test_4"}, headers=admin_headers)
-        client.post("/projects/table_test_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/table_test_4/buckets/test_bucket/tables",
+            "/projects/table_test_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "products",
                 "columns": [
@@ -122,7 +122,7 @@ class TestCreateTable:
     ):
         """Test that creating a table updates project statistics."""
         client.post("/projects", json={"id": "table_test_5"}, headers=admin_headers)
-        client.post("/projects/table_test_5/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_5/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         # Check initial stats
         stats_before = client.get("/projects/table_test_5/stats", headers=admin_headers).json()
@@ -130,7 +130,7 @@ class TestCreateTable:
 
         # Create table
         client.post(
-            "/projects/table_test_5/buckets/test_bucket/tables",
+            "/projects/table_test_5/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -147,17 +147,17 @@ class TestCreateTable:
     ):
         """Test that creating a table updates bucket table count."""
         client.post("/projects", json={"id": "table_test_6"}, headers=admin_headers)
-        client.post("/projects/table_test_6/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_6/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         # Check initial bucket
         bucket_before = client.get(
-            "/projects/table_test_6/buckets/test_bucket", headers=admin_headers
+            "/projects/table_test_6/branches/default/buckets/test_bucket", headers=admin_headers
         ).json()
         assert bucket_before["table_count"] == 0
 
         # Create table
         client.post(
-            "/projects/table_test_6/buckets/test_bucket/tables",
+            "/projects/table_test_6/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -166,7 +166,7 @@ class TestCreateTable:
         )
 
         # Check updated bucket
-        bucket_after = client.get("/projects/table_test_6/buckets/test_bucket", headers=admin_headers).json()
+        bucket_after = client.get("/projects/table_test_6/branches/default/buckets/test_bucket", headers=admin_headers).json()
         assert bucket_after["table_count"] == 1
 
     def test_create_table_project_not_found(
@@ -174,7 +174,7 @@ class TestCreateTable:
     ):
         """Test creating table in non-existent project returns 404."""
         response = client.post(
-            "/projects/nonexistent/buckets/any/tables",
+            "/projects/nonexistent/branches/default/buckets/any/tables",
             json={
                 "name": "test",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -192,7 +192,7 @@ class TestCreateTable:
         client.post("/projects", json={"id": "table_test_7"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/table_test_7/buckets/nonexistent/tables",
+            "/projects/table_test_7/branches/default/buckets/nonexistent/tables",
             json={
                 "name": "test",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -206,9 +206,9 @@ class TestCreateTable:
     def test_create_table_conflict(self, client: TestClient, initialized_backend, admin_headers):
         """Test creating duplicate table returns 409."""
         client.post("/projects", json={"id": "table_test_8"}, headers=admin_headers)
-        client.post("/projects/table_test_8/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_8/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/table_test_8/buckets/test_bucket/tables",
+            "/projects/table_test_8/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "duplicate",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -218,7 +218,7 @@ class TestCreateTable:
 
         # Try to create again
         response = client.post(
-            "/projects/table_test_8/buckets/test_bucket/tables",
+            "/projects/table_test_8/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "duplicate",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -234,10 +234,10 @@ class TestCreateTable:
     ):
         """Test creating table with invalid primary key column returns 400."""
         client.post("/projects", json={"id": "table_test_9"}, headers=admin_headers)
-        client.post("/projects/table_test_9/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/table_test_9/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/table_test_9/buckets/test_bucket/tables",
+            "/projects/table_test_9/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -251,14 +251,14 @@ class TestCreateTable:
 
 
 class TestGetTable:
-    """Tests for GET /projects/{project_id}/buckets/{bucket_name}/tables/{table_name} endpoint."""
+    """Tests for GET /projects/{project_id}/branches/default/buckets/{bucket_name}/tables/{table_name} endpoint."""
 
     def test_get_table_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test getting an existing table."""
         client.post("/projects", json={"id": "get_table_1"}, headers=admin_headers)
-        client.post("/projects/get_table_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/get_table_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/get_table_1/buckets/test_bucket/tables",
+            "/projects/get_table_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "my_table",
                 "columns": [
@@ -271,7 +271,7 @@ class TestGetTable:
         )
 
         response = client.get(
-            "/projects/get_table_1/buckets/test_bucket/tables/my_table", headers=admin_headers
+            "/projects/get_table_1/branches/default/buckets/test_bucket/tables/my_table", headers=admin_headers
         )
 
         assert response.status_code == 200
@@ -285,9 +285,9 @@ class TestGetTable:
     def test_get_table_column_details(self, client: TestClient, initialized_backend, admin_headers):
         """Test that column details are correct."""
         client.post("/projects", json={"id": "get_table_2"}, headers=admin_headers)
-        client.post("/projects/get_table_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/get_table_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/get_table_2/buckets/test_bucket/tables",
+            "/projects/get_table_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "detailed_table",
                 "columns": [
@@ -299,7 +299,7 @@ class TestGetTable:
         )
 
         response = client.get(
-            "/projects/get_table_2/buckets/test_bucket/tables/detailed_table", headers=admin_headers
+            "/projects/get_table_2/branches/default/buckets/test_bucket/tables/detailed_table", headers=admin_headers
         )
 
         assert response.status_code == 200
@@ -317,10 +317,10 @@ class TestGetTable:
     def test_get_table_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test getting non-existent table returns 404."""
         client.post("/projects", json={"id": "get_table_3"}, headers=admin_headers)
-        client.post("/projects/get_table_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/get_table_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.get(
-            "/projects/get_table_3/buckets/test_bucket/tables/nonexistent", headers=admin_headers
+            "/projects/get_table_3/branches/default/buckets/test_bucket/tables/nonexistent", headers=admin_headers
         )
 
         assert response.status_code == 404
@@ -331,7 +331,7 @@ class TestGetTable:
         client.post("/projects", json={"id": "get_table_4"}, headers=admin_headers)
 
         response = client.get(
-            "/projects/get_table_4/buckets/nonexistent/tables/any", headers=admin_headers
+            "/projects/get_table_4/branches/default/buckets/nonexistent/tables/any", headers=admin_headers
         )
 
         assert response.status_code == 404
@@ -341,21 +341,21 @@ class TestGetTable:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test getting table from non-existent project returns 404."""
-        response = client.get("/projects/nonexistent/buckets/any/tables/any", headers=admin_headers)
+        response = client.get("/projects/nonexistent/branches/default/buckets/any/tables/any", headers=admin_headers)
 
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "project_not_found"
 
 
 class TestListTables:
-    """Tests for GET /projects/{project_id}/buckets/{bucket_name}/tables endpoint."""
+    """Tests for GET /projects/{project_id}/branches/default/buckets/{bucket_name}/tables endpoint."""
 
     def test_list_tables_empty(self, client: TestClient, initialized_backend, admin_headers):
         """Test listing when no tables exist."""
         client.post("/projects", json={"id": "list_table_1"}, headers=admin_headers)
-        client.post("/projects/list_table_1/buckets", json={"name": "empty_bucket"}, headers=admin_headers)
+        client.post("/projects/list_table_1/branches/default/buckets", json={"name": "empty_bucket"}, headers=admin_headers)
 
-        response = client.get("/projects/list_table_1/buckets/empty_bucket/tables", headers=admin_headers)
+        response = client.get("/projects/list_table_1/branches/default/buckets/empty_bucket/tables", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -365,12 +365,12 @@ class TestListTables:
     def test_list_tables_multiple(self, client: TestClient, initialized_backend, admin_headers):
         """Test listing multiple tables."""
         client.post("/projects", json={"id": "list_table_2"}, headers=admin_headers)
-        client.post("/projects/list_table_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/list_table_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         # Create multiple tables
         for name in ["table_a", "table_b", "table_c"]:
             client.post(
-                "/projects/list_table_2/buckets/test_bucket/tables",
+                "/projects/list_table_2/branches/default/buckets/test_bucket/tables",
                 json={
                     "name": name,
                     "columns": [{"name": "id", "type": "INTEGER"}],
@@ -378,7 +378,7 @@ class TestListTables:
                 headers=admin_headers,
             )
 
-        response = client.get("/projects/list_table_2/buckets/test_bucket/tables", headers=admin_headers)
+        response = client.get("/projects/list_table_2/branches/default/buckets/test_bucket/tables", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -395,20 +395,20 @@ class TestListTables:
         """Test listing tables from non-existent bucket returns 404."""
         client.post("/projects", json={"id": "list_table_3"}, headers=admin_headers)
 
-        response = client.get("/projects/list_table_3/buckets/nonexistent/tables", headers=admin_headers)
+        response = client.get("/projects/list_table_3/branches/default/buckets/nonexistent/tables", headers=admin_headers)
 
         assert response.status_code == 404
 
 
 class TestDeleteTable:
-    """Tests for DELETE /projects/{project_id}/buckets/{bucket_name}/tables/{table_name} endpoint."""
+    """Tests for DELETE /projects/{project_id}/branches/default/buckets/{bucket_name}/tables/{table_name} endpoint."""
 
     def test_delete_table_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test deleting a table."""
         client.post("/projects", json={"id": "delete_table_1"}, headers=admin_headers)
-        client.post("/projects/delete_table_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/delete_table_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/delete_table_1/buckets/test_bucket/tables",
+            "/projects/delete_table_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "to_delete",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -419,21 +419,21 @@ class TestDeleteTable:
         # Verify exists
         assert (
             client.get(
-                "/projects/delete_table_1/buckets/test_bucket/tables/to_delete", headers=admin_headers
+                "/projects/delete_table_1/branches/default/buckets/test_bucket/tables/to_delete", headers=admin_headers
             ).status_code
             == 200
         )
 
         # Delete
         response = client.delete(
-            "/projects/delete_table_1/buckets/test_bucket/tables/to_delete", headers=admin_headers
+            "/projects/delete_table_1/branches/default/buckets/test_bucket/tables/to_delete", headers=admin_headers
         )
         assert response.status_code == 204
 
         # Verify deleted
         assert (
             client.get(
-                "/projects/delete_table_1/buckets/test_bucket/tables/to_delete", headers=admin_headers
+                "/projects/delete_table_1/branches/default/buckets/test_bucket/tables/to_delete", headers=admin_headers
             ).status_code
             == 404
         )
@@ -443,9 +443,9 @@ class TestDeleteTable:
     ):
         """Test that deleting a table updates project statistics."""
         client.post("/projects", json={"id": "delete_table_2"}, headers=admin_headers)
-        client.post("/projects/delete_table_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/delete_table_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/delete_table_2/buckets/test_bucket/tables",
+            "/projects/delete_table_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "temp_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -458,7 +458,7 @@ class TestDeleteTable:
         assert stats["table_count"] == 1
 
         # Delete
-        client.delete("/projects/delete_table_2/buckets/test_bucket/tables/temp_table", headers=admin_headers)
+        client.delete("/projects/delete_table_2/branches/default/buckets/test_bucket/tables/temp_table", headers=admin_headers)
 
         # Check stats after
         stats = client.get("/projects/delete_table_2/stats", headers=admin_headers).json()
@@ -467,10 +467,10 @@ class TestDeleteTable:
     def test_delete_table_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test deleting non-existent table returns 404."""
         client.post("/projects", json={"id": "delete_table_3"}, headers=admin_headers)
-        client.post("/projects/delete_table_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/delete_table_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.delete(
-            "/projects/delete_table_3/buckets/test_bucket/tables/nonexistent", headers=admin_headers
+            "/projects/delete_table_3/branches/default/buckets/test_bucket/tables/nonexistent", headers=admin_headers
         )
 
         assert response.status_code == 404
@@ -478,14 +478,14 @@ class TestDeleteTable:
 
 
 class TestPreviewTable:
-    """Tests for GET /projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/preview endpoint."""
+    """Tests for GET /projects/{project_id}/branches/default/buckets/{bucket_name}/tables/{table_name}/preview endpoint."""
 
     def test_preview_empty_table(self, client: TestClient, initialized_backend, admin_headers):
         """Test previewing an empty table."""
         client.post("/projects", json={"id": "preview_table_1"}, headers=admin_headers)
-        client.post("/projects/preview_table_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/preview_table_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/preview_table_1/buckets/test_bucket/tables",
+            "/projects/preview_table_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "empty_table",
                 "columns": [
@@ -497,7 +497,7 @@ class TestPreviewTable:
         )
 
         response = client.get(
-            "/projects/preview_table_1/buckets/test_bucket/tables/empty_table/preview", headers=admin_headers
+            "/projects/preview_table_1/branches/default/buckets/test_bucket/tables/empty_table/preview", headers=admin_headers
         )
 
         assert response.status_code == 200
@@ -513,9 +513,9 @@ class TestPreviewTable:
 
         # Setup
         client.post("/projects", json={"id": "preview_table_2"}, headers=admin_headers)
-        client.post("/projects/preview_table_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/preview_table_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/preview_table_2/buckets/test_bucket/tables",
+            "/projects/preview_table_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "data_table",
                 "columns": [
@@ -536,7 +536,7 @@ class TestPreviewTable:
             conn.commit()
 
         response = client.get(
-            "/projects/preview_table_2/buckets/test_bucket/tables/data_table/preview", headers=admin_headers
+            "/projects/preview_table_2/branches/default/buckets/test_bucket/tables/data_table/preview", headers=admin_headers
         )
 
         assert response.status_code == 200
@@ -555,9 +555,9 @@ class TestPreviewTable:
         from src.database import project_db_manager
 
         client.post("/projects", json={"id": "preview_table_3"}, headers=admin_headers)
-        client.post("/projects/preview_table_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/preview_table_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/preview_table_3/buckets/test_bucket/tables",
+            "/projects/preview_table_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "big_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -575,7 +575,7 @@ class TestPreviewTable:
 
         # Preview with limit=10
         response = client.get(
-            "/projects/preview_table_3/buckets/test_bucket/tables/big_table/preview?limit=10", headers=admin_headers
+            "/projects/preview_table_3/branches/default/buckets/test_bucket/tables/big_table/preview?limit=10", headers=admin_headers
         )
 
         assert response.status_code == 200
@@ -587,10 +587,10 @@ class TestPreviewTable:
     def test_preview_table_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test previewing non-existent table returns 404."""
         client.post("/projects", json={"id": "preview_table_4"}, headers=admin_headers)
-        client.post("/projects/preview_table_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/preview_table_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.get(
-            "/projects/preview_table_4/buckets/test_bucket/tables/nonexistent/preview", headers=admin_headers
+            "/projects/preview_table_4/branches/default/buckets/test_bucket/tables/nonexistent/preview", headers=admin_headers
         )
 
         assert response.status_code == 404
@@ -599,9 +599,9 @@ class TestPreviewTable:
     def test_preview_limit_validation(self, client: TestClient, initialized_backend, admin_headers):
         """Test preview limit validation."""
         client.post("/projects", json={"id": "preview_table_5"}, headers=admin_headers)
-        client.post("/projects/preview_table_5/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/preview_table_5/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/preview_table_5/buckets/test_bucket/tables",
+            "/projects/preview_table_5/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -611,13 +611,13 @@ class TestPreviewTable:
 
         # Test limit too high
         response = client.get(
-            "/projects/preview_table_5/buckets/test_bucket/tables/test_table/preview?limit=50000", headers=admin_headers
+            "/projects/preview_table_5/branches/default/buckets/test_bucket/tables/test_table/preview?limit=50000", headers=admin_headers
         )
         assert response.status_code == 422  # Validation error
 
         # Test limit too low
         response = client.get(
-            "/projects/preview_table_5/buckets/test_bucket/tables/test_table/preview?limit=0", headers=admin_headers
+            "/projects/preview_table_5/branches/default/buckets/test_bucket/tables/test_table/preview?limit=0", headers=admin_headers
         )
         assert response.status_code == 422
 
@@ -632,9 +632,9 @@ class TestTableOperationsLog:
         from src.database import metadata_db
 
         client.post("/projects", json={"id": "log_test_1"}, headers=admin_headers)
-        client.post("/projects/log_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/log_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/log_test_1/buckets/test_bucket/tables",
+            "/projects/log_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "logged_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -658,16 +658,16 @@ class TestTableOperationsLog:
         from src.database import metadata_db
 
         client.post("/projects", json={"id": "log_test_2"}, headers=admin_headers)
-        client.post("/projects/log_test_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/log_test_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/log_test_2/buckets/test_bucket/tables",
+            "/projects/log_test_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "to_delete",
                 "columns": [{"name": "id", "type": "INTEGER"}],
             },
             headers=admin_headers,
         )
-        client.delete("/projects/log_test_2/buckets/test_bucket/tables/to_delete", headers=admin_headers)
+        client.delete("/projects/log_test_2/branches/default/buckets/test_bucket/tables/to_delete", headers=admin_headers)
 
         # Check operations log
         logs = metadata_db.execute(
@@ -686,10 +686,10 @@ class TestTableDataTypes:
     def test_all_common_data_types(self, client: TestClient, initialized_backend, admin_headers):
         """Test creating table with all common data types."""
         client.post("/projects", json={"id": "dtype_test_1"}, headers=admin_headers)
-        client.post("/projects/dtype_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/dtype_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/dtype_test_1/buckets/test_bucket/tables",
+            "/projects/dtype_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "all_types",
                 "columns": [
@@ -728,11 +728,11 @@ class TestTableFilesystemADR009:
     def test_table_creates_duckdb_file(self, client: TestClient, initialized_backend, admin_headers):
         """Test that creating a table creates a .duckdb file in bucket directory."""
         client.post("/projects", json={"id": "fs_table_1"}, headers=admin_headers)
-        client.post("/projects/fs_table_1/buckets", json={"name": "in_c_sales"}, headers=admin_headers)
+        client.post("/projects/fs_table_1/branches/default/buckets", json={"name": "in_c_sales"}, headers=admin_headers)
 
         # Create table
         response = client.post(
-            "/projects/fs_table_1/buckets/in_c_sales/tables",
+            "/projects/fs_table_1/branches/default/buckets/in_c_sales/tables",
             json={
                 "name": "orders",
                 "columns": [
@@ -754,9 +754,9 @@ class TestTableFilesystemADR009:
     def test_table_delete_removes_file(self, client: TestClient, initialized_backend, admin_headers):
         """Test that deleting a table removes its .duckdb file."""
         client.post("/projects", json={"id": "fs_table_2"}, headers=admin_headers)
-        client.post("/projects/fs_table_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/fs_table_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/fs_table_2/buckets/test_bucket/tables",
+            "/projects/fs_table_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "to_delete",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -772,7 +772,7 @@ class TestTableFilesystemADR009:
 
         # Delete table
         response = client.delete(
-            "/projects/fs_table_2/buckets/test_bucket/tables/to_delete", headers=admin_headers
+            "/projects/fs_table_2/branches/default/buckets/test_bucket/tables/to_delete", headers=admin_headers
         )
         assert response.status_code == 204
 
@@ -786,12 +786,12 @@ class TestTableFilesystemADR009:
     ):
         """Test that multiple tables create separate .duckdb files."""
         client.post("/projects", json={"id": "fs_table_3"}, headers=admin_headers)
-        client.post("/projects/fs_table_3/buckets", json={"name": "in_c_data"}, headers=admin_headers)
+        client.post("/projects/fs_table_3/branches/default/buckets", json={"name": "in_c_data"}, headers=admin_headers)
 
         # Create multiple tables
         for table_name in ["orders", "customers", "products"]:
             response = client.post(
-                "/projects/fs_table_3/buckets/in_c_data/tables",
+                "/projects/fs_table_3/branches/default/buckets/in_c_data/tables",
                 json={
                     "name": table_name,
                     "columns": [{"name": "id", "type": "INTEGER"}],
@@ -819,9 +819,9 @@ class TestTableFilesystemADR009:
         import duckdb
 
         client.post("/projects", json={"id": "fs_table_4"}, headers=admin_headers)
-        client.post("/projects/fs_table_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/fs_table_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/fs_table_4/buckets/test_bucket/tables",
+            "/projects/fs_table_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "schema_test",
                 "columns": [
@@ -864,12 +864,12 @@ class TestTableFilesystemADR009:
     ):
         """Test that deleting bucket removes all table files."""
         client.post("/projects", json={"id": "fs_table_5"}, headers=admin_headers)
-        client.post("/projects/fs_table_5/buckets", json={"name": "cascade_bucket"}, headers=admin_headers)
+        client.post("/projects/fs_table_5/branches/default/buckets", json={"name": "cascade_bucket"}, headers=admin_headers)
 
         # Create multiple tables
         for table_name in ["table_a", "table_b"]:
             client.post(
-                "/projects/fs_table_5/buckets/cascade_bucket/tables",
+                "/projects/fs_table_5/branches/default/buckets/cascade_bucket/tables",
                 json={
                     "name": table_name,
                     "columns": [{"name": "id", "type": "INTEGER"}],
@@ -885,7 +885,7 @@ class TestTableFilesystemADR009:
         assert (bucket_dir / "table_b.duckdb").is_file()
 
         # Delete bucket (cascade)
-        response = client.delete("/projects/fs_table_5/buckets/cascade_bucket", headers=admin_headers)
+        response = client.delete("/projects/fs_table_5/branches/default/buckets/cascade_bucket", headers=admin_headers)
         assert response.status_code == 204
 
         # ADR-009: Verify entire bucket directory is removed

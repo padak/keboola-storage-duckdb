@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 
 class TestCreateBucket:
-    """Tests for POST /projects/{project_id}/buckets endpoint."""
+    """Tests for POST /projects/{project_id}/branches/default/buckets endpoint."""
 
     def test_create_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful bucket creation."""
@@ -14,7 +14,7 @@ class TestCreateBucket:
 
         # Create bucket
         response = client.post(
-            "/projects/bucket_test_1/buckets",
+            "/projects/bucket_test_1/branches/default/buckets",
             json={"name": "in_c_sales", "description": "Sales data bucket"},
             headers=admin_headers,
         )
@@ -30,7 +30,7 @@ class TestCreateBucket:
         client.post("/projects", json={"id": "bucket_test_2"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/bucket_test_2/buckets",
+            "/projects/bucket_test_2/branches/default/buckets",
             json={"name": "out_c_reports"},
             headers=admin_headers,
         )
@@ -52,7 +52,7 @@ class TestCreateBucket:
 
         # Create bucket
         client.post(
-            "/projects/bucket_test_3/buckets",
+            "/projects/bucket_test_3/branches/default/buckets",
             json={"name": "test_bucket"},
             headers=admin_headers,
         )
@@ -66,7 +66,7 @@ class TestCreateBucket:
     ):
         """Test creating bucket in non-existent project returns 404."""
         response = client.post(
-            "/projects/nonexistent/buckets",
+            "/projects/nonexistent/branches/default/buckets",
             json={"name": "test_bucket"},
             headers=admin_headers,
         )
@@ -78,14 +78,14 @@ class TestCreateBucket:
         """Test creating duplicate bucket returns 409."""
         client.post("/projects", json={"id": "bucket_test_4"}, headers=admin_headers)
         client.post(
-            "/projects/bucket_test_4/buckets",
+            "/projects/bucket_test_4/branches/default/buckets",
             json={"name": "duplicate"},
             headers=admin_headers,
         )
 
         # Try to create again
         response = client.post(
-            "/projects/bucket_test_4/buckets",
+            "/projects/bucket_test_4/branches/default/buckets",
             json={"name": "duplicate"},
             headers=admin_headers,
         )
@@ -95,18 +95,18 @@ class TestCreateBucket:
 
 
 class TestGetBucket:
-    """Tests for GET /projects/{project_id}/buckets/{bucket_name} endpoint."""
+    """Tests for GET /projects/{project_id}/branches/default/buckets/{bucket_name} endpoint."""
 
     def test_get_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test getting an existing bucket."""
         client.post("/projects", json={"id": "get_bucket_1"}, headers=admin_headers)
         client.post(
-            "/projects/get_bucket_1/buckets",
+            "/projects/get_bucket_1/branches/default/buckets",
             json={"name": "my_bucket", "description": "Test bucket"},
             headers=admin_headers,
         )
 
-        response = client.get("/projects/get_bucket_1/buckets/my_bucket", headers=admin_headers)
+        response = client.get("/projects/get_bucket_1/branches/default/buckets/my_bucket", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -117,7 +117,7 @@ class TestGetBucket:
         """Test getting non-existent bucket returns 404."""
         client.post("/projects", json={"id": "get_bucket_2"}, headers=admin_headers)
 
-        response = client.get("/projects/get_bucket_2/buckets/nonexistent", headers=admin_headers)
+        response = client.get("/projects/get_bucket_2/branches/default/buckets/nonexistent", headers=admin_headers)
 
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "bucket_not_found"
@@ -126,20 +126,20 @@ class TestGetBucket:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test getting bucket from non-existent project returns 404."""
-        response = client.get("/projects/nonexistent/buckets/any", headers=admin_headers)
+        response = client.get("/projects/nonexistent/branches/default/buckets/any", headers=admin_headers)
 
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "project_not_found"
 
 
 class TestListBuckets:
-    """Tests for GET /projects/{project_id}/buckets endpoint."""
+    """Tests for GET /projects/{project_id}/branches/default/buckets endpoint."""
 
     def test_list_buckets_empty(self, client: TestClient, initialized_backend, admin_headers):
         """Test listing when no buckets exist."""
         client.post("/projects", json={"id": "list_bucket_1"}, headers=admin_headers)
 
-        response = client.get("/projects/list_bucket_1/buckets", headers=admin_headers)
+        response = client.get("/projects/list_bucket_1/branches/default/buckets", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -149,11 +149,11 @@ class TestListBuckets:
     def test_list_buckets_multiple(self, client: TestClient, initialized_backend, admin_headers):
         """Test listing multiple buckets."""
         client.post("/projects", json={"id": "list_bucket_2"}, headers=admin_headers)
-        client.post("/projects/list_bucket_2/buckets", json={"name": "bucket_a"}, headers=admin_headers)
-        client.post("/projects/list_bucket_2/buckets", json={"name": "bucket_b"}, headers=admin_headers)
-        client.post("/projects/list_bucket_2/buckets", json={"name": "bucket_c"}, headers=admin_headers)
+        client.post("/projects/list_bucket_2/branches/default/buckets", json={"name": "bucket_a"}, headers=admin_headers)
+        client.post("/projects/list_bucket_2/branches/default/buckets", json={"name": "bucket_b"}, headers=admin_headers)
+        client.post("/projects/list_bucket_2/branches/default/buckets", json={"name": "bucket_c"}, headers=admin_headers)
 
-        response = client.get("/projects/list_bucket_2/buckets", headers=admin_headers)
+        response = client.get("/projects/list_bucket_2/branches/default/buckets", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -168,31 +168,31 @@ class TestListBuckets:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test listing buckets from non-existent project returns 404."""
-        response = client.get("/projects/nonexistent/buckets", headers=admin_headers)
+        response = client.get("/projects/nonexistent/branches/default/buckets", headers=admin_headers)
 
         assert response.status_code == 404
 
 
 class TestDeleteBucket:
-    """Tests for DELETE /projects/{project_id}/buckets/{bucket_name} endpoint."""
+    """Tests for DELETE /projects/{project_id}/branches/default/buckets/{bucket_name} endpoint."""
 
     def test_delete_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test deleting a bucket."""
         client.post("/projects", json={"id": "delete_bucket_1"}, headers=admin_headers)
-        client.post("/projects/delete_bucket_1/buckets", json={"name": "to_delete"}, headers=admin_headers)
+        client.post("/projects/delete_bucket_1/branches/default/buckets", json={"name": "to_delete"}, headers=admin_headers)
 
         # Verify exists
         assert (
-            client.get("/projects/delete_bucket_1/buckets/to_delete", headers=admin_headers).status_code == 200
+            client.get("/projects/delete_bucket_1/branches/default/buckets/to_delete", headers=admin_headers).status_code == 200
         )
 
         # Delete
-        response = client.delete("/projects/delete_bucket_1/buckets/to_delete", headers=admin_headers)
+        response = client.delete("/projects/delete_bucket_1/branches/default/buckets/to_delete", headers=admin_headers)
         assert response.status_code == 204
 
         # Verify deleted
         assert (
-            client.get("/projects/delete_bucket_1/buckets/to_delete", headers=admin_headers).status_code == 404
+            client.get("/projects/delete_bucket_1/branches/default/buckets/to_delete", headers=admin_headers).status_code == 404
         )
 
     def test_delete_bucket_updates_stats(
@@ -200,14 +200,14 @@ class TestDeleteBucket:
     ):
         """Test that deleting a bucket updates project statistics."""
         client.post("/projects", json={"id": "delete_bucket_2"}, headers=admin_headers)
-        client.post("/projects/delete_bucket_2/buckets", json={"name": "temp_bucket"}, headers=admin_headers)
+        client.post("/projects/delete_bucket_2/branches/default/buckets", json={"name": "temp_bucket"}, headers=admin_headers)
 
         # Check stats before
         stats = client.get("/projects/delete_bucket_2/stats", headers=admin_headers).json()
         assert stats["bucket_count"] == 1
 
         # Delete
-        client.delete("/projects/delete_bucket_2/buckets/temp_bucket", headers=admin_headers)
+        client.delete("/projects/delete_bucket_2/branches/default/buckets/temp_bucket", headers=admin_headers)
 
         # Check stats after
         stats = client.get("/projects/delete_bucket_2/stats", headers=admin_headers).json()
@@ -217,7 +217,7 @@ class TestDeleteBucket:
         """Test deleting non-existent bucket returns 404."""
         client.post("/projects", json={"id": "delete_bucket_3"}, headers=admin_headers)
 
-        response = client.delete("/projects/delete_bucket_3/buckets/nonexistent", headers=admin_headers)
+        response = client.delete("/projects/delete_bucket_3/branches/default/buckets/nonexistent", headers=admin_headers)
 
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "bucket_not_found"
@@ -225,11 +225,11 @@ class TestDeleteBucket:
     def test_delete_bucket_cascade(self, client: TestClient, initialized_backend, admin_headers):
         """Test delete with cascade=True (default)."""
         client.post("/projects", json={"id": "delete_bucket_4"}, headers=admin_headers)
-        client.post("/projects/delete_bucket_4/buckets", json={"name": "cascade_test"}, headers=admin_headers)
+        client.post("/projects/delete_bucket_4/branches/default/buckets", json={"name": "cascade_test"}, headers=admin_headers)
 
         # Delete with explicit cascade
         response = client.delete(
-            "/projects/delete_bucket_4/buckets/cascade_test?cascade=true",
+            "/projects/delete_bucket_4/branches/default/buckets/cascade_test?cascade=true",
             headers=admin_headers,
         )
         assert response.status_code == 204
@@ -245,7 +245,7 @@ class TestBucketOperationsLog:
         from src.database import metadata_db
 
         client.post("/projects", json={"id": "log_test_1"}, headers=admin_headers)
-        client.post("/projects/log_test_1/buckets", json={"name": "logged_bucket"}, headers=admin_headers)
+        client.post("/projects/log_test_1/branches/default/buckets", json={"name": "logged_bucket"}, headers=admin_headers)
 
         # Check operations log
         logs = metadata_db.execute(
@@ -263,8 +263,8 @@ class TestBucketOperationsLog:
         from src.database import metadata_db
 
         client.post("/projects", json={"id": "log_test_2"}, headers=admin_headers)
-        client.post("/projects/log_test_2/buckets", json={"name": "to_delete"}, headers=admin_headers)
-        client.delete("/projects/log_test_2/buckets/to_delete", headers=admin_headers)
+        client.post("/projects/log_test_2/branches/default/buckets", json={"name": "to_delete"}, headers=admin_headers)
+        client.delete("/projects/log_test_2/branches/default/buckets/to_delete", headers=admin_headers)
 
         # Check operations log
         logs = metadata_db.execute(
@@ -290,7 +290,7 @@ class TestBucketFilesystemADR009:
 
         # Create bucket
         response = client.post(
-            "/projects/fs_bucket_1/buckets",
+            "/projects/fs_bucket_1/branches/default/buckets",
             json={"name": "in_c_sales"},
             headers=admin_headers,
         )
@@ -306,7 +306,7 @@ class TestBucketFilesystemADR009:
     ):
         """Test that deleting a bucket removes its directory."""
         client.post("/projects", json={"id": "fs_bucket_2"}, headers=admin_headers)
-        client.post("/projects/fs_bucket_2/buckets", json={"name": "to_delete"}, headers=admin_headers)
+        client.post("/projects/fs_bucket_2/branches/default/buckets", json={"name": "to_delete"}, headers=admin_headers)
 
         # Verify bucket directory exists before delete
         project_dir = initialized_backend["duckdb_dir"] / "project_fs_bucket_2"
@@ -314,7 +314,7 @@ class TestBucketFilesystemADR009:
         assert bucket_dir.is_dir(), "Bucket directory should exist before delete"
 
         # Delete bucket
-        response = client.delete("/projects/fs_bucket_2/buckets/to_delete", headers=admin_headers)
+        response = client.delete("/projects/fs_bucket_2/branches/default/buckets/to_delete", headers=admin_headers)
         assert response.status_code == 204
 
         # ADR-009: Verify bucket directory is removed
@@ -329,7 +329,7 @@ class TestBucketFilesystemADR009:
         # Create multiple buckets
         for bucket_name in ["in_c_sales", "out_c_reports", "in_c_customers"]:
             response = client.post(
-                "/projects/fs_bucket_3/buckets",
+                "/projects/fs_bucket_3/branches/default/buckets",
                 json={"name": bucket_name},
                 headers=admin_headers,
             )

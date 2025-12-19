@@ -5,15 +5,15 @@ from fastapi.testclient import TestClient
 
 
 class TestAddColumn:
-    """Tests for POST /projects/{id}/buckets/{bucket}/tables/{table}/columns endpoint."""
+    """Tests for POST /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/columns endpoint."""
 
     def test_add_column_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful column addition."""
         # Setup
         client.post("/projects", json={"id": "schema_test_1"}, headers=admin_headers)
-        client.post("/projects/schema_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/schema_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/schema_test_1/buckets/test_bucket/tables",
+            "/projects/schema_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -26,7 +26,7 @@ class TestAddColumn:
 
         # Add column
         response = client.post(
-            "/projects/schema_test_1/buckets/test_bucket/tables/test_table/columns",
+            "/projects/schema_test_1/branches/default/buckets/test_bucket/tables/test_table/columns",
             json={"name": "email", "type": "VARCHAR", "nullable": True},
             headers=admin_headers,
         )
@@ -40,9 +40,9 @@ class TestAddColumn:
     def test_add_column_with_default(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding column with default value."""
         client.post("/projects", json={"id": "schema_test_2"}, headers=admin_headers)
-        client.post("/projects/schema_test_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/schema_test_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/schema_test_2/buckets/test_bucket/tables",
+            "/projects/schema_test_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -51,7 +51,7 @@ class TestAddColumn:
         )
 
         response = client.post(
-            "/projects/schema_test_2/buckets/test_bucket/tables/test_table/columns",
+            "/projects/schema_test_2/branches/default/buckets/test_bucket/tables/test_table/columns",
             json={"name": "active", "type": "BOOLEAN", "default": "true"},
             headers=admin_headers,
         )
@@ -66,9 +66,9 @@ class TestAddColumn:
         # This is a known limitation - columns must be added nullable first,
         # then altered to NOT NULL if needed.
         client.post("/projects", json={"id": "schema_test_3"}, headers=admin_headers)
-        client.post("/projects/schema_test_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/schema_test_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/schema_test_3/buckets/test_bucket/tables",
+            "/projects/schema_test_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -78,7 +78,7 @@ class TestAddColumn:
 
         # Attempting to add NOT NULL column should fail due to DuckDB limitation
         response = client.post(
-            "/projects/schema_test_3/buckets/test_bucket/tables/test_table/columns",
+            "/projects/schema_test_3/branches/default/buckets/test_bucket/tables/test_table/columns",
             json={"name": "status", "type": "VARCHAR", "nullable": False, "default": "'active'"},
             headers=admin_headers,
         )
@@ -90,9 +90,9 @@ class TestAddColumn:
     def test_add_column_already_exists(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding column that already exists returns 409."""
         client.post("/projects", json={"id": "schema_test_4"}, headers=admin_headers)
-        client.post("/projects/schema_test_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/schema_test_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/schema_test_4/buckets/test_bucket/tables",
+            "/projects/schema_test_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -101,7 +101,7 @@ class TestAddColumn:
         )
 
         response = client.post(
-            "/projects/schema_test_4/buckets/test_bucket/tables/test_table/columns",
+            "/projects/schema_test_4/branches/default/buckets/test_bucket/tables/test_table/columns",
             json={"name": "id", "type": "VARCHAR"},
             headers=admin_headers,
         )
@@ -112,10 +112,10 @@ class TestAddColumn:
     def test_add_column_table_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding column to non-existent table returns 404."""
         client.post("/projects", json={"id": "schema_test_5"}, headers=admin_headers)
-        client.post("/projects/schema_test_5/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/schema_test_5/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/schema_test_5/buckets/test_bucket/tables/nonexistent/columns",
+            "/projects/schema_test_5/branches/default/buckets/test_bucket/tables/nonexistent/columns",
             json={"name": "col", "type": "VARCHAR"},
             headers=admin_headers,
         )
@@ -125,14 +125,14 @@ class TestAddColumn:
 
 
 class TestDropColumn:
-    """Tests for DELETE /projects/{id}/buckets/{bucket}/tables/{table}/columns/{name} endpoint."""
+    """Tests for DELETE /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/columns/{name} endpoint."""
 
     def test_drop_column_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful column removal."""
         client.post("/projects", json={"id": "drop_col_1"}, headers=admin_headers)
-        client.post("/projects/drop_col_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_col_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_col_1/buckets/test_bucket/tables",
+            "/projects/drop_col_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -145,7 +145,7 @@ class TestDropColumn:
         )
 
         response = client.delete(
-            "/projects/drop_col_1/buckets/test_bucket/tables/test_table/columns/email",
+            "/projects/drop_col_1/branches/default/buckets/test_bucket/tables/test_table/columns/email",
             headers=admin_headers,
         )
 
@@ -158,9 +158,9 @@ class TestDropColumn:
     def test_drop_column_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test dropping non-existent column returns 404."""
         client.post("/projects", json={"id": "drop_col_2"}, headers=admin_headers)
-        client.post("/projects/drop_col_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_col_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_col_2/buckets/test_bucket/tables",
+            "/projects/drop_col_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -169,7 +169,7 @@ class TestDropColumn:
         )
 
         response = client.delete(
-            "/projects/drop_col_2/buckets/test_bucket/tables/test_table/columns/nonexistent",
+            "/projects/drop_col_2/branches/default/buckets/test_bucket/tables/test_table/columns/nonexistent",
             headers=admin_headers,
         )
 
@@ -179,9 +179,9 @@ class TestDropColumn:
     def test_drop_last_column_fails(self, client: TestClient, initialized_backend, admin_headers):
         """Test dropping the last column fails."""
         client.post("/projects", json={"id": "drop_col_3"}, headers=admin_headers)
-        client.post("/projects/drop_col_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_col_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_col_3/buckets/test_bucket/tables",
+            "/projects/drop_col_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -190,7 +190,7 @@ class TestDropColumn:
         )
 
         response = client.delete(
-            "/projects/drop_col_3/buckets/test_bucket/tables/test_table/columns/id",
+            "/projects/drop_col_3/branches/default/buckets/test_bucket/tables/test_table/columns/id",
             headers=admin_headers,
         )
 
@@ -200,9 +200,9 @@ class TestDropColumn:
     def test_drop_primary_key_column_fails(self, client: TestClient, initialized_backend, admin_headers):
         """Test dropping a primary key column fails."""
         client.post("/projects", json={"id": "drop_col_4"}, headers=admin_headers)
-        client.post("/projects/drop_col_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_col_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_col_4/buckets/test_bucket/tables",
+            "/projects/drop_col_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -215,7 +215,7 @@ class TestDropColumn:
         )
 
         response = client.delete(
-            "/projects/drop_col_4/buckets/test_bucket/tables/test_table/columns/id",
+            "/projects/drop_col_4/branches/default/buckets/test_bucket/tables/test_table/columns/id",
             headers=admin_headers,
         )
 
@@ -224,14 +224,14 @@ class TestDropColumn:
 
 
 class TestAlterColumn:
-    """Tests for PUT /projects/{id}/buckets/{bucket}/tables/{table}/columns/{name} endpoint."""
+    """Tests for PUT /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/columns/{name} endpoint."""
 
     def test_alter_column_rename(self, client: TestClient, initialized_backend, admin_headers):
         """Test renaming a column."""
         client.post("/projects", json={"id": "alter_col_1"}, headers=admin_headers)
-        client.post("/projects/alter_col_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/alter_col_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/alter_col_1/buckets/test_bucket/tables",
+            "/projects/alter_col_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -243,7 +243,7 @@ class TestAlterColumn:
         )
 
         response = client.put(
-            "/projects/alter_col_1/buckets/test_bucket/tables/test_table/columns/old_name",
+            "/projects/alter_col_1/branches/default/buckets/test_bucket/tables/test_table/columns/old_name",
             json={"new_name": "new_name"},
             headers=admin_headers,
         )
@@ -257,9 +257,9 @@ class TestAlterColumn:
     def test_alter_column_change_type(self, client: TestClient, initialized_backend, admin_headers):
         """Test changing column type."""
         client.post("/projects", json={"id": "alter_col_2"}, headers=admin_headers)
-        client.post("/projects/alter_col_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/alter_col_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/alter_col_2/buckets/test_bucket/tables",
+            "/projects/alter_col_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -271,7 +271,7 @@ class TestAlterColumn:
         )
 
         response = client.put(
-            "/projects/alter_col_2/buckets/test_bucket/tables/test_table/columns/amount",
+            "/projects/alter_col_2/branches/default/buckets/test_bucket/tables/test_table/columns/amount",
             json={"new_type": "DOUBLE"},
             headers=admin_headers,
         )
@@ -284,9 +284,9 @@ class TestAlterColumn:
     def test_alter_column_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test altering non-existent column returns 404."""
         client.post("/projects", json={"id": "alter_col_3"}, headers=admin_headers)
-        client.post("/projects/alter_col_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/alter_col_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/alter_col_3/buckets/test_bucket/tables",
+            "/projects/alter_col_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -295,7 +295,7 @@ class TestAlterColumn:
         )
 
         response = client.put(
-            "/projects/alter_col_3/buckets/test_bucket/tables/test_table/columns/nonexistent",
+            "/projects/alter_col_3/branches/default/buckets/test_bucket/tables/test_table/columns/nonexistent",
             json={"new_name": "renamed"},
             headers=admin_headers,
         )
@@ -306,9 +306,9 @@ class TestAlterColumn:
     def test_alter_column_no_changes(self, client: TestClient, initialized_backend, admin_headers):
         """Test altering without any changes returns 400."""
         client.post("/projects", json={"id": "alter_col_4"}, headers=admin_headers)
-        client.post("/projects/alter_col_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/alter_col_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/alter_col_4/buckets/test_bucket/tables",
+            "/projects/alter_col_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -317,7 +317,7 @@ class TestAlterColumn:
         )
 
         response = client.put(
-            "/projects/alter_col_4/buckets/test_bucket/tables/test_table/columns/id",
+            "/projects/alter_col_4/branches/default/buckets/test_bucket/tables/test_table/columns/id",
             json={},
             headers=admin_headers,
         )
@@ -328,9 +328,9 @@ class TestAlterColumn:
     def test_alter_column_rename_conflict(self, client: TestClient, initialized_backend, admin_headers):
         """Test renaming to existing column name returns 409."""
         client.post("/projects", json={"id": "alter_col_5"}, headers=admin_headers)
-        client.post("/projects/alter_col_5/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/alter_col_5/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/alter_col_5/buckets/test_bucket/tables",
+            "/projects/alter_col_5/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -342,7 +342,7 @@ class TestAlterColumn:
         )
 
         response = client.put(
-            "/projects/alter_col_5/buckets/test_bucket/tables/test_table/columns/name",
+            "/projects/alter_col_5/branches/default/buckets/test_bucket/tables/test_table/columns/name",
             json={"new_name": "id"},
             headers=admin_headers,
         )
@@ -352,14 +352,14 @@ class TestAlterColumn:
 
 
 class TestAddPrimaryKey:
-    """Tests for POST /projects/{id}/buckets/{bucket}/tables/{table}/primary-key endpoint."""
+    """Tests for POST /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/primary-key endpoint."""
 
     def test_add_primary_key_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful primary key addition."""
         client.post("/projects", json={"id": "pk_test_1"}, headers=admin_headers)
-        client.post("/projects/pk_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/pk_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/pk_test_1/buckets/test_bucket/tables",
+            "/projects/pk_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -371,7 +371,7 @@ class TestAddPrimaryKey:
         )
 
         response = client.post(
-            "/projects/pk_test_1/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/pk_test_1/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             json={"columns": ["id"]},
             headers=admin_headers,
         )
@@ -383,9 +383,9 @@ class TestAddPrimaryKey:
     def test_add_composite_primary_key(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding composite primary key."""
         client.post("/projects", json={"id": "pk_test_2"}, headers=admin_headers)
-        client.post("/projects/pk_test_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/pk_test_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/pk_test_2/buckets/test_bucket/tables",
+            "/projects/pk_test_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -398,7 +398,7 @@ class TestAddPrimaryKey:
         )
 
         response = client.post(
-            "/projects/pk_test_2/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/pk_test_2/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             json={"columns": ["order_id", "item_id"]},
             headers=admin_headers,
         )
@@ -411,9 +411,9 @@ class TestAddPrimaryKey:
     def test_add_primary_key_already_exists(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding primary key when one already exists returns 409."""
         client.post("/projects", json={"id": "pk_test_3"}, headers=admin_headers)
-        client.post("/projects/pk_test_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/pk_test_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/pk_test_3/buckets/test_bucket/tables",
+            "/projects/pk_test_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -426,7 +426,7 @@ class TestAddPrimaryKey:
         )
 
         response = client.post(
-            "/projects/pk_test_3/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/pk_test_3/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             json={"columns": ["name"]},
             headers=admin_headers,
         )
@@ -437,9 +437,9 @@ class TestAddPrimaryKey:
     def test_add_primary_key_column_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test adding primary key with non-existent column returns 400."""
         client.post("/projects", json={"id": "pk_test_4"}, headers=admin_headers)
-        client.post("/projects/pk_test_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/pk_test_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/pk_test_4/buckets/test_bucket/tables",
+            "/projects/pk_test_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -448,7 +448,7 @@ class TestAddPrimaryKey:
         )
 
         response = client.post(
-            "/projects/pk_test_4/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/pk_test_4/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             json={"columns": ["nonexistent"]},
             headers=admin_headers,
         )
@@ -458,14 +458,14 @@ class TestAddPrimaryKey:
 
 
 class TestDropPrimaryKey:
-    """Tests for DELETE /projects/{id}/buckets/{bucket}/tables/{table}/primary-key endpoint."""
+    """Tests for DELETE /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/primary-key endpoint."""
 
     def test_drop_primary_key_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful primary key removal."""
         client.post("/projects", json={"id": "drop_pk_1"}, headers=admin_headers)
-        client.post("/projects/drop_pk_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_pk_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_pk_1/buckets/test_bucket/tables",
+            "/projects/drop_pk_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -478,7 +478,7 @@ class TestDropPrimaryKey:
         )
 
         response = client.delete(
-            "/projects/drop_pk_1/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/drop_pk_1/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             headers=admin_headers,
         )
 
@@ -489,9 +489,9 @@ class TestDropPrimaryKey:
     def test_drop_primary_key_not_exists(self, client: TestClient, initialized_backend, admin_headers):
         """Test dropping primary key when none exists returns 400."""
         client.post("/projects", json={"id": "drop_pk_2"}, headers=admin_headers)
-        client.post("/projects/drop_pk_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/drop_pk_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/drop_pk_2/buckets/test_bucket/tables",
+            "/projects/drop_pk_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -500,7 +500,7 @@ class TestDropPrimaryKey:
         )
 
         response = client.delete(
-            "/projects/drop_pk_2/buckets/test_bucket/tables/test_table/primary-key",
+            "/projects/drop_pk_2/branches/default/buckets/test_bucket/tables/test_table/primary-key",
             headers=admin_headers,
         )
 
@@ -509,7 +509,7 @@ class TestDropPrimaryKey:
 
 
 class TestDeleteRows:
-    """Tests for DELETE /projects/{id}/buckets/{bucket}/tables/{table}/rows endpoint."""
+    """Tests for DELETE /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/rows endpoint."""
 
     def _insert_test_data(self, client, project_id, bucket, table, admin_headers):
         """Helper to insert test data directly via DuckDB."""
@@ -534,9 +534,9 @@ class TestDeleteRows:
     def test_delete_rows_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful row deletion."""
         client.post("/projects", json={"id": "del_rows_1"}, headers=admin_headers)
-        client.post("/projects/del_rows_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/del_rows_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/del_rows_1/buckets/test_bucket/tables",
+            "/projects/del_rows_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -552,7 +552,7 @@ class TestDeleteRows:
 
         response = client.request(
             "DELETE",
-            "/projects/del_rows_1/buckets/test_bucket/tables/test_table/rows",
+            "/projects/del_rows_1/branches/default/buckets/test_bucket/tables/test_table/rows",
             json={"where_clause": "status = 'deleted'"},
             headers=admin_headers,
         )
@@ -565,9 +565,9 @@ class TestDeleteRows:
     def test_delete_rows_no_match(self, client: TestClient, initialized_backend, admin_headers):
         """Test deletion when no rows match."""
         client.post("/projects", json={"id": "del_rows_2"}, headers=admin_headers)
-        client.post("/projects/del_rows_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/del_rows_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/del_rows_2/buckets/test_bucket/tables",
+            "/projects/del_rows_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -580,7 +580,7 @@ class TestDeleteRows:
 
         response = client.request(
             "DELETE",
-            "/projects/del_rows_2/buckets/test_bucket/tables/test_table/rows",
+            "/projects/del_rows_2/branches/default/buckets/test_bucket/tables/test_table/rows",
             json={"where_clause": "status = 'nonexistent'"},
             headers=admin_headers,
         )
@@ -592,9 +592,9 @@ class TestDeleteRows:
     def test_delete_rows_sql_injection_prevention(self, client: TestClient, initialized_backend, admin_headers):
         """Test SQL injection prevention in WHERE clause."""
         client.post("/projects", json={"id": "del_rows_3"}, headers=admin_headers)
-        client.post("/projects/del_rows_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/del_rows_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/del_rows_3/buckets/test_bucket/tables",
+            "/projects/del_rows_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -605,7 +605,7 @@ class TestDeleteRows:
         # Try SQL injection with semicolon
         response = client.request(
             "DELETE",
-            "/projects/del_rows_3/buckets/test_bucket/tables/test_table/rows",
+            "/projects/del_rows_3/branches/default/buckets/test_bucket/tables/test_table/rows",
             json={"where_clause": "1=1; DROP TABLE data;"},
             headers=admin_headers,
         )
@@ -616,9 +616,9 @@ class TestDeleteRows:
     def test_delete_rows_comment_injection_prevention(self, client: TestClient, initialized_backend, admin_headers):
         """Test SQL comment injection prevention."""
         client.post("/projects", json={"id": "del_rows_4"}, headers=admin_headers)
-        client.post("/projects/del_rows_4/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/del_rows_4/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/del_rows_4/buckets/test_bucket/tables",
+            "/projects/del_rows_4/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -629,7 +629,7 @@ class TestDeleteRows:
         # Try SQL injection with comment
         response = client.request(
             "DELETE",
-            "/projects/del_rows_4/buckets/test_bucket/tables/test_table/rows",
+            "/projects/del_rows_4/branches/default/buckets/test_bucket/tables/test_table/rows",
             json={"where_clause": "1=1 -- comment"},
             headers=admin_headers,
         )
@@ -639,7 +639,7 @@ class TestDeleteRows:
 
 
 class TestProfileTable:
-    """Tests for POST /projects/{id}/buckets/{bucket}/tables/{table}/profile endpoint."""
+    """Tests for POST /projects/{id}/branches/default/buckets/{bucket}/tables/{table}/profile endpoint."""
 
     def _insert_profile_data(self, client, project_id, bucket, table):
         """Helper to insert test data for profiling."""
@@ -664,9 +664,9 @@ class TestProfileTable:
     def test_profile_table_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful table profiling."""
         client.post("/projects", json={"id": "profile_1"}, headers=admin_headers)
-        client.post("/projects/profile_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/profile_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/profile_1/buckets/test_bucket/tables",
+            "/projects/profile_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -682,7 +682,7 @@ class TestProfileTable:
         self._insert_profile_data(client, "profile_1", "test_bucket", "test_table")
 
         response = client.post(
-            "/projects/profile_1/buckets/test_bucket/tables/test_table/profile",
+            "/projects/profile_1/branches/default/buckets/test_bucket/tables/test_table/profile",
             headers=admin_headers,
         )
 
@@ -705,9 +705,9 @@ class TestProfileTable:
     def test_profile_empty_table(self, client: TestClient, initialized_backend, admin_headers):
         """Test profiling an empty table."""
         client.post("/projects", json={"id": "profile_2"}, headers=admin_headers)
-        client.post("/projects/profile_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/profile_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/profile_2/buckets/test_bucket/tables",
+            "/projects/profile_2/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
@@ -719,7 +719,7 @@ class TestProfileTable:
         )
 
         response = client.post(
-            "/projects/profile_2/buckets/test_bucket/tables/test_table/profile",
+            "/projects/profile_2/branches/default/buckets/test_bucket/tables/test_table/profile",
             headers=admin_headers,
         )
 
@@ -731,10 +731,10 @@ class TestProfileTable:
     def test_profile_table_not_found(self, client: TestClient, initialized_backend, admin_headers):
         """Test profiling non-existent table returns 404."""
         client.post("/projects", json={"id": "profile_3"}, headers=admin_headers)
-        client.post("/projects/profile_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/profile_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/profile_3/buckets/test_bucket/tables/nonexistent/profile",
+            "/projects/profile_3/branches/default/buckets/test_bucket/tables/nonexistent/profile",
             headers=admin_headers,
         )
 
@@ -748,20 +748,20 @@ class TestSchemaOperationsAuth:
     def test_add_column_requires_auth(self, client: TestClient, initialized_backend):
         """Test that add column requires authentication."""
         response = client.post(
-            "/projects/any/buckets/any/tables/any/columns",
+            "/projects/any/branches/default/buckets/any/tables/any/columns",
             json={"name": "col", "type": "VARCHAR"},
         )
         assert response.status_code == 401
 
     def test_drop_column_requires_auth(self, client: TestClient, initialized_backend):
         """Test that drop column requires authentication."""
-        response = client.delete("/projects/any/buckets/any/tables/any/columns/col")
+        response = client.delete("/projects/any/branches/default/buckets/any/tables/any/columns/col")
         assert response.status_code == 401
 
     def test_alter_column_requires_auth(self, client: TestClient, initialized_backend):
         """Test that alter column requires authentication."""
         response = client.put(
-            "/projects/any/buckets/any/tables/any/columns/col",
+            "/projects/any/branches/default/buckets/any/tables/any/columns/col",
             json={"new_name": "renamed"},
         )
         assert response.status_code == 401
@@ -769,24 +769,24 @@ class TestSchemaOperationsAuth:
     def test_primary_key_requires_auth(self, client: TestClient, initialized_backend):
         """Test that primary key operations require authentication."""
         response = client.post(
-            "/projects/any/buckets/any/tables/any/primary-key",
+            "/projects/any/branches/default/buckets/any/tables/any/primary-key",
             json={"columns": ["id"]},
         )
         assert response.status_code == 401
 
-        response = client.delete("/projects/any/buckets/any/tables/any/primary-key")
+        response = client.delete("/projects/any/branches/default/buckets/any/tables/any/primary-key")
         assert response.status_code == 401
 
     def test_delete_rows_requires_auth(self, client: TestClient, initialized_backend):
         """Test that delete rows requires authentication."""
         response = client.request(
             "DELETE",
-            "/projects/any/buckets/any/tables/any/rows",
+            "/projects/any/branches/default/buckets/any/tables/any/rows",
             json={"where_clause": "1=1"},
         )
         assert response.status_code == 401
 
     def test_profile_requires_auth(self, client: TestClient, initialized_backend):
         """Test that profile requires authentication."""
-        response = client.post("/projects/any/buckets/any/tables/any/profile")
+        response = client.post("/projects/any/branches/default/buckets/any/tables/any/profile")
         assert response.status_code == 401

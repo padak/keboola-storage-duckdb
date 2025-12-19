@@ -26,7 +26,7 @@ def project_a_with_data(client, initialized_backend, admin_headers):
 
     # Create bucket
     response = client.post(
-        "/projects/proj_a/buckets",
+        "/projects/proj_a/branches/default/buckets",
         json={"name": "in_c_sales"},
         headers=project_headers,
     )
@@ -34,7 +34,7 @@ def project_a_with_data(client, initialized_backend, admin_headers):
 
     # Create table with sample data
     response = client.post(
-        "/projects/proj_a/buckets/in_c_sales/tables",
+        "/projects/proj_a/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "orders",
             "columns": [
@@ -51,7 +51,7 @@ def project_a_with_data(client, initialized_backend, admin_headers):
 
     # Create another table
     response = client.post(
-        "/projects/proj_a/buckets/in_c_sales/tables",
+        "/projects/proj_a/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "customers",
             "columns": [
@@ -119,7 +119,7 @@ class TestShareAndLinkBucket:
 
         # Step 1: Share bucket from project A
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
@@ -129,7 +129,7 @@ class TestShareAndLinkBucket:
 
         # Step 2: Link bucket in project B
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -144,7 +144,7 @@ class TestShareAndLinkBucket:
 
         # Step 3: Verify linked bucket exists
         response = client.get(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales",
             headers=proj_b["project_headers"],
         )
         assert response.status_code == 200
@@ -155,7 +155,7 @@ class TestShareAndLinkBucket:
         # This is a known limitation of ADR-009 with the current view-based linking approach
         # Views are created in the project's workspace database but not as separate files
         response = client.get(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/tables",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/tables",
             headers=proj_b["project_headers"],
         )
         assert response.status_code == 200
@@ -172,7 +172,7 @@ class TestShareAndLinkBucket:
 
         # Step 5: Unlink bucket
         response = client.delete(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/link",
             headers=admin_headers,
         )
         assert response.status_code == 204
@@ -190,7 +190,7 @@ class TestShareAndLinkBucket:
 
         # Share with project B
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
@@ -198,7 +198,7 @@ class TestShareAndLinkBucket:
 
         # Share with project C
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_c["project_id"]},
             headers=admin_headers,
         )
@@ -211,7 +211,7 @@ class TestShareAndLinkBucket:
         # Link in both projects
         for proj in [proj_b, proj_c]:
             response = client.post(
-                f"/projects/{proj['project_id']}/buckets/linked_sales/link",
+                f"/projects/{proj['project_id']}/branches/default/buckets/linked_sales/link",
                 json={
                     "source_project_id": proj_a["project_id"],
                     "source_bucket_name": proj_a["bucket_name"],
@@ -239,7 +239,7 @@ class TestReadonlyGrant:
 
         # Grant readonly access (metadata operation in DuckDB)
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/grant-readonly",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/grant-readonly",
             headers=admin_headers,
         )
         assert response.status_code == 200
@@ -249,14 +249,14 @@ class TestReadonlyGrant:
 
         # Share and link to verify readonly behavior
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
         assert response.status_code == 200
 
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/readonly_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/readonly_sales/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -280,7 +280,7 @@ class TestReadonlyGrant:
 
         # Revoke readonly (no-op in DuckDB but API compatibility)
         response = client.delete(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/grant-readonly",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/grant-readonly",
             headers=admin_headers,
         )
         assert response.status_code == 204
@@ -298,7 +298,7 @@ class TestSharedBucketIsolation:
         # Share with both B and C
         for target_proj in [proj_b, proj_c]:
             client.post(
-                f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+                f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
                 json={"target_project_id": target_proj["project_id"]},
                 headers=admin_headers,
             )
@@ -306,7 +306,7 @@ class TestSharedBucketIsolation:
         # Link in both projects
         for target_proj in [proj_b, proj_c]:
             client.post(
-                f"/projects/{target_proj['project_id']}/buckets/linked_sales/link",
+                f"/projects/{target_proj['project_id']}/branches/default/buckets/linked_sales/link",
                 json={
                     "source_project_id": proj_a["project_id"],
                     "source_bucket_name": proj_a["bucket_name"],
@@ -316,7 +316,7 @@ class TestSharedBucketIsolation:
 
         # Get initial table schema from source (views don't have physical files)
         response = client.get(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/tables/orders",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/tables/orders",
             headers=proj_a["project_headers"],
         )
         assert response.status_code == 200
@@ -325,7 +325,7 @@ class TestSharedBucketIsolation:
 
         # Project A adds a column to the source table
         response = client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/tables/orders/columns",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/tables/orders/columns",
             json={"name": "status", "type": "VARCHAR"},
             headers=proj_a["project_headers"],
         )
@@ -349,13 +349,13 @@ class TestCrossProjectWorkspace:
 
         # Share and link
         client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
 
         client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -403,7 +403,7 @@ class TestCrossProjectWorkspace:
 
         # Create local bucket in project B
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets",
             json={"name": "out_c_reports"},
             headers=proj_b["project_headers"],
         )
@@ -411,7 +411,7 @@ class TestCrossProjectWorkspace:
 
         # Create local table in project B
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/out_c_reports/tables",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/out_c_reports/tables",
             json={
                 "name": "summary",
                 "columns": [
@@ -425,13 +425,13 @@ class TestCrossProjectWorkspace:
 
         # Share and link from project A
         client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
 
         client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -492,12 +492,12 @@ class TestShareCascadeOnDelete:
 
         # Create bucket and table
         client.post(
-            "/projects/source_proj/buckets",
+            "/projects/source_proj/branches/default/buckets",
             json={"name": "shared_bucket"},
             headers=source_headers,
         )
         client.post(
-            "/projects/source_proj/buckets/shared_bucket/tables",
+            "/projects/source_proj/branches/default/buckets/shared_bucket/tables",
             json={
                 "name": "data",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -523,7 +523,7 @@ class TestShareCascadeOnDelete:
         # Share with both targets
         for target in target_projects:
             response = client.post(
-                "/projects/source_proj/buckets/shared_bucket/share",
+                "/projects/source_proj/branches/default/buckets/shared_bucket/share",
                 json={"target_project_id": target["id"]},
                 headers=admin_headers,
             )
@@ -532,7 +532,7 @@ class TestShareCascadeOnDelete:
         # Link in both targets
         for target in target_projects:
             response = client.post(
-                f"/projects/{target['id']}/buckets/linked/link",
+                f"/projects/{target['id']}/branches/default/buckets/linked/link",
                 json={
                     "source_project_id": "source_proj",
                     "source_bucket_name": "shared_bucket",
@@ -589,13 +589,13 @@ class TestShareCascadeOnDelete:
 
         # Share and link
         client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": "temp_target"},
             headers=admin_headers,
         )
 
         client.post(
-            "/projects/temp_target/buckets/linked/link",
+            "/projects/temp_target/branches/default/buckets/linked/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -621,7 +621,7 @@ class TestShareCascadeOnDelete:
 
         # Source project and bucket should still exist
         response = client.get(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}",
             headers=proj_a["project_headers"],
         )
         assert response.status_code == 200
@@ -639,7 +639,7 @@ class TestBucketSharingEdgeCases:
         # Note: Current implementation doesn't require explicit share for linking
         # It only checks that source bucket exists
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked_sales/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_sales/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -655,13 +655,13 @@ class TestBucketSharingEdgeCases:
 
         # Share and link
         client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
 
         client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -671,14 +671,14 @@ class TestBucketSharingEdgeCases:
 
         # Unlink but keep share
         response = client.delete(
-            f"/projects/{proj_b['project_id']}/buckets/linked/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked/link",
             headers=admin_headers,
         )
         assert response.status_code == 204
 
         # Share should still exist (can re-link)
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked_again/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked_again/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -694,7 +694,7 @@ class TestBucketSharingEdgeCases:
 
         # Link with first name
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/link_one/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/link_one/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -705,7 +705,7 @@ class TestBucketSharingEdgeCases:
 
         # Link same bucket with different name
         response = client.post(
-            f"/projects/{proj_b['project_id']}/buckets/link_two/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/link_two/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -717,7 +717,7 @@ class TestBucketSharingEdgeCases:
         # Both should be accessible
         for bucket_name in ["link_one", "link_two"]:
             response = client.get(
-                f"/projects/{proj_b['project_id']}/buckets/{bucket_name}/tables",
+                f"/projects/{proj_b['project_id']}/branches/default/buckets/{bucket_name}/tables",
                 headers=proj_b["project_headers"],
             )
             assert response.status_code == 200
@@ -736,7 +736,7 @@ class TestBucketSharingMetrics:
 
         # Share
         client.post(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share",
             json={"target_project_id": proj_b["project_id"]},
             headers=admin_headers,
         )
@@ -751,7 +751,7 @@ class TestBucketSharingMetrics:
 
         # Link
         client.post(
-            f"/projects/{proj_b['project_id']}/buckets/linked/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked/link",
             json={
                 "source_project_id": proj_a["project_id"],
                 "source_bucket_name": proj_a["bucket_name"],
@@ -769,7 +769,7 @@ class TestBucketSharingMetrics:
 
         # Unlink
         client.delete(
-            f"/projects/{proj_b['project_id']}/buckets/linked/link",
+            f"/projects/{proj_b['project_id']}/branches/default/buckets/linked/link",
             headers=admin_headers,
         )
 
@@ -783,7 +783,7 @@ class TestBucketSharingMetrics:
 
         # Unshare
         client.delete(
-            f"/projects/{proj_a['project_id']}/buckets/{proj_a['bucket_name']}/share?target_project_id={proj_b['project_id']}",
+            f"/projects/{proj_a['project_id']}/branches/default/buckets/{proj_a['bucket_name']}/share?target_project_id={proj_b['project_id']}",
             headers=admin_headers,
         )
 

@@ -33,14 +33,14 @@ def project_with_workspace(client, initialized_backend, admin_headers):
 
     # Create bucket with table for testing table listing
     response = client.post(
-        "/projects/pgwire_test_proj/buckets",
+        "/projects/pgwire_test_proj/branches/default/buckets",
         json={"name": "in_c_data"},
         headers=project_headers,
     )
     assert response.status_code == 201
 
     response = client.post(
-        "/projects/pgwire_test_proj/buckets/in_c_data/tables",
+        "/projects/pgwire_test_proj/branches/default/buckets/in_c_data/tables",
         json={
             "name": "orders",
             "columns": [

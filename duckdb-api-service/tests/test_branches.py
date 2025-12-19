@@ -20,7 +20,7 @@ def project_with_tables(client, initialized_backend, admin_headers):
 
     # Create bucket
     response = client.post(
-        "/projects/branch_proj/buckets",
+        "/projects/branch_proj/branches/default/buckets",
         json={"name": "in_c_sales"},
         headers=project_headers,
     )
@@ -28,7 +28,7 @@ def project_with_tables(client, initialized_backend, admin_headers):
 
     # Create first table with data
     response = client.post(
-        "/projects/branch_proj/buckets/in_c_sales/tables",
+        "/projects/branch_proj/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "orders",
             "columns": [
@@ -44,7 +44,7 @@ def project_with_tables(client, initialized_backend, admin_headers):
 
     # Create second table
     response = client.post(
-        "/projects/branch_proj/buckets/in_c_sales/tables",
+        "/projects/branch_proj/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "customers",
             "columns": [
@@ -84,7 +84,7 @@ def project_with_tables(client, initialized_backend, admin_headers):
     file_id = response.json()["id"]
 
     response = client.post(
-        "/projects/branch_proj/buckets/in_c_sales/tables/orders/import/file",
+        "/projects/branch_proj/branches/default/buckets/in_c_sales/tables/orders/import/file",
         json={
             "file_id": file_id,
             "format": "csv",

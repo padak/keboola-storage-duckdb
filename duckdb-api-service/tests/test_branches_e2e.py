@@ -29,7 +29,7 @@ def project_with_data(client, initialized_backend, admin_headers):
     # Create buckets
     for bucket_name in ["in_c_sales", "out_c_reports"]:
         response = client.post(
-            "/projects/branch_e2e/buckets",
+            "/projects/branch_e2e/branches/default/buckets",
             json={"name": bucket_name},
             headers=project_headers,
         )
@@ -37,7 +37,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create orders table in in_c_sales
     response = client.post(
-        "/projects/branch_e2e/buckets/in_c_sales/tables",
+        "/projects/branch_e2e/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "orders",
             "columns": [
@@ -54,7 +54,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create customers table in in_c_sales
     response = client.post(
-        "/projects/branch_e2e/buckets/in_c_sales/tables",
+        "/projects/branch_e2e/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "customers",
             "columns": [
@@ -71,7 +71,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create summary table in out_c_reports
     response = client.post(
-        "/projects/branch_e2e/buckets/out_c_reports/tables",
+        "/projects/branch_e2e/branches/default/buckets/out_c_reports/tables",
         json={
             "name": "summary",
             "columns": [
@@ -110,7 +110,7 @@ def project_with_data(client, initialized_backend, admin_headers):
     file_id = response.json()["id"]
 
     response = client.post(
-        "/projects/branch_e2e/buckets/in_c_sales/tables/orders/import/file",
+        "/projects/branch_e2e/branches/default/buckets/in_c_sales/tables/orders/import/file",
         json={
             "file_id": file_id,
             "format": "csv",
@@ -146,7 +146,7 @@ def project_with_data(client, initialized_backend, admin_headers):
     file_id = response.json()["id"]
 
     response = client.post(
-        "/projects/branch_e2e/buckets/in_c_sales/tables/customers/import/file",
+        "/projects/branch_e2e/branches/default/buckets/in_c_sales/tables/customers/import/file",
         json={
             "file_id": file_id,
             "format": "csv",
@@ -238,7 +238,7 @@ class TestBranchCreateModifyDelete:
 
         # Verify main data still intact
         response = client.get(
-            "/projects/branch_e2e/buckets/in_c_sales/tables/orders/preview",
+            "/projects/branch_e2e/branches/default/buckets/in_c_sales/tables/orders/preview",
             headers=proj["project_headers"],
         )
         assert response.status_code == 200

@@ -19,7 +19,7 @@ def project_with_table(client, initialized_backend, admin_headers):
     # Create bucket
     project_headers = {"Authorization": f"Bearer {project_key}"}
     response = client.post(
-        "/projects/test_proj/buckets",
+        "/projects/test_proj/branches/default/buckets",
         json={"name": "test_bucket"},
         headers=project_headers,
     )
@@ -27,7 +27,7 @@ def project_with_table(client, initialized_backend, admin_headers):
 
     # Create table
     response = client.post(
-        "/projects/test_proj/buckets/test_bucket/tables",
+        "/projects/test_proj/branches/default/buckets/test_bucket/tables",
         json={
             "name": "test_table",
             "columns": [
@@ -156,7 +156,7 @@ class TestSnapshotSettingsBucketLevel:
 
         # Get bucket settings (should inherit)
         response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/settings/snapshots",
             headers=project_with_table["project_headers"],
         )
         assert response.status_code == 200
@@ -177,7 +177,7 @@ class TestSnapshotSettingsBucketLevel:
 
         # Set bucket settings to override
         response = client.put(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/settings/snapshots",
             json={"auto_snapshot_triggers": {"truncate_table": False}},
             headers=project_with_table["project_headers"],
         )
@@ -191,7 +191,7 @@ class TestSnapshotSettingsBucketLevel:
     def test_bucket_disables_snapshots(self, client, project_with_table):
         """Bucket can disable snapshots entirely."""
         response = client.put(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/settings/snapshots",
             json={"enabled": False},
             headers=project_with_table["project_headers"],
         )
@@ -216,14 +216,14 @@ class TestSnapshotSettingsTableLevel:
 
         # Set bucket settings
         client.put(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/settings/snapshots",
             json={"auto_snapshot_triggers": {"truncate_table": True}},
             headers=project_with_table["project_headers"],
         )
 
         # Get table settings (should inherit from both)
         response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/settings/snapshots",
             headers=project_with_table["project_headers"],
         )
         assert response.status_code == 200
@@ -243,14 +243,14 @@ class TestSnapshotSettingsTableLevel:
         """Table can override bucket settings."""
         # Set bucket to disable snapshots
         client.put(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/settings/snapshots",
             json={"enabled": False},
             headers=project_with_table["project_headers"],
         )
 
         # Table overrides to enable
         response = client.put(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/settings/snapshots",
             json={"enabled": True, "retention": {"auto_days": 30}},
             headers=project_with_table["project_headers"],
         )
@@ -318,7 +318,7 @@ class TestSnapshotSettingsNotFound:
     def test_bucket_not_found(self, client, project_with_table):
         """GET settings for non-existent bucket returns 404."""
         response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/nonexistent/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/nonexistent/settings/snapshots",
             headers=project_with_table["project_headers"],
         )
         assert response.status_code == 404
@@ -327,7 +327,7 @@ class TestSnapshotSettingsNotFound:
     def test_table_not_found(self, client, project_with_table):
         """GET settings for non-existent table returns 404."""
         response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/nonexistent/settings/snapshots",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/nonexistent/settings/snapshots",
             headers=project_with_table["project_headers"],
         )
         assert response.status_code == 404

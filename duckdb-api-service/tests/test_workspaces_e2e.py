@@ -30,7 +30,7 @@ def project_with_data(client, initialized_backend, admin_headers):
     # Create multiple buckets
     for bucket_name in ["in_c_sales", "out_c_reports"]:
         response = client.post(
-            "/projects/e2e_test_proj/buckets",
+            "/projects/e2e_test_proj/branches/default/buckets",
             json={"name": bucket_name},
             headers=project_headers,
         )
@@ -38,7 +38,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create tables in in_c_sales
     response = client.post(
-        "/projects/e2e_test_proj/buckets/in_c_sales/tables",
+        "/projects/e2e_test_proj/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "orders",
             "columns": [
@@ -54,7 +54,7 @@ def project_with_data(client, initialized_backend, admin_headers):
     assert response.status_code == 201
 
     response = client.post(
-        "/projects/e2e_test_proj/buckets/in_c_sales/tables",
+        "/projects/e2e_test_proj/branches/default/buckets/in_c_sales/tables",
         json={
             "name": "customers",
             "columns": [
@@ -70,7 +70,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create table in out_c_reports
     response = client.post(
-        "/projects/e2e_test_proj/buckets/out_c_reports/tables",
+        "/projects/e2e_test_proj/branches/default/buckets/out_c_reports/tables",
         json={
             "name": "summary",
             "columns": [

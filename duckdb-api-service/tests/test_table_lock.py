@@ -130,9 +130,9 @@ class TestTableLockConcurrency:
 
         # Setup
         client.post("/projects", json={"id": "lock_test_1"}, headers=admin_headers)
-        client.post("/projects/lock_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/lock_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/lock_test_1/buckets/test_bucket/tables",
+            "/projects/lock_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "concurrent_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -185,7 +185,7 @@ class TestTableLockConcurrency:
 
         # Verify all data was written
         response = client.get(
-            "/projects/lock_test_1/buckets/test_bucket/tables/concurrent_table/preview",
+            "/projects/lock_test_1/branches/default/buckets/test_bucket/tables/concurrent_table/preview",
             headers=admin_headers,
         )
         assert response.status_code == 200
@@ -199,12 +199,12 @@ class TestTableLockConcurrency:
 
         # Setup
         client.post("/projects", json={"id": "lock_test_2"}, headers=admin_headers)
-        client.post("/projects/lock_test_2/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/lock_test_2/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
 
         # Create multiple tables
         for i in range(3):
             client.post(
-                "/projects/lock_test_2/buckets/test_bucket/tables",
+                "/projects/lock_test_2/branches/default/buckets/test_bucket/tables",
                 json={
                     "name": f"parallel_table_{i}",
                     "columns": [{"name": "id", "type": "INTEGER"}],
@@ -247,7 +247,7 @@ class TestTableLockConcurrency:
         # Verify all data was written
         for i in range(3):
             response = client.get(
-                f"/projects/lock_test_2/buckets/test_bucket/tables/parallel_table_{i}/preview",
+                f"/projects/lock_test_2/branches/default/buckets/test_bucket/tables/parallel_table_{i}/preview",
                 headers=admin_headers,
             )
             assert response.status_code == 200
@@ -261,9 +261,9 @@ class TestTableLockConcurrency:
 
         # Setup
         client.post("/projects", json={"id": "lock_test_3"}, headers=admin_headers)
-        client.post("/projects/lock_test_3/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/lock_test_3/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/lock_test_3/buckets/test_bucket/tables",
+            "/projects/lock_test_3/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "read_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -320,9 +320,9 @@ class TestTableLockCleanup:
         """Test that deleting a table removes its lock."""
         # Setup
         client.post("/projects", json={"id": "cleanup_test_1"}, headers=admin_headers)
-        client.post("/projects/cleanup_test_1/buckets", json={"name": "test_bucket"}, headers=admin_headers)
+        client.post("/projects/cleanup_test_1/branches/default/buckets", json={"name": "test_bucket"}, headers=admin_headers)
         client.post(
-            "/projects/cleanup_test_1/buckets/test_bucket/tables",
+            "/projects/cleanup_test_1/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "to_delete",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -343,7 +343,7 @@ class TestTableLockCleanup:
 
         # Delete table
         response = client.delete(
-            "/projects/cleanup_test_1/buckets/test_bucket/tables/to_delete",
+            "/projects/cleanup_test_1/branches/default/buckets/test_bucket/tables/to_delete",
             headers=admin_headers,
         )
         assert response.status_code == 204
@@ -357,12 +357,12 @@ class TestTableLockCleanup:
         """Test that deleting a bucket removes locks for all its tables."""
         # Setup
         client.post("/projects", json={"id": "cleanup_test_2"}, headers=admin_headers)
-        client.post("/projects/cleanup_test_2/buckets", json={"name": "bucket_to_delete"}, headers=admin_headers)
+        client.post("/projects/cleanup_test_2/branches/default/buckets", json={"name": "bucket_to_delete"}, headers=admin_headers)
 
         # Create multiple tables
         for i in range(3):
             client.post(
-                "/projects/cleanup_test_2/buckets/bucket_to_delete/tables",
+                "/projects/cleanup_test_2/branches/default/buckets/bucket_to_delete/tables",
                 json={
                     "name": f"table_{i}",
                     "columns": [{"name": "id", "type": "INTEGER"}],
@@ -380,7 +380,7 @@ class TestTableLockCleanup:
                 conn.execute("SELECT 1")
 
         # Delete bucket
-        response = client.delete("/projects/cleanup_test_2/buckets/bucket_to_delete", headers=admin_headers)
+        response = client.delete("/projects/cleanup_test_2/branches/default/buckets/bucket_to_delete", headers=admin_headers)
         assert response.status_code == 204
 
         # All locks for this bucket should be removed
@@ -392,14 +392,14 @@ class TestTableLockCleanup:
         """Test that deleting a project removes all its locks."""
         # Setup
         client.post("/projects", json={"id": "cleanup_test_3"}, headers=admin_headers)
-        client.post("/projects/cleanup_test_3/buckets", json={"name": "bucket1"}, headers=admin_headers)
-        client.post("/projects/cleanup_test_3/buckets", json={"name": "bucket2"}, headers=admin_headers)
+        client.post("/projects/cleanup_test_3/branches/default/buckets", json={"name": "bucket1"}, headers=admin_headers)
+        client.post("/projects/cleanup_test_3/branches/default/buckets", json={"name": "bucket2"}, headers=admin_headers)
 
         # Create tables in different buckets
         for bucket in ["bucket1", "bucket2"]:
             for i in range(2):
                 client.post(
-                    f"/projects/cleanup_test_3/buckets/{bucket}/tables",
+                    f"/projects/cleanup_test_3/branches/default/buckets/{bucket}/tables",
                     json={
                         "name": f"table_{i}",
                         "columns": [{"name": "id", "type": "INTEGER"}],

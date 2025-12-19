@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 
 class TestShareBucket:
-    """Tests for POST /projects/{project_id}/buckets/{bucket_name}/share endpoint."""
+    """Tests for POST /projects/{project_id}/branches/default/buckets/{bucket_name}/share endpoint."""
 
     def test_share_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful bucket sharing."""
@@ -15,14 +15,14 @@ class TestShareBucket:
 
         # Create bucket in source project
         client.post(
-            "/projects/share_source_1/buckets",
+            "/projects/share_source_1/branches/default/buckets",
             json={"name": "shared_bucket"},
             headers=admin_headers,
         )
 
         # Share the bucket
         response = client.post(
-            "/projects/share_source_1/buckets/shared_bucket/share",
+            "/projects/share_source_1/branches/default/buckets/shared_bucket/share",
             json={"target_project_id": "share_target_1"},
             headers=admin_headers,
         )
@@ -36,7 +36,7 @@ class TestShareBucket:
     ):
         """Test sharing bucket from non-existent project returns 404."""
         response = client.post(
-            "/projects/nonexistent/buckets/any/share",
+            "/projects/nonexistent/branches/default/buckets/any/share",
             json={"target_project_id": "target"},
             headers=admin_headers,
         )
@@ -49,10 +49,10 @@ class TestShareBucket:
     ):
         """Test sharing to non-existent target project returns 404."""
         client.post("/projects", json={"id": "share_source_2"}, headers=admin_headers)
-        client.post("/projects/share_source_2/buckets", json={"name": "bucket"}, headers=admin_headers)
+        client.post("/projects/share_source_2/branches/default/buckets", json={"name": "bucket"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/share_source_2/buckets/bucket/share",
+            "/projects/share_source_2/branches/default/buckets/bucket/share",
             json={"target_project_id": "nonexistent"},
             headers=admin_headers,
         )
@@ -65,7 +65,7 @@ class TestShareBucket:
         client.post("/projects", json={"id": "share_target_3"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/share_source_3/buckets/nonexistent/share",
+            "/projects/share_source_3/branches/default/buckets/nonexistent/share",
             json={"target_project_id": "share_target_3"},
             headers=admin_headers,
         )
@@ -79,18 +79,18 @@ class TestShareBucket:
         """Test sharing already shared bucket returns 409."""
         client.post("/projects", json={"id": "share_source_4"}, headers=admin_headers)
         client.post("/projects", json={"id": "share_target_4"}, headers=admin_headers)
-        client.post("/projects/share_source_4/buckets", json={"name": "bucket"}, headers=admin_headers)
+        client.post("/projects/share_source_4/branches/default/buckets", json={"name": "bucket"}, headers=admin_headers)
 
         # Share first time
         client.post(
-            "/projects/share_source_4/buckets/bucket/share",
+            "/projects/share_source_4/branches/default/buckets/bucket/share",
             json={"target_project_id": "share_target_4"},
             headers=admin_headers,
         )
 
         # Try to share again
         response = client.post(
-            "/projects/share_source_4/buckets/bucket/share",
+            "/projects/share_source_4/branches/default/buckets/bucket/share",
             json={"target_project_id": "share_target_4"},
             headers=admin_headers,
         )
@@ -100,24 +100,24 @@ class TestShareBucket:
 
 
 class TestUnshareBucket:
-    """Tests for DELETE /projects/{project_id}/buckets/{bucket_name}/share endpoint."""
+    """Tests for DELETE /projects/{project_id}/branches/default/buckets/{bucket_name}/share endpoint."""
 
     def test_unshare_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful bucket unsharing."""
         client.post("/projects", json={"id": "unshare_source_1"}, headers=admin_headers)
         client.post("/projects", json={"id": "unshare_target_1"}, headers=admin_headers)
-        client.post("/projects/unshare_source_1/buckets", json={"name": "bucket"}, headers=admin_headers)
+        client.post("/projects/unshare_source_1/branches/default/buckets", json={"name": "bucket"}, headers=admin_headers)
 
         # Share first
         client.post(
-            "/projects/unshare_source_1/buckets/bucket/share",
+            "/projects/unshare_source_1/branches/default/buckets/bucket/share",
             json={"target_project_id": "unshare_target_1"},
             headers=admin_headers,
         )
 
         # Unshare
         response = client.delete(
-            "/projects/unshare_source_1/buckets/bucket/share?target_project_id=unshare_target_1",
+            "/projects/unshare_source_1/branches/default/buckets/bucket/share?target_project_id=unshare_target_1",
             headers=admin_headers,
         )
 
@@ -128,7 +128,7 @@ class TestUnshareBucket:
     ):
         """Test unsharing from non-existent project returns 404."""
         response = client.delete(
-            "/projects/nonexistent/buckets/any/share?target_project_id=target",
+            "/projects/nonexistent/branches/default/buckets/any/share?target_project_id=target",
             headers=admin_headers,
         )
 
@@ -136,20 +136,20 @@ class TestUnshareBucket:
 
 
 class TestLinkBucket:
-    """Tests for POST /projects/{project_id}/buckets/{bucket_name}/link endpoint."""
+    """Tests for POST /projects/{project_id}/branches/default/buckets/{bucket_name}/link endpoint."""
 
     def test_link_bucket_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test successful bucket linking."""
         # Create source project with bucket
         client.post("/projects", json={"id": "link_source_1"}, headers=admin_headers)
-        client.post("/projects/link_source_1/buckets", json={"name": "source_bucket"}, headers=admin_headers)
+        client.post("/projects/link_source_1/branches/default/buckets", json={"name": "source_bucket"}, headers=admin_headers)
 
         # Create target project
         client.post("/projects", json={"id": "link_target_1"}, headers=admin_headers)
 
         # Link the bucket
         response = client.post(
-            "/projects/link_target_1/buckets/linked_bucket/link",
+            "/projects/link_target_1/branches/default/buckets/linked_bucket/link",
             json={
                 "source_project_id": "link_source_1",
                 "source_bucket_name": "source_bucket",
@@ -167,7 +167,7 @@ class TestLinkBucket:
     ):
         """Test linking in non-existent target project returns 404."""
         response = client.post(
-            "/projects/nonexistent/buckets/bucket/link",
+            "/projects/nonexistent/branches/default/buckets/bucket/link",
             json={
                 "source_project_id": "source",
                 "source_bucket_name": "bucket",
@@ -184,7 +184,7 @@ class TestLinkBucket:
         client.post("/projects", json={"id": "link_target_2"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/link_target_2/buckets/bucket/link",
+            "/projects/link_target_2/branches/default/buckets/bucket/link",
             json={
                 "source_project_id": "nonexistent",
                 "source_bucket_name": "bucket",
@@ -202,7 +202,7 @@ class TestLinkBucket:
         client.post("/projects", json={"id": "link_target_3"}, headers=admin_headers)
 
         response = client.post(
-            "/projects/link_target_3/buckets/bucket/link",
+            "/projects/link_target_3/branches/default/buckets/bucket/link",
             json={
                 "source_project_id": "link_source_3",
                 "source_bucket_name": "nonexistent",
@@ -217,14 +217,14 @@ class TestLinkBucket:
         """Test linking when target bucket already exists returns 409."""
         client.post("/projects", json={"id": "link_source_4"}, headers=admin_headers)
         client.post("/projects", json={"id": "link_target_4"}, headers=admin_headers)
-        client.post("/projects/link_source_4/buckets", json={"name": "source"}, headers=admin_headers)
+        client.post("/projects/link_source_4/branches/default/buckets", json={"name": "source"}, headers=admin_headers)
         client.post(
-            "/projects/link_target_4/buckets", json={"name": "existing_bucket"},
+            "/projects/link_target_4/branches/default/buckets", json={"name": "existing_bucket"},
             headers=admin_headers,
         )
 
         response = client.post(
-            "/projects/link_target_4/buckets/existing_bucket/link",
+            "/projects/link_target_4/branches/default/buckets/existing_bucket/link",
             json={
                 "source_project_id": "link_source_4",
                 "source_bucket_name": "source",
@@ -237,7 +237,7 @@ class TestLinkBucket:
 
 
 class TestUnlinkBucket:
-    """Tests for DELETE /projects/{project_id}/buckets/{bucket_name}/link endpoint."""
+    """Tests for DELETE /projects/{project_id}/branches/default/buckets/{bucket_name}/link endpoint."""
 
     def test_unlink_bucket_link_not_found(
         self, client: TestClient, initialized_backend, admin_headers
@@ -245,7 +245,7 @@ class TestUnlinkBucket:
         """Test unlinking non-linked bucket returns 404."""
         client.post("/projects", json={"id": "unlink_test_1"}, headers=admin_headers)
 
-        response = client.delete("/projects/unlink_test_1/buckets/not_linked/link", headers=admin_headers)
+        response = client.delete("/projects/unlink_test_1/branches/default/buckets/not_linked/link", headers=admin_headers)
 
         assert response.status_code == 404
         assert response.json()["detail"]["error"] == "link_not_found"
@@ -254,20 +254,20 @@ class TestUnlinkBucket:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test unlinking from non-existent project returns 404."""
-        response = client.delete("/projects/nonexistent/buckets/any/link", headers=admin_headers)
+        response = client.delete("/projects/nonexistent/branches/default/buckets/any/link", headers=admin_headers)
 
         assert response.status_code == 404
 
 
 class TestGrantReadonly:
-    """Tests for POST /projects/{project_id}/buckets/{bucket_name}/grant-readonly endpoint."""
+    """Tests for POST /projects/{project_id}/branches/default/buckets/{bucket_name}/grant-readonly endpoint."""
 
     def test_grant_readonly_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test granting readonly access (metadata operation)."""
         client.post("/projects", json={"id": "readonly_test_1"}, headers=admin_headers)
-        client.post("/projects/readonly_test_1/buckets", json={"name": "bucket"}, headers=admin_headers)
+        client.post("/projects/readonly_test_1/branches/default/buckets", json={"name": "bucket"}, headers=admin_headers)
 
-        response = client.post("/projects/readonly_test_1/buckets/bucket/grant-readonly", headers=admin_headers)
+        response = client.post("/projects/readonly_test_1/branches/default/buckets/bucket/grant-readonly", headers=admin_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -277,7 +277,7 @@ class TestGrantReadonly:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test granting readonly on non-existent project returns 404."""
-        response = client.post("/projects/nonexistent/buckets/any/grant-readonly", headers=admin_headers)
+        response = client.post("/projects/nonexistent/branches/default/buckets/any/grant-readonly", headers=admin_headers)
 
         assert response.status_code == 404
 
@@ -287,19 +287,19 @@ class TestGrantReadonly:
         """Test granting readonly on non-existent bucket returns 404."""
         client.post("/projects", json={"id": "readonly_test_2"}, headers=admin_headers)
 
-        response = client.post("/projects/readonly_test_2/buckets/nonexistent/grant-readonly", headers=admin_headers)
+        response = client.post("/projects/readonly_test_2/branches/default/buckets/nonexistent/grant-readonly", headers=admin_headers)
 
         assert response.status_code == 404
 
 
 class TestRevokeReadonly:
-    """Tests for DELETE /projects/{project_id}/buckets/{bucket_name}/grant-readonly endpoint."""
+    """Tests for DELETE /projects/{project_id}/branches/default/buckets/{bucket_name}/grant-readonly endpoint."""
 
     def test_revoke_readonly_success(self, client: TestClient, initialized_backend, admin_headers):
         """Test revoking readonly access (metadata operation)."""
         client.post("/projects", json={"id": "revoke_test_1"}, headers=admin_headers)
 
-        response = client.delete("/projects/revoke_test_1/buckets/any/grant-readonly", headers=admin_headers)
+        response = client.delete("/projects/revoke_test_1/branches/default/buckets/any/grant-readonly", headers=admin_headers)
 
         assert response.status_code == 204
 
@@ -307,7 +307,7 @@ class TestRevokeReadonly:
         self, client: TestClient, initialized_backend, admin_headers
     ):
         """Test revoking readonly on non-existent project returns 404."""
-        response = client.delete("/projects/nonexistent/buckets/any/grant-readonly", headers=admin_headers)
+        response = client.delete("/projects/nonexistent/branches/default/buckets/any/grant-readonly", headers=admin_headers)
 
         assert response.status_code == 404
 
@@ -321,9 +321,9 @@ class TestBucketSharingOperationsLog:
 
         client.post("/projects", json={"id": "share_log_1"}, headers=admin_headers)
         client.post("/projects", json={"id": "share_log_target"}, headers=admin_headers)
-        client.post("/projects/share_log_1/buckets", json={"name": "bucket"}, headers=admin_headers)
+        client.post("/projects/share_log_1/branches/default/buckets", json={"name": "bucket"}, headers=admin_headers)
         client.post(
-            "/projects/share_log_1/buckets/bucket/share",
+            "/projects/share_log_1/branches/default/buckets/bucket/share",
             json={"target_project_id": "share_log_target"},
             headers=admin_headers,
         )

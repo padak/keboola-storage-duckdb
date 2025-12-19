@@ -19,7 +19,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create bucket
     response = client.post(
-        "/projects/snap_proj/buckets",
+        "/projects/snap_proj/branches/default/buckets",
         json={"name": "data_bucket"},
         headers=project_headers,
     )
@@ -27,7 +27,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Create table with primary key
     response = client.post(
-        "/projects/snap_proj/buckets/data_bucket/tables",
+        "/projects/snap_proj/branches/default/buckets/data_bucket/tables",
         json={
             "name": "users",
             "columns": [
@@ -71,7 +71,7 @@ def project_with_data(client, initialized_backend, admin_headers):
 
     # Import data
     response = client.post(
-        "/projects/snap_proj/buckets/data_bucket/tables/users/import/file",
+        "/projects/snap_proj/branches/default/buckets/data_bucket/tables/users/import/file",
         json={
             "file_id": file_id,
             "format": "csv",
@@ -96,7 +96,7 @@ class TestSnapshotCreate:
     def test_create_manual_snapshot(self, client, project_with_data):
         """Create a manual snapshot of a table."""
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -120,7 +120,7 @@ class TestSnapshotCreate:
     def test_create_snapshot_table_not_found(self, client, project_with_data):
         """Creating snapshot of non-existent table returns 404."""
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": "nonexistent",
@@ -134,14 +134,14 @@ class TestSnapshotCreate:
         """Creating snapshot when disabled returns 400."""
         # Disable snapshots for the table
         client.put(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/settings/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/settings/snapshots",
             json={"enabled": False},
             headers=project_with_data["project_headers"],
         )
 
         # Try to create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -158,7 +158,7 @@ class TestSnapshotList:
     def test_list_snapshots_empty(self, client, project_with_data):
         """List snapshots returns empty list when none exist."""
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -171,7 +171,7 @@ class TestSnapshotList:
         # Create multiple snapshots
         for i in range(3):
             response = client.post(
-                f"/projects/{project_with_data['project_id']}/snapshots",
+                f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
                 json={
                     "bucket": project_with_data["bucket_name"],
                     "table": project_with_data["table_name"],
@@ -183,7 +183,7 @@ class TestSnapshotList:
 
         # List all
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -195,7 +195,7 @@ class TestSnapshotList:
         """List snapshots can filter by bucket."""
         # Create snapshot
         client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -205,7 +205,7 @@ class TestSnapshotList:
 
         # Filter by bucket
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?bucket={project_with_data['bucket_name']}",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?bucket={project_with_data['bucket_name']}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -214,7 +214,7 @@ class TestSnapshotList:
 
         # Filter by different bucket
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?bucket=other_bucket",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?bucket=other_bucket",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -226,7 +226,7 @@ class TestSnapshotList:
         # Create 5 snapshots
         for i in range(5):
             client.post(
-                f"/projects/{project_with_data['project_id']}/snapshots",
+                f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
                 json={
                     "bucket": project_with_data["bucket_name"],
                     "table": project_with_data["table_name"],
@@ -236,7 +236,7 @@ class TestSnapshotList:
 
         # Get first page
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?limit=2&offset=0",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?limit=2&offset=0",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -246,7 +246,7 @@ class TestSnapshotList:
 
         # Get second page
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?limit=2&offset=2",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?limit=2&offset=2",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -261,7 +261,7 @@ class TestSnapshotGet:
         """Get snapshot returns detailed information including schema."""
         # Create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -274,7 +274,7 @@ class TestSnapshotGet:
 
         # Get detail
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -290,7 +290,7 @@ class TestSnapshotGet:
     def test_get_snapshot_not_found(self, client, project_with_data):
         """Get non-existent snapshot returns 404."""
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots/snap_nonexistent_123",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/snap_nonexistent_123",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 404
@@ -304,7 +304,7 @@ class TestSnapshotDelete:
         """Delete snapshot removes it from list."""
         # Create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -316,14 +316,14 @@ class TestSnapshotDelete:
 
         # Delete snapshot
         response = client.delete(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 204
 
         # Verify deleted
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 404
@@ -331,7 +331,7 @@ class TestSnapshotDelete:
     def test_delete_snapshot_not_found(self, client, project_with_data):
         """Delete non-existent snapshot returns 404."""
         response = client.delete(
-            f"/projects/{project_with_data['project_id']}/snapshots/snap_nonexistent_123",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/snap_nonexistent_123",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 404
@@ -344,7 +344,7 @@ class TestSnapshotRestore:
         """Restore snapshot to a new table."""
         # Create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -356,7 +356,7 @@ class TestSnapshotRestore:
 
         # Restore to new table
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}/restore",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}/restore",
             json={
                 "target_bucket": project_with_data["bucket_name"],
                 "target_table": "users_restored",
@@ -372,7 +372,7 @@ class TestSnapshotRestore:
 
         # Verify table exists with data
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/users_restored/preview",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/users_restored/preview",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -382,7 +382,7 @@ class TestSnapshotRestore:
         """Restore snapshot to original location (replace existing data)."""
         # Create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -395,7 +395,7 @@ class TestSnapshotRestore:
 
         # Restore to original location (should work even when table exists)
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}/restore",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}/restore",
             json={},  # Defaults to original location
             headers=project_with_data["project_headers"],
         )
@@ -406,7 +406,7 @@ class TestSnapshotRestore:
 
         # Verify data still exists
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/preview",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/preview",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -416,7 +416,7 @@ class TestSnapshotRestore:
         """Restore to different existing table returns 409."""
         # Create second table
         client.post(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables",
             json={
                 "name": "other_table",
                 "columns": [{"name": "id", "type": "INTEGER"}],
@@ -426,7 +426,7 @@ class TestSnapshotRestore:
 
         # Create snapshot
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             json={
                 "bucket": project_with_data["bucket_name"],
                 "table": project_with_data["table_name"],
@@ -437,7 +437,7 @@ class TestSnapshotRestore:
 
         # Try to restore to existing different table
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots/{snapshot_id}/restore",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}/restore",
             json={
                 "target_bucket": project_with_data["bucket_name"],
                 "target_table": "other_table",
@@ -450,7 +450,7 @@ class TestSnapshotRestore:
     def test_restore_snapshot_not_found(self, client, project_with_data):
         """Restore non-existent snapshot returns 404."""
         response = client.post(
-            f"/projects/{project_with_data['project_id']}/snapshots/snap_nonexistent_123/restore",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/snap_nonexistent_123/restore",
             json={},
             headers=project_with_data["project_headers"],
         )
@@ -464,7 +464,7 @@ class TestAutoSnapshot:
         """Auto-snapshot is created before DROP TABLE (default enabled)."""
         # Verify snapshots list is empty
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -472,14 +472,14 @@ class TestAutoSnapshot:
 
         # Delete table (should trigger auto-snapshot)
         response = client.delete(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 204
 
         # Check auto-snapshot was created
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?type=auto_predrop",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?type=auto_predrop",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -499,14 +499,14 @@ class TestAutoSnapshot:
 
         # Delete table
         response = client.delete(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 204
 
         # Verify no snapshots created
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
@@ -523,14 +523,14 @@ class TestAutoSnapshot:
 
         # Drop a column
         response = client.delete(
-            f"/projects/{project_with_data['project_id']}/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/columns/email",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/columns/email",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200
 
         # Check auto-snapshot was created
         response = client.get(
-            f"/projects/{project_with_data['project_id']}/snapshots?type=auto_predrop_column",
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots?type=auto_predrop_column",
             headers=project_with_data["project_headers"],
         )
         assert response.status_code == 200

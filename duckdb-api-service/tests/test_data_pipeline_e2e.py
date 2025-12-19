@@ -52,7 +52,7 @@ def project_with_table(client):
 
     # Create bucket
     response = client.post(
-        "/projects/pipeline-project/buckets",
+        "/projects/pipeline-project/branches/default/buckets",
         json={"name": "in_c_data"},
         headers={"Authorization": f"Bearer {api_key}"},
     )
@@ -60,7 +60,7 @@ def project_with_table(client):
 
     # Create table with primary key for incremental tests
     response = client.post(
-        "/projects/pipeline-project/buckets/in_c_data/tables",
+        "/projects/pipeline-project/branches/default/buckets/in_c_data/tables",
         json={
             "name": "users",
             "columns": [
@@ -138,7 +138,7 @@ def _import_file(
         payload["import_options"] = import_options
 
     response = client.post(
-        f"/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/import/file",
+        f"/projects/{project_id}/branches/default/buckets/{bucket_name}/tables/{table_name}/import/file",
         json=payload,
         headers={"Authorization": f"Bearer {api_key}"},
     )
@@ -166,7 +166,7 @@ def _export_table(
         payload["limit"] = limit
 
     response = client.post(
-        f"/projects/{project_id}/buckets/{bucket_name}/tables/{table_name}/export",
+        f"/projects/{project_id}/branches/default/buckets/{bucket_name}/tables/{table_name}/export",
         json=payload,
         headers={"Authorization": f"Bearer {api_key}"},
     )
@@ -330,7 +330,7 @@ class TestIncrementalImport:
 
         # Verify all rows present
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
@@ -384,7 +384,7 @@ class TestIncrementalImport:
 
         # Verify Alice was updated
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
@@ -542,7 +542,7 @@ class TestImportWithColumnMapping:
 
         # Verify data was imported correctly
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
@@ -577,7 +577,7 @@ class TestImportWithColumnMapping:
 
         # Verify all columns have data
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
@@ -738,7 +738,7 @@ class TestLargeFileImport:
 
         # Verify completeness with preview
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview?limit=1",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview?limit=1",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         assert preview_response.status_code == 200
@@ -954,7 +954,7 @@ class TestCompleteDataPipeline:
 
         # Check data quality via preview
         preview_response = client.get(
-            f"/projects/{project_with_table['project_id']}/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
+            f"/projects/{project_with_table['project_id']}/branches/default/buckets/{project_with_table['bucket_name']}/tables/{project_with_table['table_name']}/preview",
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         assert preview_response.status_code == 200

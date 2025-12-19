@@ -144,7 +144,7 @@ class TestMetricsNormalization:
 
         # Create a bucket
         response = client.post(
-            "/projects/proj_bucket_test/buckets",
+            "/projects/proj_bucket_test/branches/default/buckets",
             json={"name": "my_special_bucket"},
             headers={"Authorization": f"Bearer {project_key}"},
         )
@@ -194,7 +194,7 @@ class TestStorageMetricsCollection:
         # Create buckets
         for name in ["bucket_a", "bucket_b"]:
             response = client.post(
-                "/projects/bucket_count_test/buckets",
+                "/projects/bucket_count_test/branches/default/buckets",
                 json={"name": name},
                 headers=proj_headers,
             )
@@ -219,7 +219,7 @@ class TestStorageMetricsCollection:
         proj_headers = {"Authorization": f"Bearer {project_key}"}
 
         response = client.post(
-            "/projects/table_count_test/buckets",
+            "/projects/table_count_test/branches/default/buckets",
             json={"name": "test_bucket"},
             headers=proj_headers,
         )
@@ -227,7 +227,7 @@ class TestStorageMetricsCollection:
 
         # Create a table
         response = client.post(
-            "/projects/table_count_test/buckets/test_bucket/tables",
+            "/projects/table_count_test/branches/default/buckets/test_bucket/tables",
             json={
                 "name": "test_table",
                 "columns": [
