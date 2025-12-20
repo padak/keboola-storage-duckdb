@@ -7,11 +7,97 @@
 - **Tests:** 17 (gRPC handlers, servicer, integration)
 - **Implementation:** `src/grpc/` module with handlers for InitBackend, RemoveBackend, CreateProject, DropProject
 
-### Phase 12b-e: PHP Driver + More Commands - TODO
+### Phase 12a.1: HTTP Driver Bridge - DONE
+- **Status:** DONE (2024-12-20)
+- **Implementation:** `src/routers/driver.py` - HTTP endpoint for driver commands
+- **Endpoint:** `POST /driver/execute` (requires admin auth)
+- **Why:** PHP nepotrebuje gRPC extension - vola HTTP endpoint s JSON
+
+### Phase 12b: Connection Backend Registration - DONE
+- **Status:** DONE (2024-12-20)
+- **Implementation:** Registered DuckDB as storage backend and file storage provider in Connection
+
+### Phase 12b.1: Connection Full Integration - IN PROGRESS
+- **Status:** IN PROGRESS (2024-12-21)
+- **Goal:** Make DuckDB fully usable from Connection UI/API
+- **Result:** Partial success - project created, bucket created, but table creation needs more work
+- **See:** Detailed notes below in "Phase 12b.1 Integration Notes"
+
+### Phase 12c-e: More Commands + Testing - TODO
 - **Status:** Not Started
 - **Waiting for:** Connection integration testing
 
-## Phase 12a Implementation Details
+## Phase 12b Implementation Details (Connection Side)
+
+### Storage Backend Registration
+
+**Modified Files:**
+
+| File | Change |
+|------|--------|
+| `Package/StorageBackend/src/BackendSupportsInterface.php` | Added `BACKEND_DUCKDB = 'duckdb'`, added to `SUPPORTED_BACKENDS` and `DEV_BRANCH_SUPPORTED_BACKENDS` |
+| `Package/StorageBackend/src/Driver/Config/DuckDBConfig.php` | **NEW** - implements `DriverConfigInterface` |
+| `Package/StorageBackend/src/Driver/DriverClientFactory.php` | Added DuckDB cases in `getClientForBackend`, `getConfigForBackend`, `supportsBackend` |
+| `Package/StorageBackend/src/CommonBackendConfigurationFactory.php` | Added match for `BACKEND_DUCKDB` |
+| `Package/StorageBackend/services.yaml` | Registered `DuckDBDriverClient` with env vars |
+| `storage-backend/.../BackendSupportsInterface.php` | Synced with connection |
+
+**New Package: `Package/StorageDriverDuckdb/`**
+
+```
+connection/Package/StorageDriverDuckdb/
+├── composer.json
+└── src/
+    ├── DuckDBDriverClient.php      # HTTP bridge to DuckDB service
+    └── Exception/
+        └── DuckDBDriverException.php
+```
+
+### File Storage Provider Registration
+
+**Modified Files:**
+
+| File | Change |
+|------|--------|
+| `src/Manage/FileStorage/Entity/FileStorage.php` | Added `PROVIDER_DUCKDB = 'duckdb'`, updated `getProviderInstance` |
+| `legacy-app/.../Row/FileStorage.php` | Added `PROVIDER_DUCKDB`, updated `toApiResponse`, `getFilesBucketForCurrentProvider`, `getProviderInstance` |
+
+**Key Decision:** DuckDB uses S3-compatible API, so `getProviderInstance()` returns `S3Provider` for DuckDB.
+
+### Environment Variables
+
+Connection needs these env vars to communicate with DuckDB service:
+
+```bash
+DUCKDB_SERVICE_URL=http://duckdb-service:8000
+DUCKDB_ADMIN_API_KEY=your-admin-api-key
+```
+
+**How to add in Connection:**
+
+1. **docker-compose.yml** (for local dev):
+   ```yaml
+   services:
+     apache:
+       environment:
+         DUCKDB_SERVICE_URL: http://duckdb-service:8000
+         DUCKDB_ADMIN_API_KEY: ${DUCKDB_ADMIN_API_KEY}
+   ```
+
+2. **.env file** (Connection root):
+   ```bash
+   DUCKDB_SERVICE_URL=http://duckdb-service:8000
+   DUCKDB_ADMIN_API_KEY=test-admin-key-change-in-production
+   ```
+
+3. **Symfony config** (`config/services.yaml`):
+   ```yaml
+   parameters:
+     env(DUCKDB_SERVICE_URL): 'http://localhost:8000'
+     env(DUCKDB_ADMIN_API_KEY): ''
+   ```
+
+## Phase 12a Implementation Details (Python Side)
 
 ### Created Files
 
@@ -37,6 +123,7 @@
 
 ### Verified Commands
 
+**gRPC (port 50051):**
 ```bash
 # InitBackendCommand
 grpcurl -plaintext -import-path . -proto proto/service.proto \
@@ -51,16 +138,25 @@ grpcurl -plaintext -import-path . -proto proto/service.proto \
   localhost:50051 keboola.storageDriver.service.StorageDriverService/Execute
 ```
 
-## Related Documents
+**HTTP Bridge (port 8000) - pro PHP driver:**
+```bash
+# InitBackendCommand
+curl -X POST http://localhost:8000/driver/execute \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"command": {"type": "InitBackendCommand"}}'
 
-- **[ADR-014: gRPC Driver Interface](../adr/014-grpc-driver-interface.md)** - Architektura gRPC rozhrani
-- **[phase-12-implementation-plan.md](phase-12-implementation-plan.md)** - Detailed implementation plan
+# CreateProjectCommand
+curl -X POST http://localhost:8000/driver/execute \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"command": {"type": "CreateProjectCommand", "projectId": "test-123"}}'
 
-## Goal
+# List supported commands
+curl http://localhost:8000/driver/commands
+```
 
-Implement PHP driver that communicates with DuckDB API Service via **gRPC** (not REST).
-
-## Architecture (Updated per ADR-014)
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -71,15 +167,14 @@ Implement PHP driver that communicates with DuckDB API Service via **gRPC** (not
 │         ▼                                                            │
 │  DriverClientFactory::getClientForBackend('duckdb')                  │
 │         │                                                            │
-│         ▼ PROTOBUF MESSAGES                                          │
+│         ▼                                                            │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  DuckdbDriverClient (implements ClientInterface)              │   │
+│  │  DuckDBDriverClient (HTTP Bridge)                             │   │
 │  │         │                                                     │   │
-│  │         │ gRPC (port 50051)                                   │   │
+│  │         │ HTTP POST /driver/execute                           │   │
 │  │         │                                                     │   │
-│  │         │ GenericBackendCredentials:                          │   │
-│  │         │   host = project_id                                 │   │
-│  │         │   principal = api_key                               │   │
+│  │         │ Headers:                                            │   │
+│  │         │   Authorization: Bearer $DUCKDB_ADMIN_API_KEY       │   │
 │  │         │                                                     │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                      │                                               │
@@ -102,81 +197,38 @@ Implement PHP driver that communicates with DuckDB API Service via **gRPC** (not
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Changes from Original Plan:**
-- gRPC instead of REST for driver communication
-- No PHP handlers needed - gRPC client only
-- S3-compatible API for file uploads (see ADR-014)
+**Key Decisions:**
+- HTTP bridge instead of gRPC - PHP doesn't need gRPC extension
+- S3-compatible API for file uploads
+- DuckDB registered as both storage backend AND file storage provider
 
-## Package Structure (Simplified with gRPC)
-
-S gRPC pristupem nepotrebujeme PHP handlery - gRPC klient primo vola Python server.
-
-```
-connection/Package/StorageDriverDuckdb/
-├── composer.json
-├── services.yaml
-├── src/
-│   ├── DuckdbDriverClient.php       # Implements ClientInterface, gRPC calls
-│   ├── DuckdbCredentialsHelper.php  # GenericBackendCredentials → host/principal
-│   └── Exception/
-│       └── DuckdbDriverException.php
-└── tests/
-    ├── Unit/
-    └── Functional/
-```
-
-**Pozn:** Vsechna command logika je v Python gRPC serveru, PHP driver jen:
-1. Vytvori `DriverRequest` s credentials a command
-2. Zavola `grpcClient->Execute(request)`
-3. Vrati `DriverResponse`
-
-## Dependencies
-
-```json
-{
-    "name": "keboola/storage-driver-duckdb",
-    "require": {
-        "php": "^8.2",
-        "google/protobuf": "^3.21",
-        "grpc/grpc": "^1.57",
-        "keboola/storage-driver-common": "^7.8.0",
-        "psr/log": "^1.1|^2.0|^3.0"
-    }
-}
-```
-
-**Pozn:** Nepotrebujeme `guzzlehttp/guzzle` - komunikace jde pres gRPC, ne HTTP.
-
-## Key Files
-
-### DuckdbDriverClient.php
+## DuckDBDriverClient Implementation
 
 ```php
 <?php
 declare(strict_types=1);
 
-namespace Keboola\StorageDriver\Duckdb;
+namespace Keboola\StorageDriver\DuckDB;
 
-use Google\Protobuf\Any;
 use Google\Protobuf\Internal\Message;
-use Grpc\ChannelCredentials;
-use Keboola\StorageDriver\Command\Common\DriverRequest;
-use Keboola\StorageDriver\Command\Common\DriverResponse;
+use GuzzleHttp\Client;
 use Keboola\StorageDriver\Contract\Driver\ClientInterface;
 use Keboola\StorageDriver\Credentials\GenericBackendCredentials;
-use Keboola\StorageDriver\Service\StorageDriverServiceClient;
 
-class DuckdbDriverClient implements ClientInterface
+class DuckDBDriverClient implements ClientInterface
 {
-    private StorageDriverServiceClient $grpcClient;
+    private Client $httpClient;
 
-    public function __construct(string $serviceUrl)
+    public function __construct(string $serviceUrl, string $adminApiKey)
     {
-        // gRPC client pro DuckDB service
-        $this->grpcClient = new StorageDriverServiceClient(
-            $serviceUrl,
-            ['credentials' => ChannelCredentials::createInsecure()]
-        );
+        $this->httpClient = new Client([
+            'base_uri' => rtrim($serviceUrl, '/'),
+            'timeout' => 300,
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $adminApiKey,
+            ],
+        ]);
     }
 
     public function runCommand(
@@ -185,66 +237,8 @@ class DuckdbDriverClient implements ClientInterface
         array $features,
         Message $runtimeOptions,
     ): ?Message {
-        assert($credentials instanceof GenericBackendCredentials);
-
-        // 1. Vytvor DriverRequest
-        $request = new DriverRequest();
-
-        $credentialsAny = new Any();
-        $credentialsAny->pack($credentials);
-        $request->setCredentials($credentialsAny);
-
-        $commandAny = new Any();
-        $commandAny->pack($command);
-        $request->setCommand($commandAny);
-
-        $request->setFeatures($features);
-        $request->setRuntimeOptions($runtimeOptions);
-
-        // 2. Zavolej gRPC Execute
-        [$response, $status] = $this->grpcClient->Execute($request)->wait();
-
-        if ($status->code !== \Grpc\STATUS_OK) {
-            throw new DuckdbDriverException(
-                $status->details,
-                $status->code
-            );
-        }
-
-        // 3. Vrat DriverResponse
-        return $response;
-    }
-}
-```
-
-### DuckdbCredentialsHelper.php
-
-```php
-<?php
-declare(strict_types=1);
-
-namespace Keboola\StorageDriver\Duckdb;
-
-use Keboola\StorageDriver\Credentials\GenericBackendCredentials;
-
-class DuckdbCredentialsHelper
-{
-    /**
-     * Extract project ID from credentials
-     * Per ADR-014: host = project_id
-     */
-    public static function getProjectId(GenericBackendCredentials $credentials): string
-    {
-        return $credentials->getHost();
-    }
-
-    /**
-     * Extract API key from credentials
-     * Per ADR-014: principal = api_key
-     */
-    public static function getApiKey(GenericBackendCredentials $credentials): string
-    {
-        return $credentials->getPrincipal();
+        // Build request and call POST /driver/execute
+        // Parse response into DriverResponse
     }
 }
 ```
@@ -262,9 +256,119 @@ class DuckdbCredentialsHelper
 | Workspace | Create, Drop, Clear, DropObject, ResetPassword |
 | Query | ExecuteQuery |
 
-## Reference
+## Phase 12b.1 Integration Notes (2024-12-21)
 
-- **[ADR-014: gRPC Driver Interface](../adr/014-grpc-driver-interface.md)** - Vsechna architekturni rozhodnuti
+### What We Achieved
+
+1. **Created DuckDB project via API** (ID: 5, "DuckDB Test Project")
+2. **Created DuckDB bucket** (`in.c-test` with `backend: duckdb`)
+3. **Storage API token works** for the project
+
+### Direct SQL Changes Required
+
+Connection's MySQL database needs these changes:
+
+```sql
+-- 1. Add column to bi_maintainers (migration created)
+ALTER TABLE bi_maintainers
+ADD COLUMN idDefaultConnectionDuckdb INT UNSIGNED DEFAULT NULL;
+ALTER TABLE bi_maintainers ADD KEY idDefaultConnectionDuckdb (idDefaultConnectionDuckdb);
+ALTER TABLE bi_maintainers ADD CONSTRAINT bi_maintainers_ibfk_duckdb
+FOREIGN KEY (idDefaultConnectionDuckdb) REFERENCES bi_connectionsMysql (id);
+
+-- 2. Add DuckDB connection entry
+INSERT INTO bi_connectionsMysql (host, backend, region, owner, technicalOwner)
+VALUES ('duckdb-service', 'duckdb', 'local', 'Keboola', 'Keboola');
+
+-- 3. Add column to bi_projects (NOT in migration - done manually)
+ALTER TABLE bi_projects ADD COLUMN idDefaultConnectionDuckdb INT UNSIGNED DEFAULT NULL;
+ALTER TABLE bi_projects ADD KEY idDefaultConnectionDuckdb (idDefaultConnectionDuckdb);
+
+-- 4. Set DuckDB connection for maintainer/project
+UPDATE bi_maintainers SET idDefaultConnectionDuckdb = 3 WHERE id = 3;
+UPDATE bi_projects SET idDefaultConnectionDuckdb = 3 WHERE id = 5;
+```
+
+### PHP Files Modified
+
+| File | Change |
+|------|--------|
+| `composer.json` | Added PSR-4 autoload: `Keboola\\StorageDriver\\DuckDB\\` -> `Package/StorageDriverDuckdb/src` |
+| `legacy-app/.../models/Buckets.php` | Added `BACKEND_DUCKDB` to `availableBackends()` |
+| `src/Storage/Buckets/BucketCreate/Request/CreateBucketRequest.php` | Added DuckDB to validation choices + OpenAPI schema |
+| `legacy-app/.../models/Row/Project.php` | Added DuckDB cases in `getBackendDatabaseName()` and `getProjectRoleName()` |
+| `legacy-app/.../models/Row/Bucket.php` | Added DuckDB case in `getFullPath()` |
+| `legacy-app/.../admin/controllers/MaintainersController.php` | Added DuckDB connections query + form field |
+| `legacy-app/.../manage/controllers/requests/MaintainerDataInterface.php` | Added `FIELD_ID_DUCKDB` |
+| `legacy-app/.../manage/controllers/requests/CreateMaintainerData.php` | Full DuckDB support |
+| `legacy-app/.../admin/views/scripts/maintainers/detail.phtml` | Added `duckdbConnections` to options |
+| `public/app/modules/admin/scripts/app.coffee` | Added DuckDB dropdown HTML + JS |
+
+### Migration File Created
+
+```
+connection/legacy-app/sql/migrations/accounts/Version20251221100000.php
+```
+
+Run with: `docker compose run --rm cli ./migrations.sh migrations:migrate --no-interaction`
+
+### What's Still Missing (Blocking Table Creation)
+
+1. **Zend ORM Reference Rules** - `Model_Projects` needs `DefaultConnectionDuckdb` reference rule defined
+   - Error: `No reference rule "DefaultConnectionDuckdb" from table Model_Projects to table Model_ConnectionsMysql`
+   - Location: `legacy-app/application/modules/core/models/Projects.php` (referenceMap)
+
+2. **Many more switch statements** - Connection has dozens of places with backend-specific logic:
+   - Each `switch ($backendType)` needs a DuckDB case
+   - Each `match ($this->getBackend())` needs a DuckDB case
+
+3. **Driver client not yet called** - Current errors happen before DuckDBDriverClient is invoked
+
+### API Commands That Work
+
+```bash
+# List storage backends
+curl -s -k "https://localhost:8700/manage/storage-backend" \
+  -H "X-KBC-ManageApiToken: $TOKEN"
+
+# Create maintainer (via API, then set DuckDB via SQL)
+curl -s -k -X POST "https://localhost:8700/manage/maintainers" \
+  -H "X-KBC-ManageApiToken: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Services"}'
+
+# Create organization
+curl -s -k -X POST "https://localhost:8700/manage/maintainers/3/organizations" \
+  -H "X-KBC-ManageApiToken: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Org"}'
+
+# Create project with DuckDB backend
+curl -s -k -X POST "https://localhost:8700/manage/organizations/5/projects" \
+  -H "X-KBC-ManageApiToken: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Test Project", "defaultBackend": "duckdb"}'
+
+# Create Storage API token
+curl -s -k -X POST "https://localhost:8700/manage/projects/5/tokens" \
+  -H "X-KBC-ManageApiToken: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description": "DuckDB Test Token", "canManageBuckets": true}'
+
+# List buckets (works after PHP fixes)
+curl -s -k "https://localhost:8700/v2/storage/buckets" \
+  -H "X-StorageApi-Token: $STORAGE_TOKEN"
+```
+
+### Recommended Next Steps
+
+1. **Option A: Continue PHP integration** - Fix Zend ORM reference rules, add all missing switch cases
+2. **Option B: Use DuckDB API directly** - Bypass Connection, use DuckDB API Service REST endpoints
+3. **Option C: Hybrid** - Use Connection for project/org management, DuckDB API for storage operations
+
+## Related Documents
+
+- **[ADR-014: gRPC Driver Interface](../adr/014-grpc-driver-interface.md)** - Architektura gRPC rozhrani
+- **[phase-12-implementation-plan.md](phase-12-implementation-plan.md)** - Detailed implementation plan
 - BigQuery driver: `connection/Package/StorageDriverBigQuery/` (reference, ale jiny pattern - in-process)
 - storage-driver-common proto: `connection/vendor/keboola/storage-driver-common/proto/`
-- Zajcuv PR s gRPC: https://github.com/keboola/storage-backend/pull/259

@@ -77,6 +77,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── branches.py    # Dev branches CRUD + pull
   │       ├── workspaces.py  # Workspace management
   │       ├── pgwire_auth.py # PG Wire auth bridge (internal)
+  │       ├── driver.py      # HTTP bridge for driver commands (Phase 12a.1)
   │       └── metrics.py     # Prometheus /metrics endpoint
   ├── proto/                 # Protocol Buffer definitions
   ├── generated/             # Generated Python protobuf code
@@ -85,7 +86,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
 connection/                   # Keboola Connection (git submodule/clone)
 ```
 
-## Current Status (2024-12-20)
+## Current Status (2024-12-21)
 
 **Strategy: Python API first, PHP Driver last**
 
@@ -109,17 +110,28 @@ connection/                   # Keboola Connection (git submodule/clone)
 | PG Wire Server | DONE | 26 |
 | E2E Tests (Phase 11c) | DONE | 62 |
 | **gRPC Server (Phase 12a)** | **DONE** | 17 |
+| **Connection Backend Registration (Phase 12b)** | **DONE** | - |
+| **Connection Full Integration (Phase 12b.1)** | **PARTIAL** | - |
 | Schema Migrations | TODO | - |
-| PHP Driver (Phase 12b-e) | TODO (last) | - |
+| PHP Driver Commands (Phase 12c-e) | TODO (last) | - |
 
 **Total: 480 tests PASS** (including 62 E2E + 17 gRPC tests)
 
-**Current: Phase 12a DONE - gRPC Server**
+**Current: Phase 12b.1 IN PROGRESS - Connection Full Integration**
 
-All bucket/table operations now use branch-first URLs (ADR-012):
-- `/projects/{id}/branches/{branch_id}/buckets/...`
-- `default` = main (production project)
-- `source` field in TableResponse: `"main"` or `"branch"`
+DuckDB project + bucket creation works via API. Table creation blocked by missing Zend ORM reference rules.
+
+**What works:**
+- Create DuckDB project via Manage API (`defaultBackend: duckdb`)
+- Create Storage API token for DuckDB project
+- Create bucket with DuckDB backend
+- List buckets shows `backend: duckdb`
+
+**What's blocked:**
+- Table creation - needs Zend ORM `DefaultConnectionDuckdb` reference rule
+- Many PHP switch statements still missing DuckDB cases
+
+**See:** `docs/plan/phase-12-php-driver.md` for detailed integration notes
 
 **Completed implementation:**
 1. ~~REFACTOR to ADR-009 (per-table files)~~ - DONE
@@ -136,7 +148,9 @@ All bucket/table operations now use branch-first URLs (ADR-012):
 12. ~~PG Wire Server (buenavista)~~ - DONE
 13. ~~E2E Tests + PG Wire Polish~~ - DONE
 14. ~~gRPC Server (Phase 12a)~~ - DONE
-15. **PHP Driver + More gRPC Commands** - NEXT
+15. ~~Connection Backend Registration (Phase 12b)~~ - DONE
+16. **Connection Full Integration (Phase 12b.1)** - PARTIAL
+17. **More Driver Commands + Integration Testing** - NEXT
 
 ## Key Decisions (APPROVED)
 
@@ -260,6 +274,8 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 |----------|--------|-------------|
 | `/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics (no auth) |
+| `/driver/execute` | POST | Execute driver command (admin auth) |
+| `/driver/commands` | GET | List supported driver commands |
 | `/backend/init` | POST | Initialize storage |
 | `/backend/remove` | POST | Remove backend |
 | `/projects` | GET/POST | List/Create projects |
@@ -355,3 +371,81 @@ docker compose up apache supervisor
 # URL: https://localhost:8700/admin
 # Login: dev@keboola.com / devdevdev
 ```
+
+### DuckDB Backend Configuration
+
+Connection needs these environment variables to use DuckDB backend:
+
+```bash
+# Required for DuckDB driver
+DUCKDB_SERVICE_URL=http://duckdb-service:8000
+DUCKDB_ADMIN_API_KEY=your-admin-api-key
+```
+
+**Setup options:**
+
+1. **Add to connection/.env:**
+   ```bash
+   DUCKDB_SERVICE_URL=http://localhost:8000
+   DUCKDB_ADMIN_API_KEY=test-admin-key
+   ```
+
+2. **Add to connection/docker-compose.yml:**
+   ```yaml
+   services:
+     apache:
+       environment:
+         DUCKDB_SERVICE_URL: http://duckdb-service:8000
+         DUCKDB_ADMIN_API_KEY: ${DUCKDB_ADMIN_API_KEY}
+   ```
+
+3. **Add to connection/config/services.yaml (defaults):**
+   ```yaml
+   parameters:
+     env(DUCKDB_SERVICE_URL): 'http://localhost:8000'
+     env(DUCKDB_ADMIN_API_KEY): ''
+   ```
+
+### DuckDB Integration via API (Phase 12b.1)
+
+After running the migration and SQL changes (see `docs/plan/phase-12-php-driver.md`):
+
+```bash
+# 1. Create maintainer with DuckDB (then set via SQL)
+curl -s -k -X POST "https://localhost:8700/manage/maintainers" \
+  -H "X-KBC-ManageApiToken: $MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Services"}'
+
+# 2. Set DuckDB connection via SQL (ID 3 = DuckDB connection)
+docker compose exec mysql-accounts mysql -u root -proot accounts \
+  -e "UPDATE bi_maintainers SET idDefaultConnectionDuckdb = 3 WHERE name = 'DuckDB Services';"
+
+# 3. Create organization under DuckDB maintainer
+curl -s -k -X POST "https://localhost:8700/manage/maintainers/{maintainer_id}/organizations" \
+  -H "X-KBC-ManageApiToken: $MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Org"}'
+
+# 4. Create project with DuckDB backend
+curl -s -k -X POST "https://localhost:8700/manage/organizations/{org_id}/projects" \
+  -H "X-KBC-ManageApiToken: $MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "DuckDB Test Project", "defaultBackend": "duckdb"}'
+
+# 5. Set DuckDB connection for project via SQL
+docker compose exec mysql-accounts mysql -u root -proot accounts \
+  -e "UPDATE bi_projects SET idDefaultConnectionDuckdb = 3 WHERE name = 'DuckDB Test Project';"
+
+# 6. Create Storage API token
+curl -s -k -X POST "https://localhost:8700/manage/projects/{project_id}/tokens" \
+  -H "X-KBC-ManageApiToken: $MANAGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description": "DuckDB Test Token", "canManageBuckets": true}'
+
+# 7. Use Storage API token
+curl -s -k "https://localhost:8700/v2/storage/buckets" \
+  -H "X-StorageApi-Token: $STORAGE_TOKEN"
+```
+
+**Note:** Table creation is blocked by missing Zend ORM reference rules. See phase-12-php-driver.md for details.
