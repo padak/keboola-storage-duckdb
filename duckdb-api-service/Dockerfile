@@ -25,6 +25,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ ./src/
 
+# Copy proto definitions and generated code
+COPY proto/ ./proto/
+COPY generated/ ./generated/
+
 # Create data directories
 RUN mkdir -p /data/duckdb /data/files /data/snapshots /data/metadata && \
     chown -R appuser:appgroup /data
@@ -32,12 +36,12 @@ RUN mkdir -p /data/duckdb /data/files /data/snapshots /data/metadata && \
 # Switch to non-root user
 USER appuser
 
-# Expose ports (REST API + PG Wire)
-EXPOSE 8000 5432
+# Expose ports (REST API + PG Wire + gRPC)
+EXPOSE 8000 5432 50051
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health', timeout=5).raise_for_status()"
 
-# Run the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the unified server (REST + gRPC)
+CMD ["python", "-m", "src.unified_server"]

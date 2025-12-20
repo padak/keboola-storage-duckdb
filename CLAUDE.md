@@ -51,10 +51,19 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   ├── metrics.py         # Prometheus metrics definitions
   │   ├── branch_utils.py    # Branch resolution utilities (ADR-012)
   │   ├── snapshot_config.py # Hierarchical snapshot config resolver
+  │   ├── unified_server.py  # REST + gRPC unified server
   │   ├── middleware/        # HTTP middleware
   │   │   ├── idempotency.py # X-Idempotency-Key handling
   │   │   └── metrics.py     # Request instrumentation
-  │   └── routers/           # API endpoints
+  │   ├── grpc/              # gRPC layer (Phase 12a)
+  │   │   ├── server.py      # gRPC server
+  │   │   ├── servicer.py    # StorageDriverServicer
+  │   │   ├── utils.py       # LogMessageCollector, helpers
+  │   │   └── handlers/      # Command handlers
+  │   │       ├── base.py    # BaseCommandHandler
+  │   │       ├── backend.py # InitBackend, RemoveBackend
+  │   │       └── project.py # CreateProject, DropProject
+  │   └── routers/           # REST API endpoints
   │       ├── backend.py     # Health, init, remove
   │       ├── projects.py    # Project CRUD
   │       ├── buckets.py     # Bucket CRUD
@@ -69,12 +78,14 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── workspaces.py  # Workspace management
   │       ├── pgwire_auth.py # PG Wire auth bridge (internal)
   │       └── metrics.py     # Prometheus /metrics endpoint
-  └── tests/                 # pytest tests (439 tests)
+  ├── proto/                 # Protocol Buffer definitions
+  ├── generated/             # Generated Python protobuf code
+  └── tests/                 # pytest tests (480 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
 
-## Current Status (2024-12-19)
+## Current Status (2024-12-20)
 
 **Strategy: Python API first, PHP Driver last**
 
@@ -97,12 +108,13 @@ connection/                   # Keboola Connection (git submodule/clone)
 | Workspaces (REST API) | DONE | 41 |
 | PG Wire Server | DONE | 26 |
 | E2E Tests (Phase 11c) | DONE | 62 |
+| **gRPC Server (Phase 12a)** | **DONE** | 17 |
 | Schema Migrations | TODO | - |
-| PHP Driver | TODO (last) | - |
+| PHP Driver (Phase 12b-e) | TODO (last) | - |
 
-**Total: 438 tests PASS** (including 62 comprehensive E2E tests)
+**Total: 480 tests PASS** (including 62 E2E + 17 gRPC tests)
 
-**Current: Phase 12 - PHP Driver (TODO)**
+**Current: Phase 12a DONE - gRPC Server**
 
 All bucket/table operations now use branch-first URLs (ADR-012):
 - `/projects/{id}/branches/{branch_id}/buckets/...`
@@ -123,7 +135,8 @@ All bucket/table operations now use branch-first URLs (ADR-012):
 11. ~~Workspaces (REST API)~~ - DONE
 12. ~~PG Wire Server (buenavista)~~ - DONE
 13. ~~E2E Tests + PG Wire Polish~~ - DONE
-14. **PHP Driver** - NEXT
+14. ~~gRPC Server (Phase 12a)~~ - DONE
+15. **PHP Driver + More gRPC Commands** - NEXT
 
 ## Key Decisions (APPROVED)
 
@@ -200,10 +213,31 @@ Usage:
 ```bash
 cd duckdb-api-service
 source .venv/bin/activate
-pytest tests/ -v           # Run tests
-python -m src.main         # Run server
-docker compose up --build  # Docker
-open dashboard.html        # Metrics dashboard (auto-refresh)
+pytest tests/ -v                  # Run tests (480 total)
+python -m src.main                # Run REST API only (port 8000)
+python -m src.unified_server      # Run REST + gRPC (ports 8000, 50051)
+python -m src.grpc.server         # Run gRPC only (port 50051)
+docker compose up --build         # Docker
+open dashboard.html               # Metrics dashboard (auto-refresh)
+```
+
+### gRPC Testing with grpcurl
+
+```bash
+# List services
+grpcurl -plaintext -import-path . -proto proto/service.proto localhost:50051 list
+
+# InitBackendCommand
+grpcurl -plaintext -import-path . -proto proto/service.proto \
+  -proto proto/common.proto -proto proto/backend.proto \
+  -d '{"command": {"@type": "type.googleapis.com/keboola.storageDriver.command.backend.InitBackendCommand"}}' \
+  localhost:50051 keboola.storageDriver.service.StorageDriverService/Execute
+
+# CreateProjectCommand
+grpcurl -plaintext -import-path . -proto proto/service.proto \
+  -proto proto/common.proto -proto proto/project.proto \
+  -d '{"command": {"@type": "type.googleapis.com/keboola.storageDriver.command.project.CreateProjectCommand", "projectId": "test-123"}}' \
+  localhost:50051 keboola.storageDriver.service.StorageDriverService/Execute
 ```
 
 ### Metrics Dashboard

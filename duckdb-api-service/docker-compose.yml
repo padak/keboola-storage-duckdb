@@ -1,14 +1,15 @@
 version: "3.8"
 
 services:
-  # REST API service
+  # REST API + gRPC service (unified server)
   duckdb-api:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: duckdb-api-service
     ports:
-      - "8000:8000"
+      - "8000:8000"    # REST API
+      - "50051:50051"  # gRPC (Storage Driver protocol)
     environment:
       - DEBUG=true
       - DATA_DIR=/data
@@ -22,6 +23,8 @@ services:
       - duckdb-data:/data
       # Development: mount source for hot reload
       - ./src:/app/src:ro
+      - ./generated:/app/generated:ro
+      - ./proto:/app/proto:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
       interval: 30s

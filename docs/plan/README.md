@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 12 TODO (PHP Driver)
+## Current Status: Phase 12a DONE (gRPC Server)
 
-**Total Tests: 463**
+**Total Tests: 480**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -20,8 +20,9 @@
 | 10 | Dev Branches + Branch-First API | DONE | 34 | [phase-10-branches.md](phase-10-branches.md) |
 | 11a | Workspaces REST API | DONE | 41 | [phase-11-workspaces.md](phase-11-workspaces.md) |
 | 11b | PG Wire Server | DONE | 26 | [phase-11b-pgwire.md](phase-11b-pgwire.md) |
-| 11c | Workspace Polish | IN PROGRESS | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
-| **12** | **PHP Driver** | **TODO** | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 11c | Workspace Polish | DONE | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
+| **12a** | **gRPC Server** | **DONE** | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12b-e | PHP Driver + More Commands | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
@@ -77,7 +78,9 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 [DONE] Workspace Polish + E2E Tests (62 tests)
        ↓
-[LAST] PHP Driver Package
+[DONE] gRPC Server - Phase 12a (17 tests)
+       ↓
+[NEXT] PHP Driver Package + More gRPC Commands
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -102,6 +105,7 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.4 | 2024-12-20 | Phase 12a DONE: gRPC Server (17 tests), unified server, 480 total tests |
 | v7.3 | 2024-12-19 | Update test count to 463, ADR-010 updated for buenavista |
 | v7.2 | 2024-12-19 | Phase 10 DONE: Branch-First API refactoring complete |
 | v7.1 | 2024-12-19 | ADR-012: Branch-First API design, Phase 10 refactoring |
