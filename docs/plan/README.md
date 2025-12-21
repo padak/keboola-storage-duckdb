@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 12a DONE (gRPC Server)
+## Current Status: Phase 12d DONE (Schema Handlers)
 
-**Total Tests: 480**
+**Total Tests: 521**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -21,8 +21,11 @@
 | 11a | Workspaces REST API | DONE | 41 | [phase-11-workspaces.md](phase-11-workspaces.md) |
 | 11b | PG Wire Server | DONE | 26 | [phase-11b-pgwire.md](phase-11b-pgwire.md) |
 | 11c | Workspace Polish | DONE | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
-| **12a** | **gRPC Server** | **DONE** | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
-| 12b-e | PHP Driver + More Commands | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12a | gRPC Server | DONE | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12b | Connection Backend Registration | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| **12c** | **gRPC Core Handlers** | **DONE** | 23 | [phase-12c-core-handlers.md](phase-12c-core-handlers.md) |
+| **12d** | **gRPC Schema Handlers** | **DONE** | 18 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12e-g | Workspace/Sharing/Advanced | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
@@ -80,7 +83,11 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 [DONE] gRPC Server - Phase 12a (17 tests)
        ↓
-[NEXT] PHP Driver Package + More gRPC Commands
+[DONE] gRPC Core Handlers - Phase 12c (23 tests)
+       ↓
+[DONE] gRPC Schema Handlers - Phase 12d (18 tests)
+       ↓
+[NEXT] Workspace/Sharing/Advanced Handlers - Phase 12e-g
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -105,6 +112,8 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.6 | 2024-12-21 | Phase 12d DONE: Schema Handlers (18 tests), 521 total tests |
+| v7.5 | 2024-12-21 | Phase 12c DONE: Core Handlers (23 tests), Connection registration |
 | v7.4 | 2024-12-20 | Phase 12a DONE: gRPC Server (17 tests), unified server, 480 total tests |
 | v7.3 | 2024-12-19 | Update test count to 463, ADR-010 updated for buenavista |
 | v7.2 | 2024-12-19 | Phase 10 DONE: Branch-First API refactoring complete |

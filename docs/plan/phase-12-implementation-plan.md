@@ -946,39 +946,62 @@ case BackendSupportsInterface::BACKEND_DUCKDB:
 
 ---
 
-## Command Implementation Priority
+## Command Implementation Status (2024-12-21)
 
-### Phase 12a (Minimum Viable) - 3 commands
-| Command | Handler | Notes |
-|---------|---------|-------|
-| InitBackendCommand | InitBackendHandler | Init metadata DB |
-| CreateProjectCommand | CreateProjectHandler | Returns API key |
-| DropProjectCommand | DropProjectHandler | Delete project |
+### Phase 12a: Backend/Project - DONE (4 commands)
+| Command | Handler | Status |
+|---------|---------|--------|
+| InitBackendCommand | InitBackendHandler | DONE |
+| RemoveBackendCommand | RemoveBackendHandler | DONE |
+| CreateProjectCommand | CreateProjectHandler | DONE |
+| DropProjectCommand | DropProjectHandler | DONE |
 
-### Phase 12d (Basic Operations) - +5 commands
-| Command | Handler | Notes |
-|---------|---------|-------|
-| CreateBucketCommand | CreateBucketHandler | Create bucket dir |
-| DropBucketCommand | DropBucketHandler | Delete bucket |
-| CreateTableCommand | CreateTableHandler | Create table file |
-| DropTableCommand | DropTableHandler | Delete table file |
-| ObjectInfoCommand | ObjectInfoHandler | Get object metadata |
+### Phase 12c: Core Operations - DONE (8 commands)
+| Command | Handler | Status |
+|---------|---------|--------|
+| CreateBucketCommand | CreateBucketHandler | DONE |
+| DropBucketCommand | DropBucketHandler | DONE |
+| CreateTableCommand | CreateTableHandler | DONE |
+| DropTableCommand | DropTableHandler | DONE |
+| ObjectInfoCommand | ObjectInfoHandler | DONE |
+| PreviewTableCommand | PreviewTableHandler | DONE |
+| TableImportFromFileCommand | TableImportFromFileHandler | DONE |
+| TableExportToFileCommand | TableExportToFileHandler | DONE |
 
-### Phase 12e (Full Driver) - +12 commands
-| Command | Handler |
-|---------|---------|
-| AddColumnCommand | AddColumnHandler |
-| DropColumnCommand | DropColumnHandler |
-| AlterColumnCommand | AlterColumnHandler |
-| AddPrimaryKeyCommand | PKHandler |
-| DropPrimaryKeyCommand | PKHandler |
-| TableImportFromFileCommand | ImportHandler |
-| TableExportToFileCommand | ExportHandler |
-| PreviewTableCommand | PreviewHandler |
-| CreateWorkspaceCommand | WorkspaceHandler |
-| DropWorkspaceCommand | WorkspaceHandler |
-| CreateDevBranchCommand | BranchHandler |
-| DropDevBranchCommand | BranchHandler |
+### Phase 12d: Schema Operations - DONE (6 commands)
+| Command | Handler | Status |
+|---------|---------|--------|
+| AddColumnCommand | AddColumnHandler | DONE |
+| DropColumnCommand | DropColumnHandler | DONE |
+| AlterColumnCommand | AlterColumnHandler | DONE |
+| AddPrimaryKeyCommand | AddPrimaryKeyHandler | DONE |
+| DropPrimaryKeyCommand | DropPrimaryKeyHandler | DONE |
+| DeleteTableRowsCommand | DeleteTableRowsHandler | DONE |
+
+### Phase 12e: Workspace Operations - DONE (8 commands)
+| Command | Handler | Status |
+|---------|---------|--------|
+| CreateWorkspaceCommand | CreateWorkspaceHandler | DONE |
+| DropWorkspaceCommand | DropWorkspaceHandler | DONE |
+| ClearWorkspaceCommand | ClearWorkspaceHandler | DONE |
+| ResetWorkspacePasswordCommand | ResetWorkspacePasswordHandler | DONE |
+| DropWorkspaceObjectCommand | DropWorkspaceObjectHandler | DONE |
+| GrantWorkspaceAccessToProjectCommand | GrantWorkspaceAccessToProjectHandler | DONE |
+| RevokeWorkspaceAccessToProjectCommand | RevokeWorkspaceAccessToProjectHandler | DONE |
+| LoadTableToWorkspaceCommand | LoadTableToWorkspaceHandler | DONE |
+
+### Phase 12f-g: TODO
+| Command | Handler | Status |
+|---------|---------|--------|
+| ShareBucketCommand | ShareBucketHandler | TODO |
+| UnshareBucketCommand | UnshareBucketHandler | TODO |
+| LinkBucketCommand | LinkBucketHandler | TODO |
+| UnlinkBucketCommand | UnlinkBucketHandler | TODO |
+| CreateDevBranchCommand | CreateDevBranchHandler | TODO |
+| DropDevBranchCommand | DropDevBranchHandler | TODO |
+| ExecuteQueryCommand | ExecuteQueryHandler | TODO |
+
+**Total: 26 commands implemented, 7+ remaining**
 
 ---
 
@@ -1002,15 +1025,20 @@ message DriverResponse {
 }
 ```
 
-### GenericBackendCredentials (ADR-014 mapping)
+### GenericBackendCredentials (ADR-014 mapping, updated for Phase 12b.2)
 ```protobuf
 message GenericBackendCredentials {
   string host = 1;       // = project_id
-  string principal = 2;  // = api_key
-  string secret = 3;     // unused
+  string principal = 2;  // = username (for logging)
+  string secret = 3;     // = project API key (decrypted from DB)
   int32 port = 4;        // unused
 }
 ```
+
+**Phase 12b.2 Update:** The `secret` field now contains the project-specific API key:
+- For admin operations (CreateProject): secret is empty, admin key used from ENV
+- For project operations: secret contains decrypted project API key from `bi_connectionsCredentials`
+- DuckDBDriverClient uses secret as Authorization header when available
 
 ### CreateProjectCommand
 ```protobuf

@@ -59,10 +59,16 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │   │   ├── server.py      # gRPC server
   │   │   ├── servicer.py    # StorageDriverServicer
   │   │   ├── utils.py       # LogMessageCollector, helpers
-  │   │   └── handlers/      # Command handlers
-  │   │       ├── base.py    # BaseCommandHandler
-  │   │       ├── backend.py # InitBackend, RemoveBackend
-  │   │       └── project.py # CreateProject, DropProject
+  │   │   └── handlers/      # Command handlers (26 handlers)
+  │   │       ├── base.py       # BaseCommandHandler
+  │   │       ├── backend.py    # InitBackend, RemoveBackend
+  │   │       ├── project.py    # CreateProject, DropProject
+  │   │       ├── bucket.py     # CreateBucket, DropBucket
+  │   │       ├── table.py      # CreateTable, DropTable, PreviewTable
+  │   │       ├── info.py       # ObjectInfo
+  │   │       ├── import_export.py # TableImportFromFile, TableExportToFile
+  │   │       ├── schema.py     # AddColumn, DropColumn, AlterColumn, Add/DropPK, DeleteRows
+  │   │       └── workspace.py  # Create/Drop/Clear/ResetPwd/DropObject/Grant/Revoke/Load
   │   └── routers/           # REST API endpoints
   │       ├── backend.py     # Health, init, remove
   │       ├── projects.py    # Project CRUD
@@ -81,7 +87,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       └── metrics.py     # Prometheus /metrics endpoint
   ├── proto/                 # Protocol Buffer definitions
   ├── generated/             # Generated Python protobuf code
-  └── tests/                 # pytest tests (480 tests)
+  └── tests/                 # pytest tests (538 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -110,26 +116,34 @@ connection/                   # Keboola Connection (git submodule/clone)
 | PG Wire Server | DONE | 26 |
 | E2E Tests (Phase 11c) | DONE | 62 |
 | **gRPC Server (Phase 12a)** | **DONE** | 17 |
+| **gRPC Core Handlers (Phase 12c)** | **DONE** | 23 |
+| **gRPC Schema Handlers (Phase 12d)** | **DONE** | 18 |
+| **gRPC Workspace Handlers (Phase 12e)** | **DONE** | 17 |
 | **Connection Backend Registration (Phase 12b)** | **DONE** | - |
-| **Connection Full Integration (Phase 12b.1)** | **PARTIAL** | - |
+| **Connection Full Integration (Phase 12b.1)** | **DONE** | - |
+| **Secure Project API Keys (Phase 12b.2)** | **DONE** | - |
 | Schema Migrations | TODO | - |
-| PHP Driver Commands (Phase 12c-e) | TODO (last) | - |
+| PHP Driver Commands (Phase 12f-g) | TODO (last) | - |
 
-**Total: 480 tests PASS** (including 62 E2E + 17 gRPC tests)
+**Total: 538 tests PASS** (including 62 E2E + 75 gRPC tests)
 
-**Current: Phase 12b.1 IN PROGRESS - Connection Full Integration**
+**Current: Phase 12b.2 DONE - Secure Project API Keys**
 
-DuckDB project + bucket creation works via API. Table creation blocked by missing Zend ORM reference rules.
+**SUCCESS (2024-12-21):** Table creation via Connection works end-to-end with secure project isolation!
 
 **What works:**
 - Create DuckDB project via Manage API (`defaultBackend: duckdb`)
 - Create Storage API token for DuckDB project
 - Create bucket with DuckDB backend
-- List buckets shows `backend: duckdb`
+- **CREATE TABLE via CSV upload** - Connection calls DuckDB API via HTTP bridge
+- List tables shows created tables with `backend: duckdb`
+- **Secure project isolation** - Each project has its own API key stored in `bi_connectionsCredentials`
 
-**What's blocked:**
-- Table creation - needs Zend ORM `DefaultConnectionDuckdb` reference rule
-- Many PHP switch statements still missing DuckDB cases
+**Phase 12b.2 Implementation:**
+- Project API keys stored encrypted in `bi_connectionsCredentials.password`
+- `DuckDBCredentialsResolver` reads and decrypts project API key
+- `DuckDBDriverClient` uses project API key in Authorization header
+- HTTP bridge validates that API key matches `project_id` in request
 
 **See:** `docs/plan/phase-12-php-driver.md` for detailed integration notes
 
@@ -149,8 +163,12 @@ DuckDB project + bucket creation works via API. Table creation blocked by missin
 13. ~~E2E Tests + PG Wire Polish~~ - DONE
 14. ~~gRPC Server (Phase 12a)~~ - DONE
 15. ~~Connection Backend Registration (Phase 12b)~~ - DONE
-16. **Connection Full Integration (Phase 12b.1)** - PARTIAL
-17. **More Driver Commands + Integration Testing** - NEXT
+16. ~~gRPC Core Handlers (Phase 12c)~~ - DONE
+17. ~~gRPC Schema Handlers (Phase 12d)~~ - DONE
+18. ~~gRPC Workspace Handlers (Phase 12e)~~ - DONE
+19. ~~Connection Full Integration (Phase 12b.1)~~ - DONE
+20. ~~Secure Project API Keys (Phase 12b.2)~~ - DONE
+21. **More Driver Commands (Phase 12f-g)** - NEXT
 
 ## Key Decisions (APPROVED)
 
