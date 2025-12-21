@@ -25,7 +25,7 @@ Usage in routers:
 from typing import Annotated, Any
 
 import structlog
-from fastapi import Depends, HTTPException, Path, status
+from fastapi import Depends, HTTPException, Path, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.auth import get_key_prefix, verify_key_hash
@@ -63,7 +63,7 @@ class AuthorizationError(HTTPException):
 
 
 def get_api_key_from_header(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> str:
     """
     Extract API key from Authorization header using HTTPBearer.
@@ -84,6 +84,45 @@ def get_api_key_from_header(
         raise AuthenticationError("Missing or invalid credentials")
 
     return credentials.credentials
+
+
+async def get_api_key_flexible(request: Request) -> str:
+    """
+    Extract API key from multiple sources for S3-compatible API.
+
+    Supports:
+    1. Authorization: Bearer {api_key}
+    2. X-Api-Key: {api_key}
+    3. x-amz-security-token (for STS-like flow)
+
+    This allows AWS SDK to work with our API using custom handlers.
+
+    Args:
+        request: The FastAPI request
+
+    Returns:
+        The extracted API key
+
+    Raises:
+        AuthenticationError: If no valid API key found
+    """
+    # Try Authorization header (Bearer)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+
+    # Try X-Api-Key header (for custom S3 handlers)
+    api_key = request.headers.get("X-Api-Key")
+    if api_key:
+        return api_key
+
+    # Try x-amz-security-token (for STS-like flow)
+    security_token = request.headers.get("x-amz-security-token")
+    if security_token:
+        return security_token
+
+    logger.warning("auth_no_api_key_found", headers=list(request.headers.keys()))
+    raise AuthenticationError("Missing API key. Use Authorization: Bearer, X-Api-Key, or x-amz-security-token header")
 
 
 def verify_admin_key(api_key: str) -> bool:
@@ -394,7 +433,143 @@ async def require_branch_access(
     raise AuthorizationError(f"Access denied to branch {branch_id}")
 
 
+async def require_driver_auth(
+    api_key: Annotated[str, Depends(get_api_key_from_header)],
+) -> str:
+    """
+    Dependency for driver execute endpoint.
+
+    This accepts:
+    1. Admin key (for admin operations: CreateProject, DropProject, InitBackend, RemoveBackend)
+    2. Project key (for project operations: all other commands)
+
+    The actual project_id validation is done at the command handler level,
+    since it comes from the request body, not URL path.
+
+    This dependency just validates that the key is either:
+    - A valid admin key, OR
+    - A valid project key (exists in database, not revoked/expired)
+
+    Args:
+        api_key: The API key from the Authorization header
+
+    Returns:
+        The API key
+
+    Raises:
+        AuthenticationError: If the key is invalid
+    """
+    # Admin key is always valid
+    if verify_admin_key(api_key):
+        logger.info("auth_driver_admin_access")
+        return api_key
+
+    # Check if it's a valid project key (any project)
+    key_prefix = get_key_prefix(api_key)
+    key_record = metadata_db.get_api_key_by_prefix(key_prefix)
+
+    if key_record and verify_key_hash(api_key, key_record["key_hash"]):
+        logger.info(
+            "auth_driver_project_key",
+            key_prefix=key_prefix,
+            project_id=key_record["project_id"],
+            scope=key_record["scope"],
+        )
+        return api_key
+
+    logger.warning("auth_driver_access_denied", key_prefix=key_prefix)
+    raise AuthenticationError("Invalid API key")
+
+
+def get_project_id_from_driver_key(api_key: str) -> str | None:
+    """
+    Get the project_id associated with a driver API key.
+
+    Returns:
+        The project_id if this is a project key, None if admin key.
+    """
+    if verify_admin_key(api_key):
+        return None  # Admin key has access to all projects
+
+    key_prefix = get_key_prefix(api_key)
+    key_record = metadata_db.get_api_key_by_prefix(key_prefix)
+
+    if key_record and verify_key_hash(api_key, key_record["key_hash"]):
+        return key_record["project_id"]
+
+    return None
+
+
+async def require_s3_bucket_access(
+    request: Request,
+    bucket: Annotated[str, Path(description="S3 bucket name (project_id or project_{id})")],
+) -> str:
+    """
+    Dependency for S3-compatible API endpoints.
+
+    Supports multiple authentication methods:
+    1. Authorization: Bearer {api_key}
+    2. X-Api-Key: {api_key}
+    3. x-amz-security-token: {api_key}
+
+    This accepts both:
+    1. Admin key (has access to all buckets/projects)
+    2. Project-specific key (has access only to its project)
+
+    The bucket name is mapped to project_id:
+    - "project_123" -> "123"
+    - "123" -> "123"
+
+    Args:
+        request: The FastAPI request (for flexible header extraction)
+        bucket: The S3 bucket name from the URL path
+
+    Returns:
+        The verified API key
+
+    Raises:
+        AuthenticationError: If the key is invalid
+        AuthorizationError: If the key doesn't have access to this bucket
+    """
+    # Extract API key from flexible sources
+    api_key = await get_api_key_flexible(request)
+
+    # Extract project_id from bucket name
+    if bucket.startswith("project_"):
+        project_id = bucket[8:]
+    else:
+        project_id = bucket
+
+    # Admin key has access to everything
+    if verify_admin_key(api_key):
+        logger.info("auth_s3_admin_access", bucket=bucket, project_id=project_id)
+        return api_key
+
+    # Check project-specific key
+    key_record = verify_project_key(api_key, project_id)
+    if key_record:
+        logger.info(
+            "auth_s3_access_granted",
+            bucket=bucket,
+            project_id=project_id,
+            key_prefix=get_key_prefix(api_key),
+            scope=key_record["scope"],
+        )
+        return api_key
+
+    # Key is valid but doesn't have access to this bucket/project
+    logger.warning(
+        "auth_s3_access_denied",
+        bucket=bucket,
+        project_id=project_id,
+        key_prefix=get_key_prefix(api_key),
+    )
+    raise AuthorizationError(f"Access denied to bucket {bucket}")
+
+
 # Type aliases for cleaner router signatures
 AdminKey = Annotated[str, Depends(require_admin)]
 ProjectKey = Annotated[str, Depends(require_project_access)]
 BranchKey = Annotated[str, Depends(require_branch_access)]
+DriverKey = Annotated[str, Depends(require_driver_auth)]
+S3BucketKey = Annotated[str, Depends(require_s3_bucket_access)]

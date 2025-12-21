@@ -12,7 +12,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from src.dependencies import require_admin
+from src.dependencies import require_driver_auth, get_project_id_from_driver_key, verify_admin_key
 
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as AnyProto
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "generated"))
 
-from proto import common_pb2, backend_pb2, project_pb2, credentials_pb2
+from proto import common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, credentials_pb2, workspace_pb2
 from src.database import metadata_db, project_db_manager
 from src.grpc.servicer import StorageDriverServicer
 
@@ -150,11 +150,40 @@ def _create_command_message(type_name: str, command_json: dict):
 
     # Map type name to message class
     message_classes = {
+        # Backend commands
         "InitBackendCommand": backend_pb2.InitBackendCommand,
         "RemoveBackendCommand": backend_pb2.RemoveBackendCommand,
+        # Project commands
         "CreateProjectCommand": project_pb2.CreateProjectCommand,
         "DropProjectCommand": project_pb2.DropProjectCommand,
-        # Add more command types as handlers are implemented
+        # Bucket commands (Phase 12c)
+        "CreateBucketCommand": bucket_pb2.CreateBucketCommand,
+        "DropBucketCommand": bucket_pb2.DropBucketCommand,
+        # Table commands (Phase 12c)
+        "CreateTableCommand": table_pb2.CreateTableCommand,
+        "DropTableCommand": table_pb2.DropTableCommand,
+        "PreviewTableCommand": table_pb2.PreviewTableCommand,
+        # Info commands (Phase 12c)
+        "ObjectInfoCommand": info_pb2.ObjectInfoCommand,
+        # Import/Export commands (Phase 12c)
+        "TableImportFromFileCommand": table_pb2.TableImportFromFileCommand,
+        "TableExportToFileCommand": table_pb2.TableExportToFileCommand,
+        # Schema commands (Phase 12d)
+        "AddColumnCommand": table_pb2.AddColumnCommand,
+        "DropColumnCommand": table_pb2.DropColumnCommand,
+        "AlterColumnCommand": table_pb2.AlterColumnCommand,
+        "AddPrimaryKeyCommand": table_pb2.AddPrimaryKeyCommand,
+        "DropPrimaryKeyCommand": table_pb2.DropPrimaryKeyCommand,
+        "DeleteTableRowsCommand": table_pb2.DeleteTableRowsCommand,
+        # Workspace commands (Phase 12e)
+        "CreateWorkspaceCommand": workspace_pb2.CreateWorkspaceCommand,
+        "DropWorkspaceCommand": workspace_pb2.DropWorkspaceCommand,
+        "ClearWorkspaceCommand": workspace_pb2.ClearWorkspaceCommand,
+        "ResetWorkspacePasswordCommand": workspace_pb2.ResetWorkspacePasswordCommand,
+        "DropWorkspaceObjectCommand": workspace_pb2.DropWorkspaceObjectCommand,
+        "GrantWorkspaceAccessToProjectCommand": workspace_pb2.GrantWorkspaceAccessToProjectCommand,
+        "RevokeWorkspaceAccessToProjectCommand": workspace_pb2.RevokeWorkspaceAccessToProjectCommand,
+        "LoadTableToWorkspaceCommand": workspace_pb2.LoadTableToWorkspaceCommand,
     }
 
     message_class = message_classes.get(type_name)
@@ -211,11 +240,34 @@ def driver_response_to_json(response: common_pb2.DriverResponse) -> DriverExecut
 def _unpack_response(type_name: str, any_proto: AnyProto):
     """Unpack a response message from Any field."""
     response_classes = {
+        # Backend responses
         "InitBackendResponse": backend_pb2.InitBackendResponse,
         # RemoveBackendCommand returns None (no response message)
+        # Project responses
         "CreateProjectResponse": project_pb2.CreateProjectResponse,
         # DropProjectCommand returns None (no response message)
-        # Add more response types as handlers are implemented
+        # Bucket responses (Phase 12c)
+        "CreateBucketResponse": bucket_pb2.CreateBucketResponse,
+        # DropBucketCommand returns None (no response message)
+        # Table responses (Phase 12c)
+        # CreateTableCommand returns None (no response message)
+        # DropTableCommand returns None (no response message)
+        "PreviewTableResponse": table_pb2.PreviewTableResponse,
+        # Info responses (Phase 12c)
+        "ObjectInfoResponse": info_pb2.ObjectInfoResponse,
+        # Import/Export responses (Phase 12c)
+        "TableImportResponse": table_pb2.TableImportResponse,
+        "TableExportToFileResponse": table_pb2.TableExportToFileResponse,
+        # Schema responses (Phase 12d)
+        # AddColumnCommand, DropColumnCommand, AlterColumnCommand,
+        # AddPrimaryKeyCommand, DropPrimaryKeyCommand return None
+        "DeleteTableRowsResponse": table_pb2.DeleteTableRowsResponse,
+        # Workspace responses (Phase 12e)
+        "CreateWorkspaceResponse": workspace_pb2.CreateWorkspaceResponse,
+        "ResetWorkspacePasswordResponse": workspace_pb2.ResetWorkspacePasswordResponse,
+        # DropWorkspaceCommand, ClearWorkspaceCommand, DropWorkspaceObjectCommand,
+        # GrantWorkspaceAccessToProjectCommand, RevokeWorkspaceAccessToProjectCommand,
+        # LoadTableToWorkspaceCommand return None
     }
 
     response_class = response_classes.get(type_name)
@@ -227,8 +279,11 @@ def _unpack_response(type_name: str, any_proto: AnyProto):
     return message
 
 
-@router.post("/execute", response_model=DriverExecuteResponse, dependencies=[Depends(require_admin)])
-async def execute_driver_command(request: DriverExecuteRequest) -> DriverExecuteResponse:
+@router.post("/execute", response_model=DriverExecuteResponse)
+async def execute_driver_command(
+    request: DriverExecuteRequest,
+    api_key: str = Depends(require_driver_auth),
+) -> DriverExecuteResponse:
     """Execute a storage driver command.
 
     This endpoint is the HTTP bridge for driver protocol commands.
@@ -266,6 +321,45 @@ async def execute_driver_command(request: DriverExecuteRequest) -> DriverExecute
     More commands will be added as handlers are implemented.
     """
     try:
+        # Get command type for authorization check
+        command_type = request.command.get("type", request.command.get("@type", ""))
+        type_name = command_type.split(".")[-1]
+
+        # Commands that require admin key (not project key)
+        admin_only_commands = {
+            "InitBackendCommand",
+            "RemoveBackendCommand",
+            "CreateProjectCommand",
+            "DropProjectCommand",
+        }
+
+        # Check authorization based on command type
+        if type_name in admin_only_commands:
+            # Admin-only commands require admin key
+            if not verify_admin_key(api_key):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Command {type_name} requires admin API key"
+                )
+        else:
+            # Project commands - verify project_id matches the API key
+            request_project_id = request.credentials.get("project_id") if request.credentials else None
+            key_project_id = get_project_id_from_driver_key(api_key)
+
+            if key_project_id is not None:
+                # Using project key - must match the project_id in credentials
+                if request_project_id != key_project_id:
+                    logger.warning(
+                        "auth_project_mismatch_in_driver",
+                        key_project=key_project_id,
+                        request_project=request_project_id,
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"API key is for project {key_project_id}, but request is for project {request_project_id}"
+                    )
+            # else: using admin key - allowed for any project
+
         # Convert JSON to protobuf
         driver_request = json_to_driver_request(request)
 
@@ -307,6 +401,7 @@ async def list_supported_commands() -> dict:
     """
     return {
         "supported_commands": [
+            # Backend commands
             {
                 "type": "InitBackendCommand",
                 "description": "Initialize the backend (verify configuration)",
@@ -317,6 +412,7 @@ async def list_supported_commands() -> dict:
                 "description": "Remove all backend data",
                 "example": {"type": "RemoveBackendCommand"}
             },
+            # Project commands
             {
                 "type": "CreateProjectCommand",
                 "description": "Create a new project",
@@ -325,8 +421,228 @@ async def list_supported_commands() -> dict:
             {
                 "type": "DropProjectCommand",
                 "description": "Drop a project and all its data",
-                "example": {"type": "DropProjectCommand", "projectId": "my-project"}
+                "example": {"type": "DropProjectCommand", "projectDatabaseName": "my-project"}
+            },
+            # Bucket commands (Phase 12c)
+            {
+                "type": "CreateBucketCommand",
+                "description": "Create a bucket in a project",
+                "example": {
+                    "type": "CreateBucketCommand",
+                    "projectId": "my-project",
+                    "bucketId": "in.c-sales"
+                }
+            },
+            {
+                "type": "DropBucketCommand",
+                "description": "Drop a bucket from a project",
+                "example": {
+                    "type": "DropBucketCommand",
+                    "bucketObjectName": "in_c_sales",
+                    "isCascade": True
+                }
+            },
+            # Table commands (Phase 12c)
+            {
+                "type": "CreateTableCommand",
+                "description": "Create a table in a bucket",
+                "example": {
+                    "type": "CreateTableCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "columns": [
+                        {"name": "id", "type": "INTEGER"},
+                        {"name": "name", "type": "VARCHAR"}
+                    ]
+                }
+            },
+            {
+                "type": "DropTableCommand",
+                "description": "Drop a table from a bucket",
+                "example": {
+                    "type": "DropTableCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders"
+                }
+            },
+            {
+                "type": "PreviewTableCommand",
+                "description": "Preview table data",
+                "example": {
+                    "type": "PreviewTableCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders"
+                }
+            },
+            # Info commands (Phase 12c)
+            {
+                "type": "ObjectInfoCommand",
+                "description": "Get object information (table, bucket, project)",
+                "example": {
+                    "type": "ObjectInfoCommand",
+                    "path": ["my-project", "in_c_sales", "orders"],
+                    "expectedObjectType": 2  # 2 = TABLE
+                }
+            },
+            # Import/Export commands (Phase 12c)
+            {
+                "type": "TableImportFromFileCommand",
+                "description": "Import data from a file into a table",
+                "example": {
+                    "type": "TableImportFromFileCommand",
+                    "destination": {
+                        "path": ["my-project", "in_c_sales"],
+                        "tableName": "orders"
+                    },
+                    "fileProvider": 0,  # 0 = S3
+                    "filePath": {
+                        "root": "bucket-name",
+                        "path": "path/to",
+                        "fileName": "data.csv"
+                    }
+                }
+            },
+            {
+                "type": "TableExportToFileCommand",
+                "description": "Export table data to a file",
+                "example": {
+                    "type": "TableExportToFileCommand",
+                    "source": {
+                        "path": ["my-project", "in_c_sales"],
+                        "tableName": "orders"
+                    },
+                    "fileProvider": 0,  # 0 = S3
+                    "filePath": {
+                        "root": "bucket-name",
+                        "path": "exports",
+                        "fileName": "export.csv"
+                    }
+                }
+            },
+            # Schema commands (Phase 12d)
+            {
+                "type": "AddColumnCommand",
+                "description": "Add a new column to a table",
+                "example": {
+                    "type": "AddColumnCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "columnDefinition": {"name": "email", "type": "VARCHAR", "nullable": True}
+                }
+            },
+            {
+                "type": "DropColumnCommand",
+                "description": "Drop a column from a table",
+                "example": {
+                    "type": "DropColumnCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "columnName": "email"
+                }
+            },
+            {
+                "type": "AlterColumnCommand",
+                "description": "Alter a column in a table",
+                "example": {
+                    "type": "AlterColumnCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "desiredDefiniton": {"name": "email_new", "type": "TEXT"},
+                    "attributesToUpdate": ["name", "type"]
+                }
+            },
+            {
+                "type": "AddPrimaryKeyCommand",
+                "description": "Add a primary key to a table",
+                "example": {
+                    "type": "AddPrimaryKeyCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "primaryKeysNames": ["id"]
+                }
+            },
+            {
+                "type": "DropPrimaryKeyCommand",
+                "description": "Drop the primary key from a table",
+                "example": {
+                    "type": "DropPrimaryKeyCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders"
+                }
+            },
+            {
+                "type": "DeleteTableRowsCommand",
+                "description": "Delete rows from a table based on filters",
+                "example": {
+                    "type": "DeleteTableRowsCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "tableName": "orders",
+                    "whereFilters": [
+                        {"columnsName": "status", "operator": 0, "values": ["deleted"]}
+                    ]
+                }
+            },
+            # Workspace commands (Phase 12e)
+            {
+                "type": "CreateWorkspaceCommand",
+                "description": "Create a new workspace with credentials",
+                "example": {
+                    "type": "CreateWorkspaceCommand",
+                    "projectId": "my-project",
+                    "workspaceId": "ws-123",
+                    "isBranchDefault": True
+                }
+            },
+            {
+                "type": "DropWorkspaceCommand",
+                "description": "Drop a workspace",
+                "example": {
+                    "type": "DropWorkspaceCommand",
+                    "workspaceObjectName": "ws-123"
+                }
+            },
+            {
+                "type": "ClearWorkspaceCommand",
+                "description": "Clear all objects from a workspace",
+                "example": {
+                    "type": "ClearWorkspaceCommand",
+                    "workspaceObjectName": "ws-123",
+                    "ignoreErrors": False
+                }
+            },
+            {
+                "type": "ResetWorkspacePasswordCommand",
+                "description": "Reset workspace password",
+                "example": {
+                    "type": "ResetWorkspacePasswordCommand",
+                    "workspaceUserName": "ws_ws-123_abc123"
+                }
+            },
+            {
+                "type": "DropWorkspaceObjectCommand",
+                "description": "Drop a single object from workspace",
+                "example": {
+                    "type": "DropWorkspaceObjectCommand",
+                    "workspaceObjectName": "ws-123",
+                    "objectNameToDrop": "my_table",
+                    "ignoreIfNotExists": True
+                }
+            },
+            {
+                "type": "LoadTableToWorkspaceCommand",
+                "description": "Load table from project storage to workspace",
+                "example": {
+                    "type": "LoadTableToWorkspaceCommand",
+                    "source": {
+                        "path": ["my-project", "in_c_sales"],
+                        "tableName": "orders"
+                    },
+                    "destination": {
+                        "path": ["ws-123"],
+                        "tableName": "orders_copy"
+                    }
+                }
             },
         ],
-        "note": "More commands will be added as handlers are implemented"
+        "total_commands": 26
     }
