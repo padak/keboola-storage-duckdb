@@ -13,15 +13,21 @@ Supported operations:
 - DeleteObject (DELETE /{bucket}/{key})
 - HeadObject (HEAD /{bucket}/{key})
 - ListObjectsV2 (GET /{bucket}?list-type=2)
+- Presign (POST /{bucket}/presign) - Generate pre-signed URLs
 
 Authentication:
 - Authorization: Bearer {api_key} (same as REST API)
+- Pre-signed URL with signature query parameter
 """
 
 import base64
 import hashlib
+import hmac
+import secrets
 import time
-from datetime import datetime, timezone
+import urllib.parse
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -29,10 +35,12 @@ from xml.etree import ElementTree as ET
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
+from src import metrics
 from src.config import settings
 from src.database import metadata_db
-from src.dependencies import require_s3_bucket_access
+from src.dependencies import require_s3_bucket_access, get_api_key_flexible, verify_admin_key, verify_project_key
 
 logger = structlog.get_logger()
 
@@ -151,6 +159,195 @@ def _validate_project_exists(project_id: str) -> dict[str, Any]:
 
 
 # ============================================================================
+# Pre-signed URL Support
+# ============================================================================
+
+
+def _get_signing_key() -> bytes:
+    """Get the secret key for signing URLs.
+
+    If not configured, generates a random key (persisted in memory).
+    """
+    if settings.presign_secret_key:
+        return settings.presign_secret_key.encode()
+
+    # Generate a random key if not configured
+    # Note: This means signed URLs won't survive server restarts
+    if not hasattr(_get_signing_key, "_cached_key"):
+        _get_signing_key._cached_key = secrets.token_bytes(32)
+        logger.warning("presign_using_generated_key", note="URLs won't survive restart")
+    return _get_signing_key._cached_key
+
+
+class PresignMethod(str, Enum):
+    """HTTP methods that can be pre-signed."""
+
+    GET = "GET"
+    PUT = "PUT"
+    DELETE = "DELETE"
+    HEAD = "HEAD"
+
+
+class PresignRequest(BaseModel):
+    """Request body for generating pre-signed URLs."""
+
+    key: str = Field(..., description="The object key (path)")
+    method: PresignMethod = Field(PresignMethod.GET, description="HTTP method")
+    expires_in: int = Field(
+        default=3600,
+        ge=1,
+        le=604800,
+        description="URL expiry in seconds (1-604800, default 3600)",
+    )
+    content_type: str | None = Field(None, description="Content-Type for PUT requests")
+
+
+class PresignResponse(BaseModel):
+    """Response from pre-signed URL generation."""
+
+    url: str = Field(..., description="The pre-signed URL")
+    expires_at: str = Field(..., description="Expiration timestamp (ISO 8601)")
+    method: str = Field(..., description="HTTP method this URL is valid for")
+
+
+def _sign_url(
+    method: str,
+    bucket: str,
+    key: str,
+    expires_at: int,
+    content_type: str | None = None,
+) -> str:
+    """Generate HMAC signature for a pre-signed URL.
+
+    Args:
+        method: HTTP method (GET, PUT, DELETE, HEAD)
+        bucket: S3 bucket name
+        key: Object key
+        expires_at: Unix timestamp when URL expires
+        content_type: Optional content type (for PUT)
+
+    Returns:
+        Base64-encoded HMAC-SHA256 signature
+    """
+    # Build string to sign
+    string_to_sign = f"{method}\n{bucket}\n{key}\n{expires_at}"
+    if content_type:
+        string_to_sign += f"\n{content_type}"
+
+    # Sign with HMAC-SHA256
+    signature = hmac.new(
+        _get_signing_key(),
+        string_to_sign.encode(),
+        hashlib.sha256,
+    ).digest()
+
+    # URL-safe base64 encoding
+    return base64.urlsafe_b64encode(signature).decode().rstrip("=")
+
+
+def _verify_signature(
+    method: str,
+    bucket: str,
+    key: str,
+    expires_at: int,
+    signature: str,
+    content_type: str | None = None,
+) -> bool:
+    """Verify a pre-signed URL signature.
+
+    Args:
+        method: HTTP method
+        bucket: S3 bucket name
+        key: Object key
+        expires_at: Unix timestamp when URL expires
+        signature: The signature to verify
+        content_type: Optional content type
+
+    Returns:
+        True if signature is valid and not expired
+    """
+    # Check expiration
+    now = int(time.time())
+    if now > expires_at:
+        logger.debug("presign_expired", expires_at=expires_at, now=now)
+        return False
+
+    # Compute expected signature
+    expected = _sign_url(method, bucket, key, expires_at, content_type)
+
+    # Constant-time comparison
+    return hmac.compare_digest(signature, expected)
+
+
+async def _check_presign_or_auth(
+    request: Request,
+    bucket: str,
+    key: str,
+    method: str,
+) -> bool:
+    """Check if request has valid pre-signed URL or valid auth.
+
+    Args:
+        request: The FastAPI request
+        bucket: S3 bucket name
+        key: Object key
+        method: HTTP method
+
+    Returns:
+        True if authorized
+
+    Raises:
+        HTTPException: If neither pre-signed nor authenticated
+    """
+    # Check for pre-signed URL parameters
+    signature = request.query_params.get("X-Amz-Signature") or request.query_params.get("signature")
+    expires = request.query_params.get("X-Amz-Expires") or request.query_params.get("expires")
+    content_type = request.query_params.get("X-Amz-Content-Type") or request.query_params.get("content_type")
+
+    if signature and expires:
+        try:
+            expires_at = int(float(expires))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"Code": "InvalidArgument", "Message": "Invalid expires value"},
+            )
+
+        if _verify_signature(method, bucket, key, expires_at, signature, content_type):
+            logger.info("presign_access_granted", bucket=bucket, key=key, method=method)
+            return True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"Code": "SignatureDoesNotMatch", "Message": "The request signature is invalid or expired"},
+            )
+
+    # Fall back to header-based auth
+    try:
+        api_key = await get_api_key_flexible(request)
+    except HTTPException:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"Code": "AccessDenied", "Message": "Missing authentication"},
+        )
+
+    # Extract project_id from bucket name
+    project_id = _extract_project_id(bucket)
+
+    # Verify access
+    if verify_admin_key(api_key):
+        return True
+
+    if verify_project_key(api_key, project_id):
+        return True
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"Code": "AccessDenied", "Message": "Access denied to this bucket"},
+    )
+
+
+# ============================================================================
 # S3 API Endpoints
 # ============================================================================
 
@@ -158,19 +355,26 @@ def _validate_project_exists(project_id: str) -> dict[str, Any]:
 @router.get(
     "/{bucket}/{key:path}",
     summary="GetObject",
-    description="Download an object from the bucket.",
+    description="Download an object from the bucket. Supports pre-signed URLs.",
     responses={
         200: {"description": "Object content"},
+        401: {"description": "Unauthorized - Missing authentication"},
+        403: {"description": "Forbidden - Invalid signature or access denied"},
         404: {"description": "NoSuchKey - Object not found"},
     },
-    dependencies=[Depends(require_s3_bucket_access)],
 )
 async def get_object(
     bucket: str,
     key: str,
     request: Request,
 ) -> FileResponse:
-    """S3 GetObject - Download a file."""
+    """S3 GetObject - Download a file.
+
+    Supports both header-based auth and pre-signed URLs.
+    """
+    # Check auth (pre-signed URL or header)
+    await _check_presign_or_auth(request, bucket, key, "GET")
+
     request_id = _get_request_id()
     project_id = _extract_project_id(bucket)
 
@@ -216,6 +420,10 @@ async def get_object(
     etag = _compute_file_md5(file_path)
     stat = file_path.stat()
 
+    # Record metrics
+    metrics.S3_OPERATIONS_TOTAL.labels(operation="GetObject", status="success").inc()
+    metrics.S3_BYTES_OUT_TOTAL.inc(stat.st_size)
+
     return FileResponse(
         path=str(file_path),
         headers={
@@ -230,19 +438,26 @@ async def get_object(
 @router.put(
     "/{bucket}/{key:path}",
     summary="PutObject",
-    description="Upload an object to the bucket.",
+    description="Upload an object to the bucket. Supports pre-signed URLs.",
     responses={
         200: {"description": "Object created successfully"},
         400: {"description": "BadDigest - Content-MD5 mismatch"},
+        401: {"description": "Unauthorized - Missing authentication"},
+        403: {"description": "Forbidden - Invalid signature or access denied"},
     },
-    dependencies=[Depends(require_s3_bucket_access)],
 )
 async def put_object(
     bucket: str,
     key: str,
     request: Request,
 ) -> Response:
-    """S3 PutObject - Upload a file."""
+    """S3 PutObject - Upload a file.
+
+    Supports both header-based auth and pre-signed URLs.
+    """
+    # Check auth (pre-signed URL or header)
+    await _check_presign_or_auth(request, bucket, key, "PUT")
+
     start_time = time.time()
     request_id = _get_request_id()
     project_id = _extract_project_id(bucket)
@@ -301,6 +516,11 @@ async def put_object(
         request_id=request_id,
     )
 
+    # Record metrics
+    metrics.S3_OPERATIONS_TOTAL.labels(operation="PutObject", status="success").inc()
+    metrics.S3_OPERATION_DURATION.labels(operation="PutObject").observe(time.time() - start_time)
+    metrics.S3_BYTES_IN_TOTAL.inc(len(content))
+
     return Response(
         status_code=200,
         headers={"ETag": f'"{etag}"'},
@@ -310,11 +530,12 @@ async def put_object(
 @router.delete(
     "/{bucket}/{key:path}",
     summary="DeleteObject",
-    description="Delete an object from the bucket.",
+    description="Delete an object from the bucket. Supports pre-signed URLs.",
     responses={
         204: {"description": "Object deleted successfully"},
+        401: {"description": "Unauthorized - Missing authentication"},
+        403: {"description": "Forbidden - Invalid signature or access denied"},
     },
-    dependencies=[Depends(require_s3_bucket_access)],
 )
 async def delete_object(
     bucket: str,
@@ -323,8 +544,12 @@ async def delete_object(
 ) -> Response:
     """S3 DeleteObject - Delete a file.
 
+    Supports both header-based auth and pre-signed URLs.
     Note: S3 returns 204 even if the key doesn't exist.
     """
+    # Check auth (pre-signed URL or header)
+    await _check_presign_or_auth(request, bucket, key, "DELETE")
+
     request_id = _get_request_id()
     project_id = _extract_project_id(bucket)
 
@@ -359,25 +584,35 @@ async def delete_object(
         except Exception:
             pass  # Ignore errors during cleanup
 
+    # Record metrics
+    metrics.S3_OPERATIONS_TOTAL.labels(operation="DeleteObject", status="success").inc()
+
     return Response(status_code=204)
 
 
 @router.head(
     "/{bucket}/{key:path}",
     summary="HeadObject",
-    description="Get metadata about an object without downloading it.",
+    description="Get metadata about an object without downloading it. Supports pre-signed URLs.",
     responses={
         200: {"description": "Object metadata"},
+        401: {"description": "Unauthorized - Missing authentication"},
+        403: {"description": "Forbidden - Invalid signature or access denied"},
         404: {"description": "NoSuchKey - Object not found"},
     },
-    dependencies=[Depends(require_s3_bucket_access)],
 )
 async def head_object(
     bucket: str,
     key: str,
     request: Request,
 ) -> Response:
-    """S3 HeadObject - Get file metadata without content."""
+    """S3 HeadObject - Get file metadata without content.
+
+    Supports both header-based auth and pre-signed URLs.
+    """
+    # Check auth (pre-signed URL or header)
+    await _check_presign_or_auth(request, bucket, key, "HEAD")
+
     request_id = _get_request_id()
     project_id = _extract_project_id(bucket)
 
@@ -401,6 +636,9 @@ async def head_object(
     # Compute ETag and get stats
     etag = _compute_file_md5(file_path)
     stat = file_path.stat()
+
+    # Record metrics
+    metrics.S3_OPERATIONS_TOTAL.labels(operation="HeadObject", status="success").inc()
 
     return Response(
         status_code=200,
@@ -527,4 +765,108 @@ async def list_objects_v2(
         common_prefixes=sorted(common_prefixes) if common_prefixes else None,
     )
 
+    # Record metrics
+    metrics.S3_OPERATIONS_TOTAL.labels(operation="ListObjectsV2", status="success").inc()
+
     return Response(content=xml_content, media_type="application/xml")
+
+
+# ============================================================================
+# Pre-signed URL Endpoint
+# ============================================================================
+
+
+@router.post(
+    "/{bucket}/presign",
+    summary="Generate Pre-signed URL",
+    description="Generate a pre-signed URL for S3 operations.",
+    response_model=PresignResponse,
+    responses={
+        200: {"description": "Pre-signed URL generated"},
+        403: {"description": "Access denied"},
+        404: {"description": "NoSuchBucket - Bucket not found"},
+    },
+    dependencies=[Depends(require_s3_bucket_access)],
+)
+async def create_presigned_url(
+    bucket: str,
+    request_body: PresignRequest,
+    request: Request,
+) -> PresignResponse:
+    """Generate a pre-signed URL for S3 operations.
+
+    The generated URL can be used without authentication headers.
+    It includes a signature that validates access to the specific
+    bucket, key, and method combination.
+    """
+    request_id = _get_request_id()
+    project_id = _extract_project_id(bucket)
+
+    logger.info(
+        "s3_presign_request",
+        bucket=bucket,
+        key=request_body.key,
+        method=request_body.method,
+        expires_in=request_body.expires_in,
+        project_id=project_id,
+        request_id=request_id,
+    )
+
+    # Validate project exists
+    _validate_project_exists(project_id)
+
+    # Validate expiry is within limits
+    max_expiry = settings.presign_max_expiry
+    if request_body.expires_in > max_expiry:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "Code": "InvalidArgument",
+                "Message": f"Expiry cannot exceed {max_expiry} seconds",
+            },
+        )
+
+    # Calculate expiration timestamp
+    expires_at = int(time.time()) + request_body.expires_in
+    expires_at_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+
+    # Generate signature
+    signature = _sign_url(
+        method=request_body.method.value,
+        bucket=bucket,
+        key=request_body.key,
+        expires_at=expires_at,
+        content_type=request_body.content_type,
+    )
+
+    # Build URL with query parameters
+    base_url = settings.base_url.rstrip("/")
+    encoded_key = urllib.parse.quote(request_body.key, safe="/")
+
+    query_params = {
+        "signature": signature,
+        "expires": str(expires_at),
+    }
+    if request_body.content_type:
+        query_params["content_type"] = request_body.content_type
+
+    query_string = urllib.parse.urlencode(query_params)
+    url = f"{base_url}/s3/{bucket}/{encoded_key}?{query_string}"
+
+    logger.info(
+        "s3_presign_generated",
+        bucket=bucket,
+        key=request_body.key,
+        method=request_body.method,
+        expires_at=expires_at_dt.isoformat(),
+        request_id=request_id,
+    )
+
+    # Record metrics
+    metrics.S3_PRESIGN_REQUESTS_TOTAL.labels(method=request_body.method.value).inc()
+
+    return PresignResponse(
+        url=url,
+        expires_at=expires_at_dt.isoformat(),
+        method=request_body.method.value,
+    )

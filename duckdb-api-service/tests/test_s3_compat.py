@@ -520,6 +520,280 @@ class TestAuthentication:
         assert response.status_code == 404
 
 
+class TestPresignedUrls:
+    """Test pre-signed URL generation and usage."""
+
+    def test_presign_get_url(self, client, project_with_auth):
+        """Test generating pre-signed GET URL."""
+        project_id = project_with_auth["project_id"]
+        content = b"Pre-signed content"
+
+        # First upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/test.txt",
+            content=content,
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/test.txt", "method": "GET", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "url" in data
+        assert "expires_at" in data
+        assert data["method"] == "GET"
+        assert "signature=" in data["url"]
+        assert "expires=" in data["url"]
+
+    def test_presign_url_works_without_auth(self, client, project_with_auth):
+        """Test that pre-signed URL works without authentication headers."""
+        project_id = project_with_auth["project_id"]
+        content = b"Access without auth"
+
+        # Upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/noauth.txt",
+            content=content,
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/noauth.txt", "method": "GET", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        presigned_url = response.json()["url"]
+
+        # Extract path and query from URL
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        # Access without auth headers
+        response = client.get(path_with_query)
+        assert response.status_code == 200
+        assert response.content == content
+
+    def test_presign_put_url(self, client, project_with_auth):
+        """Test generating and using pre-signed PUT URL."""
+        project_id = project_with_auth["project_id"]
+
+        # Generate pre-signed PUT URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/upload.txt", "method": "PUT", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["method"] == "PUT"
+        presigned_url = data["url"]
+
+        # Upload using pre-signed URL (no auth headers)
+        from urllib.parse import urlparse
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        content = b"Uploaded via presigned URL"
+        response = client.put(path_with_query, content=content)
+        assert response.status_code == 200
+
+        # Verify content was uploaded
+        response = client.get(
+            f"/s3/project_{project_id}/presign/upload.txt",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        assert response.status_code == 200
+        assert response.content == content
+
+    def test_presign_delete_url(self, client, project_with_auth):
+        """Test generating and using pre-signed DELETE URL."""
+        project_id = project_with_auth["project_id"]
+
+        # Upload a file first
+        client.put(
+            f"/s3/project_{project_id}/presign/delete.txt",
+            content=b"To be deleted",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed DELETE URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/delete.txt", "method": "DELETE", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        assert response.status_code == 200
+        presigned_url = response.json()["url"]
+
+        # Delete using pre-signed URL (no auth headers)
+        from urllib.parse import urlparse
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        response = client.delete(path_with_query)
+        assert response.status_code == 204
+
+        # Verify file is deleted
+        response = client.head(
+            f"/s3/project_{project_id}/presign/delete.txt",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        assert response.status_code == 404
+
+    def test_presign_head_url(self, client, project_with_auth):
+        """Test generating and using pre-signed HEAD URL."""
+        project_id = project_with_auth["project_id"]
+        content = b"Head metadata"
+
+        # Upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/head.txt",
+            content=content,
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed HEAD URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/head.txt", "method": "HEAD", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        assert response.status_code == 200
+        presigned_url = response.json()["url"]
+
+        # HEAD using pre-signed URL (no auth headers)
+        from urllib.parse import urlparse
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        response = client.head(path_with_query)
+        assert response.status_code == 200
+        assert response.headers["Content-Length"] == str(len(content))
+
+    def test_presign_expired_url_rejected(self, client, project_with_auth, monkeypatch):
+        """Test that expired pre-signed URLs are rejected."""
+        import time as time_module
+        project_id = project_with_auth["project_id"]
+
+        # Upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/expired.txt",
+            content=b"Expiring content",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed URL with very short expiry
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/expired.txt", "method": "GET", "expires_in": 1},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        presigned_url = response.json()["url"]
+
+        # Wait for expiration
+        time_module.sleep(2)
+
+        # Try to use expired URL
+        from urllib.parse import urlparse
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        response = client.get(path_with_query)
+        assert response.status_code == 403
+
+    def test_presign_wrong_method_rejected(self, client, project_with_auth):
+        """Test that using wrong method with pre-signed URL is rejected."""
+        project_id = project_with_auth["project_id"]
+
+        # Upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/method.txt",
+            content=b"Method test",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed GET URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/method.txt", "method": "GET", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        presigned_url = response.json()["url"]
+
+        # Try to use it for DELETE (wrong method)
+        from urllib.parse import urlparse
+        parsed = urlparse(presigned_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        response = client.delete(path_with_query)
+        assert response.status_code == 403
+
+    def test_presign_tampered_signature_rejected(self, client, project_with_auth):
+        """Test that tampered signatures are rejected."""
+        project_id = project_with_auth["project_id"]
+
+        # Upload a file
+        client.put(
+            f"/s3/project_{project_id}/presign/tamper.txt",
+            content=b"Tamper test",
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        # Generate pre-signed URL
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "presign/tamper.txt", "method": "GET", "expires_in": 3600},
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+        presigned_url = response.json()["url"]
+
+        # Tamper with signature
+        tampered_url = presigned_url.replace("signature=", "signature=tampered")
+
+        from urllib.parse import urlparse
+        parsed = urlparse(tampered_url)
+        path_with_query = f"{parsed.path}?{parsed.query}"
+
+        response = client.get(path_with_query)
+        assert response.status_code == 403
+
+    def test_presign_default_expiry(self, client, project_with_auth):
+        """Test that default expiry is used when not specified."""
+        project_id = project_with_auth["project_id"]
+
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "test.txt", "method": "GET"},  # No expires_in
+            headers={"Authorization": f"Bearer {project_with_auth['api_key']}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "expires_at" in data
+
+    def test_presign_requires_auth(self, client, project_with_auth):
+        """Test that generating pre-signed URLs requires authentication."""
+        project_id = project_with_auth["project_id"]
+
+        # Try to generate without auth
+        response = client.post(
+            f"/s3/project_{project_id}/presign",
+            json={"key": "test.txt", "method": "GET"},
+        )
+
+        assert response.status_code == 401
+
+
 class TestS3Compatibility:
     """Test AWS S3 SDK compatibility features."""
 
