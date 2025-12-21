@@ -265,7 +265,8 @@ message ImportExportShared {
   enum FileProvider {
     S3 = 0; // Amazon S3
     ABS = 1; // Azure blob storage
-    GCS = 2;
+    GCS = 2; // Google Cloud Storage
+    HTTP = 3; // HTTP/HTTPS URL (e.g., pre-signed URL)
   }
   message S3Credentials {
     string key = 1; // AWS access key

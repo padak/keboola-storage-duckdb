@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cproto/backend/bigQuery.proto\x12&keboola.storageDriver.backend.bigQuery\"E\n\x10TimePartitioning\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x14\n\x0c\x65xpirationMs\x18\x02 \x01(\t\x12\r\n\x05\x66ield\x18\x03 \x01(\t\"\xa9\x01\n\x11RangePartitioning\x12\r\n\x05\x66ield\x18\x01 \x01(\t\x12N\n\x05range\x18\x02 \x01(\x0b\x32?.keboola.storageDriver.backend.bigQuery.RangePartitioning.Range\x1a\x35\n\x05Range\x12\r\n\x05start\x18\x01 \x01(\t\x12\x0b\n\x03\x65nd\x18\x02 \x01(\t\x12\x10\n\x08interval\x18\x03 \x01(\t\"\x1c\n\nClustering\x12\x0e\n\x06\x66ields\x18\x01 \x03(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cproto/backend/bigQuery.proto\x12&keboola.storageDriver.backend.bigQuery\"E\n\x10TimePartitioning\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x14\n\x0c\x65xpirationMs\x18\x02 \x01(\x03\x12\r\n\x05\x66ield\x18\x03 \x01(\t\"\xa9\x01\n\x11RangePartitioning\x12\r\n\x05\x66ield\x18\x01 \x01(\t\x12N\n\x05range\x18\x02 \x01(\x0b\x32?.keboola.storageDriver.backend.bigQuery.RangePartitioning.Range\x1a\x35\n\x05Range\x12\r\n\x05start\x18\x01 \x01(\x03\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x03\x12\x10\n\x08interval\x18\x03 \x01(\x03\"\x1c\n\nClustering\x12\x0e\n\x06\x66ields\x18\x01 \x03(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
