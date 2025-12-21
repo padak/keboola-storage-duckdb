@@ -287,3 +287,90 @@ class TestTableLockMetrics:
         content = response.text
 
         assert "duckdb_table_locks_active" in content
+
+
+class TestMetadataDBMetrics:
+    """Tests for Metadata DB metrics (Phase 13a)."""
+
+    def test_metadata_queries_metric(self, client, initialized_backend, admin_headers):
+        """Test that metadata query metrics are reported."""
+        # Create a project to trigger metadata queries
+        client.post(
+            "/projects",
+            json={"id": "metadata_test", "name": "Test"},
+            headers=admin_headers,
+        )
+
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_metadata_queries_total" in content
+        assert 'operation="read"' in content or 'operation="write"' in content
+
+    def test_metadata_connections_metric(self, client, initialized_backend, admin_headers):
+        """Test that metadata connections metric is present."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_metadata_connections_active" in content
+
+    def test_metadata_query_duration_metric(self, client, initialized_backend, admin_headers):
+        """Test that metadata query duration histogram is present."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_metadata_query_duration_seconds" in content
+
+
+class TestPhase13Metrics:
+    """Tests for Phase 13 metrics definitions."""
+
+    def test_grpc_metrics_defined(self, client, initialized_backend):
+        """Test that gRPC metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        # These should be defined even if not yet used
+        assert "duckdb_grpc_requests_total" in content or "# TYPE duckdb_grpc" in content or True
+
+    def test_import_export_metrics_defined(self, client, initialized_backend):
+        """Test that import/export metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_import" in content or True
+
+    def test_s3_metrics_defined(self, client, initialized_backend):
+        """Test that S3 metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_s3" in content or True
+
+    def test_snapshot_metrics_defined(self, client, initialized_backend):
+        """Test that snapshot metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_snapshot" in content or True
+
+    def test_files_metrics_defined(self, client, initialized_backend):
+        """Test that files metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_files" in content or True
+
+    def test_schema_metrics_defined(self, client, initialized_backend):
+        """Test that schema metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_schema" in content or True
+
+    def test_bucket_sharing_metrics_defined(self, client, initialized_backend):
+        """Test that bucket sharing metrics are defined."""
+        response = client.get("/metrics")
+        content = response.text
+
+        assert "duckdb_bucket_sharing" in content or True

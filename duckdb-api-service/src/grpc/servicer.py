@@ -1,9 +1,12 @@
 """StorageDriverServicer - main gRPC service implementation."""
 
 import logging
+import time
 from typing import Optional
 
 import grpc
+
+from src import metrics
 
 import sys
 from pathlib import Path
@@ -201,6 +204,11 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
         It uses the google.protobuf.Any wrapper pattern to support
         different command types through a single interface.
         """
+        start_time = time.time()
+        command_type = "unknown"
+        status = "success"
+        error_type = None
+
         try:
             # Get command type from Any field
             command_type = get_type_name(request.command)
@@ -217,6 +225,8 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
                 logger.error(error_msg)
                 context.set_code(grpc.StatusCode.UNIMPLEMENTED)
                 context.set_details(error_msg)
+                status = "error"
+                error_type = "unimplemented"
                 return self._error_response(error_msg)
 
             handler, command_class = handler_info
@@ -241,6 +251,8 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
                 logger.error("Invalid parameters: %s", e)
                 context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
                 context.set_details(str(e))
+                status = "error"
+                error_type = "invalid_argument"
                 return self._error_response(str(e), handler.get_log_messages())
 
             except KeyError as e:
@@ -248,6 +260,8 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
                 logger.error("Resource not found: %s", e)
                 context.set_code(grpc.StatusCode.NOT_FOUND)
                 context.set_details(str(e))
+                status = "error"
+                error_type = "not_found"
                 return self._error_response(str(e), handler.get_log_messages())
 
             except Exception as e:
@@ -255,6 +269,8 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
                 logger.exception("Internal error in %s", command_type)
                 context.set_code(grpc.StatusCode.INTERNAL)
                 context.set_details(str(e))
+                status = "error"
+                error_type = "internal"
                 return self._error_response(str(e), handler.get_log_messages())
 
         except Exception as e:
@@ -262,7 +278,17 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
             logger.exception("Error in Execute()")
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
+            status = "error"
+            error_type = "internal"
             return self._error_response(str(e))
+
+        finally:
+            # Record metrics
+            duration = time.time() - start_time
+            metrics.GRPC_REQUESTS_TOTAL.labels(command=command_type, status=status).inc()
+            metrics.GRPC_REQUEST_DURATION.labels(command=command_type).observe(duration)
+            if error_type:
+                metrics.GRPC_ERRORS_TOTAL.labels(command=command_type, error_type=error_type).inc()
 
     def _wrap_response(
         self,

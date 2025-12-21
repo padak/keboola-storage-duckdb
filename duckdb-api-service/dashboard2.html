@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB API Dashboard v2</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --bg-card: #1e293b;
+            --text-primary: #f8fafc;
+            --text-secondary: #e2e8f0;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --border-color: #334155;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+            --cyan: #06b6d4;
+            --tab-active: #3b82f6;
+            --tab-hover: #475569;
+        }
+        [data-theme="light"] {
+            --bg-primary: #f1f5f9;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e2e8f0;
+            --bg-card: #ffffff;
+            --text-primary: #0f172a;
+            --text-secondary: #1e293b;
+            --text-muted: #475569;
+            --text-dim: #64748b;
+            --border-color: #cbd5e1;
+            --tab-active: #3b82f6;
+            --tab-hover: #e2e8f0;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            min-height: 100vh;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .logo { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+        .version { font-size: 11px; color: var(--text-dim); background: var(--bg-tertiary); padding: 2px 8px; border-radius: 10px; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s infinite; }
+        .status-dot.error { background: var(--error); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .status-text { font-size: 12px; color: var(--text-muted); }
+        .btn {
+            background: var(--bg-tertiary); color: var(--text-primary); border: none;
+            padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: var(--tab-hover); }
+        .btn-primary { background: var(--blue); }
+        .btn-primary:hover { background: #2563eb; }
+
+        /* Tabs */
+        .tabs {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            padding: 0 20px;
+            gap: 4px;
+            overflow-x: auto;
+        }
+        .tab {
+            padding: 12px 16px;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .tab:hover { color: var(--text-primary); background: var(--tab-hover); }
+        .tab.active {
+            color: var(--tab-active);
+            border-bottom-color: var(--tab-active);
+            font-weight: 500;
+        }
+        .tab-badge {
+            background: var(--error);
+            color: white;
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+        }
+
+        /* Main content */
+        .main { padding: 20px; max-width: 1600px; margin: 0 auto; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* KPI Row (always visible) */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .kpi {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .kpi-value { font-size: 24px; font-weight: 700; color: var(--text-primary); }
+        .kpi-value.success { color: var(--success); }
+        .kpi-value.warning { color: var(--warning); }
+        .kpi-value.error { color: var(--error); }
+        .kpi-label { font-size: 10px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; letter-spacing: 0.5px; }
+        .kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+        /* Section */
+        .section { margin-bottom: 24px; }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .section-title {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            font-weight: 600;
+        }
+
+        /* Cards Grid */
+        .cards { display: grid; gap: 12px; }
+        .cards-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+        .cards-3 { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+        .cards-4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        .cards-6 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; }
+        .card-title { font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.5px; }
+        .card-icon { font-size: 16px; }
+        .card-value { font-size: 28px; font-weight: 700; color: var(--text-primary); }
+        .card-value.sm { font-size: 20px; }
+        .card-value.xs { font-size: 16px; }
+        .card-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+        .card-row { display: flex; justify-content: space-between; align-items: baseline; }
+
+        /* Mini stats in card */
+        .mini-stats { margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 8px; }
+        .mini-stat { display: flex; justify-content: space-between; padding: 4px 0; }
+        .mini-stat-label { font-size: 11px; color: var(--text-muted); }
+        .mini-stat-value { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+
+        /* Progress bars */
+        .progress-bars { display: flex; flex-direction: column; gap: 8px; }
+        .progress-item { display: flex; align-items: center; gap: 8px; }
+        .progress-label { font-size: 11px; color: var(--text-muted); min-width: 60px; }
+        .progress-bar { flex: 1; height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+        .progress-fill.purple { background: var(--purple); }
+        .progress-fill.blue { background: var(--blue); }
+        .progress-fill.warning { background: var(--warning); }
+        .progress-fill.success { background: var(--success); }
+        .progress-value { font-size: 11px; color: var(--text-primary); font-weight: 600; min-width: 60px; text-align: right; }
+
+        /* Tables */
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        th { font-size: 10px; text-transform: uppercase; color: var(--text-dim); font-weight: 600; background: var(--bg-tertiary); }
+        td { font-size: 12px; color: var(--text-secondary); }
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: monospace;
+        }
+        .badge-get { background: #166534; color: #86efac; }
+        .badge-post { background: #1e40af; color: #93c5fd; }
+        .badge-delete { background: #991b1b; color: #fca5a5; }
+        .badge-put { background: #854d0e; color: #fde047; }
+        .badge-2xx { color: var(--success); }
+        .badge-4xx { color: var(--warning); }
+        .badge-5xx { color: var(--error); }
+
+        /* Charts */
+        .chart-container { position: relative; height: 200px; }
+
+        /* Two columns */
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+        /* Metric group (compact) */
+        .metric-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1px;
+            background: var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .metric {
+            background: var(--bg-card);
+            padding: 12px;
+            text-align: center;
+        }
+        .metric-value { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+        .metric-label { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+        /* Error banner */
+        .error-banner {
+            background: #7f1d1d;
+            border: 1px solid var(--error);
+            color: #fecaca;
+            padding: 10px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            font-size: 13px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-dim);
+        }
+        .empty-state-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+        .empty-state-text { font-size: 14px; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <span class="logo">DuckDB API</span>
+            <span class="version" id="version">v--</span>
+        </div>
+        <div class="header-right">
+            <div class="status-dot" id="statusDot"></div>
+            <span class="status-text" id="statusText">Connecting...</span>
+            <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted);">
+                <input type="checkbox" id="autoRefresh" checked> Auto
+            </label>
+            <button class="btn" onclick="fetchMetrics()">Refresh</button>
+            <button class="btn" onclick="toggleTheme()" id="themeBtn">Light</button>
+        </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+        <div class="tab active" data-tab="overview">Overview</div>
+        <div class="tab" data-tab="data">Data</div>
+        <div class="tab" data-tab="apis">APIs <span class="tab-badge" id="apiErrorBadge" style="display:none">!</span></div>
+        <div class="tab" data-tab="operations">Operations</div>
+        <div class="tab" data-tab="details">Details</div>
+    </nav>
+
+    <!-- Main -->
+    <main class="main">
+        <div class="error-banner" id="errorBanner"></div>
+
+        <!-- KPI Row (always visible) -->
+        <div class="kpi-row">
+            <div class="kpi">
+                <div class="kpi-value success" id="kpiStatus">--</div>
+                <div class="kpi-label">Status</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiUptime">--</div>
+                <div class="kpi-label">Uptime</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiRequests">--</div>
+                <div class="kpi-label">Requests</div>
+                <div class="kpi-sub" id="kpiReqRate">--/s</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiErrorRate">--</div>
+                <div class="kpi-label">Error Rate</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiP95">--</div>
+                <div class="kpi-label">P95 Latency</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiTables">--</div>
+                <div class="kpi-label">Tables</div>
+            </div>
+            <div class="kpi">
+                <div class="kpi-value" id="kpiStorage">--</div>
+                <div class="kpi-label">Storage</div>
+            </div>
+        </div>
+
+        <!-- Tab: Overview -->
+        <div class="tab-content active" id="tab-overview">
+            <div class="two-col">
+                <!-- Left: Storage -->
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Storage Overview</span>
+                    </div>
+                    <div class="card">
+                        <div class="metric-group" style="margin-bottom: 16px;">
+                            <div class="metric">
+                                <div class="metric-value" id="ovProjects">--</div>
+                                <div class="metric-label">Projects</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovBuckets">--</div>
+                                <div class="metric-label">Buckets</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovTables">--</div>
+                                <div class="metric-label">Tables</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovBranches">--</div>
+                                <div class="metric-label">Branches</div>
+                            </div>
+                        </div>
+                        <div class="progress-bars" id="storageBreakdown"></div>
+                    </div>
+                </div>
+
+                <!-- Right: Latency -->
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Request Latency</span>
+                    </div>
+                    <div class="card">
+                        <div class="metric-group" style="margin-bottom: 16px;">
+                            <div class="metric">
+                                <div class="metric-value" id="ovP50">--</div>
+                                <div class="metric-label">P50</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovP90">--</div>
+                                <div class="metric-label">P90</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovP95">--</div>
+                                <div class="metric-label">P95</div>
+                            </div>
+                            <div class="metric">
+                                <div class="metric-value" id="ovP99">--</div>
+                                <div class="metric-label">P99</div>
+                            </div>
+                        </div>
+                        <div class="mini-stats">
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">Average</span>
+                                <span class="mini-stat-value" id="ovAvgLatency">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">In Flight</span>
+                                <span class="mini-stat-value" id="ovInFlight">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="section">
+                <div class="two-col">
+                    <div class="card">
+                        <div class="card-title" style="margin-bottom: 12px;">Requests by Status</div>
+                        <div class="chart-container">
+                            <canvas id="statusChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title" style="margin-bottom: 12px;">Requests by Method</div>
+                        <div class="chart-container">
+                            <canvas id="methodChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Data -->
+        <div class="tab-content" id="tab-data">
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Import / Export</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Import Operations</div>
+                        <div class="card-value" id="dataImportOps">--</div>
+                        <div class="card-sub" id="dataImportRows">-- rows</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Import Bytes</div>
+                        <div class="card-value sm" id="dataImportBytes">--</div>
+                        <div class="card-sub" id="dataImportP95">P95: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Export Operations</div>
+                        <div class="card-value" id="dataExportOps">--</div>
+                        <div class="card-sub" id="dataExportRows">-- rows</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Export P95</div>
+                        <div class="card-value sm" id="dataExportP95">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Metadata Database</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Read Queries</div>
+                        <div class="card-value" id="dataMetaReads">--</div>
+                        <div class="card-sub" id="dataMetaReadAvg">Avg: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Write Queries</div>
+                        <div class="card-value" id="dataMetaWrites">--</div>
+                        <div class="card-sub" id="dataMetaWriteAvg">Avg: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Query P95</div>
+                        <div class="card-value sm" id="dataMetaP95">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Active Connections</div>
+                        <div class="card-value" id="dataMetaConns">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Schema Operations</span>
+                </div>
+                <div class="cards cards-3">
+                    <div class="card">
+                        <div class="card-title">Total Operations</div>
+                        <div class="card-value" id="dataSchemaOps">--</div>
+                        <div class="card-sub" id="dataSchemaP95">P95: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Breakdown</div>
+                        <div class="card-value xs" id="dataSchemaBreakdown">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Bucket Sharing</div>
+                        <div class="card-value" id="dataBucketShares">--</div>
+                        <div class="card-sub" id="dataBucketLinks">-- links, -- ops</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: APIs -->
+        <div class="tab-content" id="tab-apis">
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">HTTP REST API</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Total Requests</div>
+                        <div class="card-value" id="apiHttpTotal">--</div>
+                        <div class="card-sub" id="apiHttpInFlight">In flight: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Error Rate</div>
+                        <div class="card-value" id="apiHttpErrorRate">--</div>
+                        <div class="card-sub" id="apiHttpErrors">4xx: --, 5xx: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">P95 Latency</div>
+                        <div class="card-value sm" id="apiHttpP95">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Avg Latency</div>
+                        <div class="card-value sm" id="apiHttpAvg">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">gRPC Driver Interface</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Total Requests</div>
+                        <div class="card-value" id="apiGrpcTotal">--</div>
+                        <div class="card-sub" id="apiGrpcCommands">-- commands</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Error Rate</div>
+                        <div class="card-value" id="apiGrpcErrorRate">--</div>
+                        <div class="card-sub" id="apiGrpcErrors">-- errors</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">P95 Latency</div>
+                        <div class="card-value sm" id="apiGrpcP95">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Active Connections</div>
+                        <div class="card-value" id="apiGrpcConns">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">PG Wire Protocol</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Connections</div>
+                        <div class="card-value" id="apiPgwireConns">--</div>
+                        <div class="card-sub" id="apiPgwireActive">Active: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Queries</div>
+                        <div class="card-value" id="apiPgwireQueries">--</div>
+                        <div class="card-sub" id="apiPgwireErrors">Errors: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Query P95</div>
+                        <div class="card-value sm" id="apiPgwireP95">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Sessions</div>
+                        <div class="card-value" id="apiPgwireSessions">--</div>
+                        <div class="card-sub" id="apiPgwireAuthP95">Auth P95: --</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">S3-Compatible API</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Operations</div>
+                        <div class="card-value" id="apiS3Ops">--</div>
+                        <div class="card-sub" id="apiS3P95">P95: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Pre-signed URLs</div>
+                        <div class="card-value" id="apiS3Presign">--</div>
+                        <div class="card-sub" id="apiS3Multipart">-- active uploads</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Bytes In</div>
+                        <div class="card-value sm" id="apiS3BytesIn">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Bytes Out</div>
+                        <div class="card-value sm" id="apiS3BytesOut">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Operations -->
+        <div class="tab-content" id="tab-operations">
+            <div class="two-col">
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Concurrency</span>
+                    </div>
+                    <div class="cards cards-2">
+                        <div class="card">
+                            <div class="card-title">Table Locks</div>
+                            <div class="card-value" id="opsActiveLocks">--</div>
+                            <div class="mini-stats">
+                                <div class="mini-stat">
+                                    <span class="mini-stat-label">Acquisitions</span>
+                                    <span class="mini-stat-value" id="opsLockAcqs">--</span>
+                                </div>
+                                <div class="mini-stat">
+                                    <span class="mini-stat-label">Wait P95</span>
+                                    <span class="mini-stat-value" id="opsLockP95">--</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Write Queue</div>
+                            <div class="card-value" id="opsQueueDepth">--</div>
+                            <div class="mini-stats">
+                                <div class="mini-stat">
+                                    <span class="mini-stat-label">Wait P95</span>
+                                    <span class="mini-stat-value" id="opsQueueP95">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Idempotency Cache</span>
+                    </div>
+                    <div class="cards cards-2">
+                        <div class="card">
+                            <div class="card-title">Cache Size</div>
+                            <div class="card-value" id="opsCacheSize">--</div>
+                            <div class="card-sub" id="opsCacheHitRate">Hit rate: --</div>
+                        </div>
+                        <div class="card">
+                            <div class="card-title">Conflicts</div>
+                            <div class="card-value" id="opsCacheConflicts">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Dev Branches (CoW)</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Total Branches</div>
+                        <div class="card-value" id="opsBranches">--</div>
+                        <div class="card-sub" id="opsBranchTables">-- tables</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">CoW Operations</div>
+                        <div class="card-value" id="opsCowOps">--</div>
+                        <div class="card-sub" id="opsCowBytes">-- copied</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">CoW P95</div>
+                        <div class="card-value sm" id="opsCowP95">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">CoW Avg</div>
+                        <div class="card-value sm" id="opsCowAvg">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Snapshots</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Total</div>
+                        <div class="card-value" id="opsSnapTotal">--</div>
+                        <div class="card-sub" id="opsSnapCreated">-- created</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Restored</div>
+                        <div class="card-value" id="opsSnapRestored">--</div>
+                        <div class="card-sub" id="opsSnapRestoreP95">P95: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Expired</div>
+                        <div class="card-value" id="opsSnapExpired">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Size</div>
+                        <div class="card-value sm" id="opsSnapSize">--</div>
+                        <div class="card-sub" id="opsSnapCreateP95">Create P95: --</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Files Storage</span>
+                </div>
+                <div class="cards cards-4">
+                    <div class="card">
+                        <div class="card-title">Total Files</div>
+                        <div class="card-value" id="opsFilesTotal">--</div>
+                        <div class="card-sub" id="opsFilesStaging">-- staging</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Uploads</div>
+                        <div class="card-value" id="opsFilesUploads">--</div>
+                        <div class="card-sub" id="opsFilesUploadP95">P95: --</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Downloads</div>
+                        <div class="card-value" id="opsFilesDownloads">--</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Bytes</div>
+                        <div class="card-value sm" id="opsFilesBytes">--</div>
+                        <div class="card-sub" id="opsFilesDownBytes">Down: --</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Details -->
+        <div class="tab-content" id="tab-details">
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Requests by Endpoint (Top 20)</span>
+                </div>
+                <div class="card">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>Endpoint</th>
+                                    <th>Status</th>
+                                    <th style="text-align:right">Count</th>
+                                    <th style="text-align:right">Avg Latency</th>
+                                </tr>
+                            </thead>
+                            <tbody id="endpointsTable"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="two-col">
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Table Lock Activity</span>
+                    </div>
+                    <div class="card">
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Project / Bucket / Table</th>
+                                        <th style="text-align:right">Locks</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="locksTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">Python Runtime</span>
+                    </div>
+                    <div class="card">
+                        <div class="mini-stats">
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">Python Version</span>
+                                <span class="mini-stat-value" id="rtPython">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">GC Gen 0</span>
+                                <span class="mini-stat-value" id="rtGc0">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">GC Gen 1</span>
+                                <span class="mini-stat-value" id="rtGc1">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">GC Gen 2</span>
+                                <span class="mini-stat-value" id="rtGc2">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">Objects Collected</span>
+                                <span class="mini-stat-value" id="rtCollected">--</span>
+                            </div>
+                            <div class="mini-stat">
+                                <span class="mini-stat-label">Uncollectable</span>
+                                <span class="mini-stat-value" id="rtUncollectable">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const METRICS_URL = 'http://localhost:8000/metrics';
+        let statusChart = null;
+        let methodChart = null;
+        let refreshInterval = null;
+        let currentTheme = 'dark';
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // Theme
+        function initTheme() {
+            const saved = localStorage.getItem('dashboard-theme');
+            if (saved) currentTheme = saved;
+            else if (window.matchMedia('(prefers-color-scheme: light)').matches) currentTheme = 'light';
+            applyTheme();
+        }
+        function applyTheme() {
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            document.getElementById('themeBtn').textContent = currentTheme === 'dark' ? 'Light' : 'Dark';
+            updateChartColors();
+        }
+        function toggleTheme() {
+            currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('dashboard-theme', currentTheme);
+            applyTheme();
+        }
+        function getChartColors() {
+            const isLight = currentTheme === 'light';
+            return { text: isLight ? '#475569' : '#94a3b8', grid: isLight ? '#e2e8f0' : '#334155' };
+        }
+        function updateChartColors() {
+            const colors = getChartColors();
+            if (statusChart) {
+                statusChart.options.plugins.legend.labels.color = colors.text;
+                statusChart.update();
+            }
+            if (methodChart) {
+                methodChart.options.scales.x.ticks.color = colors.text;
+                methodChart.options.scales.x.grid.color = colors.grid;
+                methodChart.options.scales.y.ticks.color = colors.text;
+                methodChart.options.scales.y.grid.color = colors.grid;
+                methodChart.update();
+            }
+        }
+
+        // Helpers
+        function parseMetrics(text) {
+            const metrics = {};
+            for (const line of text.split('\n')) {
+                if (line.startsWith('#') || !line.trim()) continue;
+                const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)((?:\{.*\})?)?\s+(.+)$/);
+                if (match) {
+                    const [, name, labelsStr, value] = match;
+                    const labels = {};
+                    if (labelsStr) {
+                        for (const m of labelsStr.matchAll(/(\w+)="([^"]*)"/g)) {
+                            labels[m[1]] = m[2];
+                        }
+                    }
+                    if (!metrics[name]) metrics[name] = [];
+                    metrics[name].push({ labels, value: parseFloat(value) });
+                }
+            }
+            return metrics;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 0.001) return (seconds * 1000000).toFixed(0) + 'us';
+            if (seconds < 1) return (seconds * 1000).toFixed(1) + 'ms';
+            return seconds.toFixed(2) + 's';
+        }
+
+        function formatUptime(startTime) {
+            const seconds = Math.floor(Date.now() / 1000 - startTime);
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            if (d > 0) return `${d}d ${h}h`;
+            if (h > 0) return `${h}h ${m}m`;
+            return `${m}m`;
+        }
+
+        function calculatePercentile(buckets, percentile) {
+            if (!buckets || buckets.length === 0) return null;
+            const sorted = buckets.filter(b => b.le !== '+Inf').sort((a, b) => a.le - b.le);
+            const infBucket = buckets.find(b => b.le === '+Inf');
+            const total = infBucket ? infBucket.count : sorted[sorted.length - 1]?.count || 0;
+            if (total === 0) return null;
+            const target = total * percentile;
+            let prev = { le: 0, count: 0 };
+            for (const bucket of sorted) {
+                if (bucket.count >= target) {
+                    const ratio = (target - prev.count) / (bucket.count - prev.count || 1);
+                    return prev.le + ratio * (bucket.le - prev.le);
+                }
+                prev = bucket;
+            }
+            return sorted[sorted.length - 1]?.le;
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch(METRICS_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const text = await response.text();
+                const metrics = parseMetrics(text);
+                updateDashboard(metrics);
+
+                document.getElementById('statusDot').classList.remove('error');
+                document.getElementById('statusText').textContent = 'Connected';
+                document.getElementById('errorBanner').style.display = 'none';
+            } catch (error) {
+                document.getElementById('statusDot').classList.add('error');
+                document.getElementById('statusText').textContent = 'Disconnected';
+                document.getElementById('errorBanner').textContent = `Connection failed: ${error.message}`;
+                document.getElementById('errorBanner').style.display = 'block';
+            }
+        }
+
+        function updateDashboard(m) {
+            // Version
+            const info = m['duckdb_api_service_info']?.[0];
+            if (info) {
+                document.getElementById('version').textContent = `v${info.labels.version}`;
+            }
+
+            // Python version
+            const pyInfo = m['python_info']?.[0];
+            if (pyInfo) {
+                document.getElementById('rtPython').textContent = `${pyInfo.labels.version}`;
+            }
+
+            // Status
+            const up = m['duckdb_api_up']?.[0]?.value;
+            const statusEl = document.getElementById('kpiStatus');
+            statusEl.textContent = up === 1 ? 'OK' : 'Down';
+            statusEl.className = 'kpi-value ' + (up === 1 ? 'success' : 'error');
+
+            // Uptime
+            const startTime = m['duckdb_api_start_time_seconds']?.[0]?.value;
+            if (startTime) {
+                document.getElementById('kpiUptime').textContent = formatUptime(startTime);
+            }
+
+            // Requests
+            const requests = m['duckdb_api_requests_total'] || [];
+            const totalReqs = requests.reduce((s, r) => s + r.value, 0);
+            document.getElementById('kpiRequests').textContent = totalReqs.toLocaleString();
+            document.getElementById('apiHttpTotal').textContent = totalReqs.toLocaleString();
+
+            const inFlight = (m['duckdb_api_requests_in_flight'] || []).reduce((s, r) => s + r.value, 0);
+            document.getElementById('apiHttpInFlight').textContent = `In flight: ${inFlight}`;
+            document.getElementById('ovInFlight').textContent = inFlight;
+
+            // Error rate
+            const errors4xx = requests.filter(r => r.labels.status_code?.startsWith('4')).reduce((s, r) => s + r.value, 0);
+            const errors5xx = requests.filter(r => r.labels.status_code?.startsWith('5')).reduce((s, r) => s + r.value, 0);
+            const errorRate = totalReqs > 0 ? ((errors4xx + errors5xx) / totalReqs * 100).toFixed(1) : 0;
+            const errorEl = document.getElementById('kpiErrorRate');
+            errorEl.textContent = errorRate + '%';
+            errorEl.className = 'kpi-value ' + (errors5xx > 0 ? 'error' : errors4xx > 0 ? 'warning' : 'success');
+
+            document.getElementById('apiHttpErrorRate').textContent = errorRate + '%';
+            document.getElementById('apiHttpErrorRate').className = 'card-value ' + (errors5xx > 0 ? 'error' : errors4xx > 0 ? 'warning' : 'success');
+            document.getElementById('apiHttpErrors').textContent = `4xx: ${errors4xx}, 5xx: ${errors5xx}`;
+
+            // Show error badge on APIs tab
+            document.getElementById('apiErrorBadge').style.display = errors5xx > 0 ? 'inline' : 'none';
+
+            // Storage counts
+            const projects = m['duckdb_projects_total']?.[0]?.value ?? 0;
+            const buckets = m['duckdb_buckets_total']?.[0]?.value ?? 0;
+            const tables = m['duckdb_tables_total']?.[0]?.value ?? 0;
+            const branches = m['duckdb_branches_total']?.[0]?.value ?? 0;
+
+            document.getElementById('kpiTables').textContent = tables;
+            document.getElementById('ovProjects').textContent = projects;
+            document.getElementById('ovBuckets').textContent = buckets;
+            document.getElementById('ovTables').textContent = tables;
+            document.getElementById('ovBranches').textContent = branches;
+
+            // Storage size
+            const storageMetrics = m['duckdb_storage_size_bytes'] || [];
+            const storageByType = {};
+            let totalSize = 0;
+            for (const s of storageMetrics) {
+                storageByType[s.labels.type] = s.value;
+                totalSize += s.value;
+            }
+            document.getElementById('kpiStorage').textContent = formatBytes(totalSize);
+
+            // Storage breakdown bars
+            const storageHtml = ['metadata', 'tables', 'staging', 'files'].map(type => {
+                const size = storageByType[type] || 0;
+                const pct = totalSize > 0 ? (size / totalSize * 100) : 0;
+                const fillClass = { metadata: 'purple', tables: 'blue', staging: 'warning', files: 'success' }[type];
+                return `
+                    <div class="progress-item">
+                        <span class="progress-label">${type}</span>
+                        <div class="progress-bar">
+                            <div class="progress-fill ${fillClass}" style="width: ${Math.max(pct, size > 0 ? 3 : 0)}%"></div>
+                        </div>
+                        <span class="progress-value">${formatBytes(size)}</span>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('storageBreakdown').innerHTML = storageHtml;
+
+            // Latency percentiles
+            const durations = m['duckdb_api_request_duration_seconds_bucket'] || [];
+            const bucketData = [];
+            for (const d of durations) {
+                const le = d.labels.le === '+Inf' ? '+Inf' : parseFloat(d.labels.le);
+                const existing = bucketData.find(b => b.le === le);
+                if (existing) existing.count += d.value;
+                else bucketData.push({ le, count: d.value });
+            }
+
+            const p50 = calculatePercentile(bucketData, 0.5) || 0;
+            const p90 = calculatePercentile(bucketData, 0.9) || 0;
+            const p95 = calculatePercentile(bucketData, 0.95) || 0;
+            const p99 = calculatePercentile(bucketData, 0.99) || 0;
+
+            document.getElementById('kpiP95').textContent = formatDuration(p95);
+            document.getElementById('ovP50').textContent = formatDuration(p50);
+            document.getElementById('ovP90').textContent = formatDuration(p90);
+            document.getElementById('ovP95').textContent = formatDuration(p95);
+            document.getElementById('ovP99').textContent = formatDuration(p99);
+            document.getElementById('apiHttpP95').textContent = formatDuration(p95);
+
+            const durationSum = m['duckdb_api_request_duration_seconds_sum'] || [];
+            const durationCount = m['duckdb_api_request_duration_seconds_count'] || [];
+            const totalDurationSum = durationSum.reduce((s, d) => s + d.value, 0);
+            const totalDurationCount = durationCount.reduce((s, d) => s + d.value, 0);
+            const avgLatency = totalDurationCount > 0 ? totalDurationSum / totalDurationCount : 0;
+            document.getElementById('ovAvgLatency').textContent = formatDuration(avgLatency);
+            document.getElementById('apiHttpAvg').textContent = formatDuration(avgLatency);
+
+            // gRPC
+            const grpcRequests = (m['duckdb_grpc_requests_total'] || []).reduce((s, r) => s + r.value, 0);
+            const grpcErrors = (m['duckdb_grpc_errors_total'] || []).reduce((s, e) => s + e.value, 0);
+            const grpcConns = m['duckdb_grpc_connections_active']?.[0]?.value ?? 0;
+            document.getElementById('apiGrpcTotal').textContent = grpcRequests.toLocaleString();
+            document.getElementById('apiGrpcConns').textContent = grpcConns;
+            const grpcErrorRate = grpcRequests > 0 ? (grpcErrors / grpcRequests * 100).toFixed(1) : 0;
+            document.getElementById('apiGrpcErrorRate').textContent = grpcErrorRate + '%';
+            document.getElementById('apiGrpcErrorRate').className = 'card-value ' + (grpcErrors > 0 ? 'warning' : 'success');
+            document.getElementById('apiGrpcErrors').textContent = `${grpcErrors} errors`;
+            const uniqueCommands = new Set((m['duckdb_grpc_requests_total'] || []).map(r => r.labels.command)).size;
+            document.getElementById('apiGrpcCommands').textContent = `${uniqueCommands} commands`;
+
+            const grpcDurationBuckets = (m['duckdb_grpc_request_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('apiGrpcP95').textContent = formatDuration(calculatePercentile(grpcDurationBuckets, 0.95) || 0);
+
+            // PG Wire
+            const pgwireConns = m['pgwire_connections_total'] || [];
+            const pgwireTotal = pgwireConns.reduce((s, c) => s + c.value, 0);
+            const pgwireActive = m['pgwire_connections_active']?.[0]?.value ?? 0;
+            const pgwireSessions = m['pgwire_sessions_total']?.[0]?.value ?? 0;
+            document.getElementById('apiPgwireConns').textContent = pgwireTotal.toLocaleString();
+            document.getElementById('apiPgwireActive').textContent = `Active: ${pgwireActive}`;
+            document.getElementById('apiPgwireSessions').textContent = pgwireSessions;
+
+            const pgwireQueries = m['pgwire_queries_total'] || [];
+            const pgwireQueryTotal = pgwireQueries.reduce((s, q) => s + q.value, 0);
+            const pgwireQueryErrors = pgwireQueries.filter(q => q.labels.status !== 'success').reduce((s, q) => s + q.value, 0);
+            document.getElementById('apiPgwireQueries').textContent = pgwireQueryTotal.toLocaleString();
+            document.getElementById('apiPgwireErrors').textContent = `Errors: ${pgwireQueryErrors}`;
+
+            const pgwireQueryBuckets = (m['pgwire_query_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('apiPgwireP95').textContent = formatDuration(calculatePercentile(pgwireQueryBuckets, 0.95) || 0);
+
+            const pgwireAuthBuckets = (m['pgwire_auth_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('apiPgwireAuthP95').textContent = `Auth P95: ${formatDuration(calculatePercentile(pgwireAuthBuckets, 0.95) || 0)}`;
+
+            // S3
+            const s3Ops = (m['duckdb_s3_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            const s3Presign = (m['duckdb_s3_presign_requests_total'] || []).reduce((s, p) => s + p.value, 0);
+            const s3Multipart = m['duckdb_s3_multipart_uploads_active']?.[0]?.value ?? 0;
+            document.getElementById('apiS3Ops').textContent = s3Ops.toLocaleString();
+            document.getElementById('apiS3Presign').textContent = s3Presign.toLocaleString();
+            document.getElementById('apiS3Multipart').textContent = `${s3Multipart} active uploads`;
+
+            const s3OpsBuckets = (m['duckdb_s3_operation_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('apiS3P95').textContent = `P95: ${formatDuration(calculatePercentile(s3OpsBuckets, 0.95) || 0)}`;
+
+            document.getElementById('apiS3BytesIn').textContent = formatBytes(m['duckdb_s3_bytes_in_total']?.[0]?.value ?? 0);
+            document.getElementById('apiS3BytesOut').textContent = formatBytes(m['duckdb_s3_bytes_out_total']?.[0]?.value ?? 0);
+
+            // Metadata DB
+            const metaReads = m['duckdb_metadata_queries_total']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            const metaWrites = m['duckdb_metadata_queries_total']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            document.getElementById('dataMetaReads').textContent = metaReads.toLocaleString();
+            document.getElementById('dataMetaWrites').textContent = metaWrites.toLocaleString();
+            document.getElementById('dataMetaConns').textContent = m['duckdb_metadata_connections_active']?.[0]?.value ?? 0;
+
+            const metaReadSum = m['duckdb_metadata_query_duration_seconds_sum']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            const metaReadCount = m['duckdb_metadata_query_duration_seconds_count']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            document.getElementById('dataMetaReadAvg').textContent = metaReadCount > 0 ? `Avg: ${formatDuration(metaReadSum / metaReadCount)}` : 'Avg: --';
+
+            const metaWriteSum = m['duckdb_metadata_query_duration_seconds_sum']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            const metaWriteCount = m['duckdb_metadata_query_duration_seconds_count']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            document.getElementById('dataMetaWriteAvg').textContent = metaWriteCount > 0 ? `Avg: ${formatDuration(metaWriteSum / metaWriteCount)}` : 'Avg: --';
+
+            const metaQueryBuckets = (m['duckdb_metadata_query_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('dataMetaP95').textContent = formatDuration(calculatePercentile(metaQueryBuckets, 0.95) || 0);
+
+            // Import/Export
+            const importOps = (m['duckdb_import_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            const exportOps = (m['duckdb_export_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('dataImportOps').textContent = importOps.toLocaleString();
+            document.getElementById('dataExportOps').textContent = exportOps.toLocaleString();
+
+            const importRows = m['duckdb_import_rows_total']?.[0]?.value ?? 0;
+            const exportRows = m['duckdb_export_rows_total']?.[0]?.value ?? 0;
+            document.getElementById('dataImportRows').textContent = `${importRows.toLocaleString()} rows`;
+            document.getElementById('dataExportRows').textContent = `${exportRows.toLocaleString()} rows`;
+
+            const importBytes = (m['duckdb_import_bytes_total'] || []).reduce((s, b) => s + b.value, 0);
+            document.getElementById('dataImportBytes').textContent = formatBytes(importBytes);
+
+            const importDurationBuckets = (m['duckdb_import_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('dataImportP95').textContent = `P95: ${formatDuration(calculatePercentile(importDurationBuckets, 0.95) || 0)}`;
+
+            const exportDurationBuckets = (m['duckdb_export_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('dataExportP95').textContent = formatDuration(calculatePercentile(exportDurationBuckets, 0.95) || 0);
+
+            // Schema
+            const schemaOps = (m['duckdb_schema_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('dataSchemaOps').textContent = schemaOps.toLocaleString();
+
+            const schemaDurationBuckets = (m['duckdb_schema_operation_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('dataSchemaP95').textContent = `P95: ${formatDuration(calculatePercentile(schemaDurationBuckets, 0.95) || 0)}`;
+
+            const schemaByOp = {};
+            (m['duckdb_schema_operations_total'] || []).forEach(o => { if (o.value > 0) schemaByOp[o.labels.operation] = o.value; });
+            document.getElementById('dataSchemaBreakdown').textContent = Object.entries(schemaByOp).map(([op, cnt]) => `${op}: ${cnt}`).join(', ') || 'None';
+
+            // Bucket sharing
+            const bucketShares = m['duckdb_bucket_shares_total']?.[0]?.value ?? 0;
+            const bucketLinks = m['duckdb_bucket_links_total']?.[0]?.value ?? 0;
+            const sharingOps = (m['duckdb_bucket_sharing_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('dataBucketShares').textContent = bucketShares.toLocaleString();
+            document.getElementById('dataBucketLinks').textContent = `${bucketLinks} links, ${sharingOps} ops`;
+
+            // Operations - Locks
+            const activeLocks = m['duckdb_table_locks_active']?.[0]?.value ?? 0;
+            document.getElementById('opsActiveLocks').textContent = activeLocks;
+            const lockAcqs = (m['duckdb_table_lock_acquisitions_total'] || []).reduce((s, l) => s + l.value, 0);
+            document.getElementById('opsLockAcqs').textContent = lockAcqs.toLocaleString();
+
+            const lockBuckets = (m['duckdb_table_lock_wait_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsLockP95').textContent = formatDuration(calculatePercentile(lockBuckets, 0.95) || 0);
+
+            // Write Queue
+            const queueDepth = m['duckdb_write_queue_depth']?.[0]?.value ?? 0;
+            document.getElementById('opsQueueDepth').textContent = queueDepth;
+            document.getElementById('opsQueueDepth').className = 'card-value' + (queueDepth > 5 ? ' warning' : '');
+
+            const queueBuckets = (m['duckdb_write_queue_wait_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsQueueP95').textContent = formatDuration(calculatePercentile(queueBuckets, 0.95) || 0);
+
+            // Cache
+            const cacheSize = m['duckdb_idempotency_cache_size']?.[0]?.value ?? 0;
+            const cacheHits = m['duckdb_idempotency_cache_hits_total']?.[0]?.value ?? 0;
+            const cacheMisses = m['duckdb_idempotency_cache_misses_total']?.[0]?.value ?? 0;
+            const cacheConflicts = m['duckdb_idempotency_conflicts_total']?.[0]?.value ?? 0;
+            document.getElementById('opsCacheSize').textContent = cacheSize;
+            const cacheTotal = cacheHits + cacheMisses;
+            document.getElementById('opsCacheHitRate').textContent = `Hit rate: ${cacheTotal > 0 ? (cacheHits / cacheTotal * 100).toFixed(1) : 0}%`;
+            document.getElementById('opsCacheConflicts').textContent = cacheConflicts;
+            document.getElementById('opsCacheConflicts').className = 'card-value' + (cacheConflicts > 0 ? ' warning' : '');
+
+            // Branches
+            document.getElementById('opsBranches').textContent = branches;
+            document.getElementById('opsBranchTables').textContent = `${m['duckdb_branch_tables_total']?.[0]?.value ?? 0} tables`;
+
+            const cowOps = (m['duckdb_branch_cow_operations_total'] || []).reduce((s, c) => s + c.value, 0);
+            const cowBytes = (m['duckdb_branch_cow_bytes_total'] || []).reduce((s, c) => s + c.value, 0);
+            document.getElementById('opsCowOps').textContent = cowOps.toLocaleString();
+            document.getElementById('opsCowBytes').textContent = formatBytes(cowBytes) + ' copied';
+
+            const cowDurationBuckets = (m['duckdb_branch_cow_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsCowP95').textContent = formatDuration(calculatePercentile(cowDurationBuckets, 0.95) || 0);
+
+            const cowDurationSum = m['duckdb_branch_cow_duration_seconds_sum']?.[0]?.value ?? 0;
+            const cowDurationCount = m['duckdb_branch_cow_duration_seconds_count']?.[0]?.value ?? 0;
+            document.getElementById('opsCowAvg').textContent = cowDurationCount > 0 ? formatDuration(cowDurationSum / cowDurationCount) : '--';
+
+            // Snapshots
+            const snapTotal = m['duckdb_snapshots_total']?.[0]?.value ?? 0;
+            const snapCreated = (m['duckdb_snapshots_created_total'] || []).reduce((s, c) => s + c.value, 0);
+            const snapRestored = m['duckdb_snapshots_restored_total']?.[0]?.value ?? 0;
+            const snapExpired = m['duckdb_snapshots_expired_total']?.[0]?.value ?? 0;
+            const snapSize = m['duckdb_snapshots_size_bytes']?.[0]?.value ?? 0;
+
+            document.getElementById('opsSnapTotal').textContent = snapTotal.toLocaleString();
+            document.getElementById('opsSnapCreated').textContent = `${snapCreated} created`;
+            document.getElementById('opsSnapRestored').textContent = snapRestored.toLocaleString();
+            document.getElementById('opsSnapExpired').textContent = snapExpired.toLocaleString();
+            document.getElementById('opsSnapSize').textContent = formatBytes(snapSize);
+
+            const snapCreateBuckets = (m['duckdb_snapshot_create_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsSnapCreateP95').textContent = `Create P95: ${formatDuration(calculatePercentile(snapCreateBuckets, 0.95) || 0)}`;
+
+            const snapRestoreBuckets = (m['duckdb_snapshot_restore_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsSnapRestoreP95').textContent = `P95: ${formatDuration(calculatePercentile(snapRestoreBuckets, 0.95) || 0)}`;
+
+            // Files
+            const filesTotal = m['duckdb_files_total']?.[0]?.value ?? 0;
+            const filesStaging = m['duckdb_files_staging_count']?.[0]?.value ?? 0;
+            const filesUploads = (m['duckdb_files_uploads_total'] || []).reduce((s, u) => s + u.value, 0);
+            const filesDownloads = (m['duckdb_files_downloads_total'] || []).reduce((s, d) => s + d.value, 0);
+            const filesUploadBytes = m['duckdb_files_upload_bytes_total']?.[0]?.value ?? 0;
+            const filesDownloadBytes = m['duckdb_files_download_bytes_total']?.[0]?.value ?? 0;
+
+            document.getElementById('opsFilesTotal').textContent = filesTotal.toLocaleString();
+            document.getElementById('opsFilesStaging').textContent = `${filesStaging} staging`;
+            document.getElementById('opsFilesUploads').textContent = filesUploads.toLocaleString();
+            document.getElementById('opsFilesDownloads').textContent = filesDownloads.toLocaleString();
+            document.getElementById('opsFilesBytes').textContent = formatBytes(filesUploadBytes);
+            document.getElementById('opsFilesDownBytes').textContent = `Down: ${formatBytes(filesDownloadBytes)}`;
+
+            const filesUploadBuckets = (m['duckdb_files_upload_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le), count: b.value
+            }));
+            document.getElementById('opsFilesUploadP95').textContent = `P95: ${formatDuration(calculatePercentile(filesUploadBuckets, 0.95) || 0)}`;
+
+            // Charts
+            const statusCounts = {};
+            requests.forEach(r => { statusCounts[r.labels.status_code] = (statusCounts[r.labels.status_code] || 0) + r.value; });
+            updateStatusChart(statusCounts);
+
+            const methodCounts = {};
+            requests.forEach(r => { methodCounts[r.labels.method] = (methodCounts[r.labels.method] || 0) + r.value; });
+            updateMethodChart(methodCounts);
+
+            // Endpoints table
+            updateEndpointsTable(requests, m);
+
+            // Locks table
+            updateLocksTable(m['duckdb_table_lock_acquisitions_total'] || []);
+
+            // Python GC
+            const gc0 = m['python_gc_collections_total']?.find(g => g.labels.generation === '0')?.value ?? 0;
+            const gc1 = m['python_gc_collections_total']?.find(g => g.labels.generation === '1')?.value ?? 0;
+            const gc2 = m['python_gc_collections_total']?.find(g => g.labels.generation === '2')?.value ?? 0;
+            document.getElementById('rtGc0').textContent = gc0;
+            document.getElementById('rtGc1').textContent = gc1;
+            document.getElementById('rtGc2').textContent = gc2;
+
+            const collected = (m['python_gc_objects_collected_total'] || []).reduce((s, g) => s + g.value, 0);
+            document.getElementById('rtCollected').textContent = collected.toLocaleString();
+
+            const uncollectable = (m['python_gc_objects_uncollectable_total'] || []).reduce((s, g) => s + g.value, 0);
+            document.getElementById('rtUncollectable').textContent = uncollectable;
+            document.getElementById('rtUncollectable').style.color = uncollectable > 0 ? 'var(--error)' : '';
+        }
+
+        function updateStatusChart(counts) {
+            const ctx = document.getElementById('statusChart').getContext('2d');
+            const labels = Object.keys(counts).sort();
+            const data = labels.map(l => counts[l]);
+            const colors = labels.map(code => {
+                if (code.startsWith('2')) return '#22c55e';
+                if (code.startsWith('4')) return '#f59e0b';
+                return '#ef4444';
+            });
+            const chartColors = getChartColors();
+
+            if (statusChart) {
+                statusChart.data.labels = labels;
+                statusChart.data.datasets[0].data = data;
+                statusChart.data.datasets[0].backgroundColor = colors;
+                statusChart.update();
+            } else {
+                statusChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { position: 'right', labels: { color: chartColors.text, font: { size: 11 } } } }
+                    }
+                });
+            }
+        }
+
+        function updateMethodChart(counts) {
+            const ctx = document.getElementById('methodChart').getContext('2d');
+            const labels = Object.keys(counts).sort();
+            const data = labels.map(l => counts[l]);
+            const colors = { GET: '#22c55e', POST: '#3b82f6', PUT: '#f59e0b', DELETE: '#ef4444', PATCH: '#8b5cf6' };
+            const chartColors = getChartColors();
+
+            if (methodChart) {
+                methodChart.data.labels = labels;
+                methodChart.data.datasets[0].data = data;
+                methodChart.data.datasets[0].backgroundColor = labels.map(m => colors[m] || '#64748b');
+                methodChart.update();
+            } else {
+                methodChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels,
+                        datasets: [{ data, backgroundColor: labels.map(m => colors[m] || '#64748b'), borderWidth: 0, borderRadius: 4 }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid } },
+                            y: { ticks: { color: chartColors.text }, grid: { color: chartColors.grid } }
+                        }
+                    }
+                });
+            }
+        }
+
+        function updateEndpointsTable(requests, metrics) {
+            const tbody = document.getElementById('endpointsTable');
+            const durationSum = metrics['duckdb_api_request_duration_seconds_sum'] || [];
+            const durationCount = metrics['duckdb_api_request_duration_seconds_count'] || [];
+
+            const latencyMap = {};
+            for (const d of durationSum) {
+                const key = `${d.labels.method}:${d.labels.endpoint}`;
+                latencyMap[key] = { sum: d.value, count: 0 };
+            }
+            for (const d of durationCount) {
+                const key = `${d.labels.method}:${d.labels.endpoint}`;
+                if (latencyMap[key]) latencyMap[key].count = d.value;
+            }
+
+            const sorted = [...requests].sort((a, b) => b.value - a.value).slice(0, 20);
+
+            if (sorted.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-dim);">No requests yet</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = sorted.map(r => {
+                const key = `${r.labels.method}:${r.labels.endpoint}`;
+                const lat = latencyMap[key];
+                const avgLat = lat && lat.count > 0 ? formatDuration(lat.sum / lat.count) : '--';
+                const methodClass = `badge-${r.labels.method.toLowerCase()}`;
+                const statusClass = r.labels.status_code.startsWith('2') ? 'badge-2xx' :
+                    r.labels.status_code.startsWith('4') ? 'badge-4xx' : 'badge-5xx';
+                return `
+                    <tr>
+                        <td><span class="badge ${methodClass}">${r.labels.method}</span></td>
+                        <td style="font-family: monospace; font-size: 11px;">${r.labels.endpoint}</td>
+                        <td><span class="${statusClass}" style="font-weight:600">${r.labels.status_code}</span></td>
+                        <td style="text-align: right; font-weight: 600;">${r.value.toLocaleString()}</td>
+                        <td style="text-align: right; color: var(--text-muted);">${avgLat}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function updateLocksTable(locks) {
+            const tbody = document.getElementById('locksTable');
+            if (locks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--text-dim);">No lock activity</td></tr>';
+                return;
+            }
+            const sorted = [...locks].sort((a, b) => b.value - a.value).slice(0, 10);
+            tbody.innerHTML = sorted.map(l => `
+                <tr>
+                    <td style="font-family: monospace; font-size: 11px;">
+                        ${l.labels.project_id} / ${l.labels.bucket} / ${l.labels.table}
+                    </td>
+                    <td style="text-align: right; font-weight: 600;">${l.value.toLocaleString()}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Auto refresh
+        document.getElementById('autoRefresh').addEventListener('change', function() {
+            if (this.checked) refreshInterval = setInterval(fetchMetrics, 5000);
+            else clearInterval(refreshInterval);
+        });
+
+        // Initialize
+        initTheme();
+        fetchMetrics();
+        refreshInterval = setInterval(fetchMetrics, 5000);
+    </script>
+</body>
+</html>

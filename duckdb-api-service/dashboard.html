@@ -259,6 +259,7 @@
         <div class="card">
             <div class="card-title">Total Requests</div>
             <div class="card-value" id="totalRequests">--</div>
+            <div class="card-subtitle" id="requestsInFlight">In flight: --</div>
         </div>
         <div class="card">
             <div class="card-title">Error Rate</div>
@@ -320,6 +321,121 @@
         </div>
     </div>
 
+    <!-- Metadata DB (Phase 13a) -->
+    <div class="section-title">Metadata Database</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Read Queries</div>
+            <div class="card-value" id="metadataReads">--</div>
+            <div class="card-subtitle" id="metadataReadAvg">Avg: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Write Queries</div>
+            <div class="card-value" id="metadataWrites">--</div>
+            <div class="card-subtitle" id="metadataWriteAvg">Avg: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Query P95</div>
+            <div class="card-value small" id="metadataQueryP95">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Active Connections</div>
+            <div class="card-value" id="metadataConnections">--</div>
+        </div>
+    </div>
+
+    <!-- Import/Export (Phase 13c) -->
+    <div class="section-title">Import / Export</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Import Operations</div>
+            <div class="card-value" id="importOps">--</div>
+            <div class="card-subtitle" id="importBytes">-- imported</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Import Rows</div>
+            <div class="card-value" id="importRows">--</div>
+            <div class="card-subtitle" id="importP95">P95: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Export Operations</div>
+            <div class="card-value" id="exportOps">--</div>
+            <div class="card-subtitle" id="exportRows">-- rows</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Export P95</div>
+            <div class="card-value small" id="exportP95">--</div>
+        </div>
+    </div>
+
+    <!-- Files & S3 (Phase 13d, 13f) -->
+    <div class="section-title">Files & S3 Storage</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Total Files</div>
+            <div class="card-value" id="filesTotal">--</div>
+            <div class="card-subtitle" id="filesStaging">-- in staging</div>
+        </div>
+        <div class="card">
+            <div class="card-title">File Uploads</div>
+            <div class="card-value" id="filesUploads">--</div>
+            <div class="card-subtitle" id="filesUploadP95">P95: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">File Downloads</div>
+            <div class="card-value" id="filesDownloads">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">File Bytes</div>
+            <div class="card-value small" id="filesUploadBytes">--</div>
+            <div class="card-subtitle" id="filesDownloadBytes">Down: --</div>
+        </div>
+    </div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">S3 Operations</div>
+            <div class="card-value" id="s3Ops">--</div>
+            <div class="card-subtitle" id="s3OpsP95">P95: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">S3 Pre-signed URLs</div>
+            <div class="card-value" id="s3PresignTotal">--</div>
+            <div class="card-subtitle" id="s3Multipart">-- active uploads</div>
+        </div>
+        <div class="card">
+            <div class="card-title">S3 Bytes In</div>
+            <div class="card-value small" id="s3BytesIn">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">S3 Bytes Out</div>
+            <div class="card-value small" id="s3BytesOut">--</div>
+        </div>
+    </div>
+
+    <!-- Snapshots (Phase 13e) -->
+    <div class="section-title">Snapshots</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Total Snapshots</div>
+            <div class="card-value" id="snapshotsTotal">--</div>
+            <div class="card-subtitle" id="snapshotsCreated">-- created</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Restored</div>
+            <div class="card-value" id="snapshotsRestored">--</div>
+            <div class="card-subtitle" id="snapshotRestoreP95">Restore P95: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Expired</div>
+            <div class="card-value" id="snapshotsExpired">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Total Size</div>
+            <div class="card-value small" id="snapshotsSize">--</div>
+            <div class="card-subtitle" id="snapshotCreateP95">Create P95: --</div>
+        </div>
+    </div>
+
     <!-- Locks & Cache -->
     <div class="section-title">Concurrency & Caching</div>
     <div class="grid grid-4">
@@ -333,10 +449,17 @@
             <div class="card-value small" id="lockWaitP95">--</div>
         </div>
         <div class="card">
+            <div class="card-title">Write Queue</div>
+            <div class="card-value" id="writeQueueDepth">--</div>
+            <div class="card-subtitle" id="writeQueueWaitP95">Wait P95: --</div>
+        </div>
+        <div class="card">
             <div class="card-title">Cache Size</div>
             <div class="card-value" id="cacheSize">--</div>
             <div class="card-subtitle" id="cacheHitRate">Hit rate: --</div>
         </div>
+    </div>
+    <div class="grid grid-4">
         <div class="card">
             <div class="card-title">Cache Conflicts</div>
             <div class="card-value" id="cacheConflicts">--</div>
@@ -377,7 +500,7 @@
         <div class="card">
             <div class="card-title">PG Wire Connections</div>
             <div class="card-value" id="pgwireConnections">--</div>
-            <div class="card-subtitle" id="pgwireAuthRate">Auth rate: --</div>
+            <div class="card-subtitle" id="pgwireActiveConns">Active: --</div>
         </div>
         <div class="card">
             <div class="card-title">PG Wire Queries</div>
@@ -388,6 +511,52 @@
             <div class="card-title">Query P95</div>
             <div class="card-value small" id="pgwireQueryP95">--</div>
             <div class="card-subtitle" id="pgwireAuthP95">Auth P95: --</div>
+        </div>
+    </div>
+
+    <!-- gRPC (Phase 13b) -->
+    <div class="section-title">gRPC Driver Interface</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Total Requests</div>
+            <div class="card-value" id="grpcRequests">--</div>
+            <div class="card-subtitle" id="grpcCommands">-- commands</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Active Connections</div>
+            <div class="card-value" id="grpcConnections">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Request P95</div>
+            <div class="card-value small" id="grpcRequestP95">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Error Rate</div>
+            <div class="card-value" id="grpcErrorRate">--</div>
+            <div class="card-subtitle" id="grpcErrors">-- errors</div>
+        </div>
+    </div>
+
+    <!-- Schema & Sharing (Phase 13g, 13h) -->
+    <div class="section-title">Schema Operations & Bucket Sharing</div>
+    <div class="grid grid-4">
+        <div class="card">
+            <div class="card-title">Schema Operations</div>
+            <div class="card-value" id="schemaOps">--</div>
+            <div class="card-subtitle" id="schemaP95">P95: --</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Bucket Shares</div>
+            <div class="card-value" id="bucketShares">--</div>
+            <div class="card-subtitle" id="bucketLinks">-- links</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Sharing Operations</div>
+            <div class="card-value" id="sharingOps">--</div>
+        </div>
+        <div class="card">
+            <div class="card-title">Schema Breakdown</div>
+            <div class="card-value small" id="schemaBreakdown">--</div>
         </div>
     </div>
 
@@ -647,6 +816,10 @@
             const totalReqs = requests.reduce((s, r) => s + r.value, 0);
             document.getElementById('totalRequests').textContent = totalReqs.toLocaleString();
 
+            // Requests in flight
+            const inFlight = (m['duckdb_api_requests_in_flight'] || []).reduce((s, r) => s + r.value, 0);
+            document.getElementById('requestsInFlight').textContent = `In flight: ${inFlight}`;
+
             // Error rate
             const errors4xx = requests.filter(r => r.labels.status_code?.startsWith('4'))
                 .reduce((s, r) => s + r.value, 0);
@@ -735,6 +908,19 @@
             document.getElementById('lockWaitP95').textContent =
                 formatDuration(calculatePercentile(lockBuckets, 0.95) || 0);
 
+            // Write Queue
+            const writeQueueDepth = m['duckdb_write_queue_depth']?.[0]?.value ?? 0;
+            document.getElementById('writeQueueDepth').textContent = writeQueueDepth;
+            document.getElementById('writeQueueDepth').className =
+                'card-value ' + (writeQueueDepth > 5 ? 'warning' : '');
+
+            const writeQueueBuckets = (m['duckdb_write_queue_wait_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('writeQueueWaitP95').textContent =
+                'Wait P95: ' + formatDuration(calculatePercentile(writeQueueBuckets, 0.95) || 0);
+
             // Cache
             const cacheSize = m['duckdb_idempotency_cache_size']?.[0]?.value ?? 0;
             const cacheHits = m['duckdb_idempotency_cache_hits_total']?.[0]?.value ?? 0;
@@ -812,8 +998,8 @@
                 .reduce((s, c) => s + c.value, 0);
             const pgwireTotal = pgwireConns.reduce((s, c) => s + c.value, 0);
             document.getElementById('pgwireConnections').textContent = pgwireTotal.toLocaleString();
-            const authRate = pgwireTotal > 0 ? (pgwireSuccess / pgwireTotal * 100).toFixed(1) : 0;
-            document.getElementById('pgwireAuthRate').textContent = `Auth rate: ${authRate}%`;
+            const pgwireActive = m['pgwire_connections_active']?.[0]?.value ?? 0;
+            document.getElementById('pgwireActiveConns').textContent = `Active: ${pgwireActive}`;
 
             // PG Wire queries
             const pgwireQueries = m['pgwire_queries_total'] || [];
@@ -842,6 +1028,182 @@
             }));
             document.getElementById('pgwireAuthP95').textContent =
                 'Auth P95: ' + formatDuration(calculatePercentile(pgwireAuthBuckets, 0.95) || 0);
+
+            // Metadata DB (Phase 13a)
+            const metadataReads = m['duckdb_metadata_queries_total']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            const metadataWrites = m['duckdb_metadata_queries_total']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            document.getElementById('metadataReads').textContent = metadataReads.toLocaleString();
+            document.getElementById('metadataWrites').textContent = metadataWrites.toLocaleString();
+
+            const metadataReadSum = m['duckdb_metadata_query_duration_seconds_sum']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            const metadataReadCount = m['duckdb_metadata_query_duration_seconds_count']?.find(q => q.labels.operation === 'read')?.value ?? 0;
+            const metadataWriteSum = m['duckdb_metadata_query_duration_seconds_sum']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            const metadataWriteCount = m['duckdb_metadata_query_duration_seconds_count']?.find(q => q.labels.operation === 'write')?.value ?? 0;
+            document.getElementById('metadataReadAvg').textContent =
+                metadataReadCount > 0 ? `Avg: ${formatDuration(metadataReadSum / metadataReadCount)}` : 'Avg: --';
+            document.getElementById('metadataWriteAvg').textContent =
+                metadataWriteCount > 0 ? `Avg: ${formatDuration(metadataWriteSum / metadataWriteCount)}` : 'Avg: --';
+
+            const metadataQueryBuckets = (m['duckdb_metadata_query_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('metadataQueryP95').textContent =
+                formatDuration(calculatePercentile(metadataQueryBuckets, 0.95) || 0);
+            document.getElementById('metadataConnections').textContent =
+                m['duckdb_metadata_connections_active']?.[0]?.value ?? 0;
+
+            // Import/Export (Phase 13c)
+            const importOps = (m['duckdb_import_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            const exportOps = (m['duckdb_export_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('importOps').textContent = importOps.toLocaleString();
+            document.getElementById('exportOps').textContent = exportOps.toLocaleString();
+
+            const importRows = m['duckdb_import_rows_total']?.[0]?.value ?? 0;
+            const exportRows = m['duckdb_export_rows_total']?.[0]?.value ?? 0;
+            document.getElementById('importRows').textContent = importRows.toLocaleString();
+            document.getElementById('exportRows').textContent = `${exportRows.toLocaleString()} rows`;
+
+            const importBytes = (m['duckdb_import_bytes_total'] || []).reduce((s, b) => s + b.value, 0);
+            document.getElementById('importBytes').textContent = formatBytes(importBytes) + ' imported';
+
+            const importDurationBuckets = (m['duckdb_import_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('importP95').textContent =
+                'P95: ' + formatDuration(calculatePercentile(importDurationBuckets, 0.95) || 0);
+
+            const exportDurationBuckets = (m['duckdb_export_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('exportP95').textContent =
+                formatDuration(calculatePercentile(exportDurationBuckets, 0.95) || 0);
+
+            // Files & S3 (Phase 13d, 13f)
+            const filesTotal = m['duckdb_files_total']?.[0]?.value ?? 0;
+            const filesStaging = m['duckdb_files_staging_count']?.[0]?.value ?? 0;
+            document.getElementById('filesTotal').textContent = filesTotal.toLocaleString();
+            document.getElementById('filesStaging').textContent = `${filesStaging} in staging`;
+
+            // File uploads/downloads
+            const filesUploads = (m['duckdb_files_uploads_total'] || []).reduce((s, u) => s + u.value, 0);
+            const filesDownloads = (m['duckdb_files_downloads_total'] || []).reduce((s, d) => s + d.value, 0);
+            document.getElementById('filesUploads').textContent = filesUploads.toLocaleString();
+            document.getElementById('filesDownloads').textContent = filesDownloads.toLocaleString();
+
+            const filesUploadDurationBuckets = (m['duckdb_files_upload_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('filesUploadP95').textContent =
+                'P95: ' + formatDuration(calculatePercentile(filesUploadDurationBuckets, 0.95) || 0);
+
+            const filesUploadBytes = m['duckdb_files_upload_bytes_total']?.[0]?.value ?? 0;
+            const filesDownloadBytes = m['duckdb_files_download_bytes_total']?.[0]?.value ?? 0;
+            document.getElementById('filesUploadBytes').textContent = formatBytes(filesUploadBytes);
+            document.getElementById('filesDownloadBytes').textContent = 'Down: ' + formatBytes(filesDownloadBytes);
+
+            // S3 operations
+            const s3Ops = (m['duckdb_s3_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            const s3Multipart = m['duckdb_s3_multipart_uploads_active']?.[0]?.value ?? 0;
+            document.getElementById('s3Ops').textContent = s3Ops.toLocaleString();
+            document.getElementById('s3Multipart').textContent = `${s3Multipart} active uploads`;
+
+            const s3OpsDurationBuckets = (m['duckdb_s3_operation_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('s3OpsP95').textContent =
+                'P95: ' + formatDuration(calculatePercentile(s3OpsDurationBuckets, 0.95) || 0);
+
+            // S3 pre-signed URLs
+            const s3PresignTotal = (m['duckdb_s3_presign_requests_total'] || []).reduce((s, p) => s + p.value, 0);
+            document.getElementById('s3PresignTotal').textContent = s3PresignTotal.toLocaleString();
+
+            const s3BytesIn = m['duckdb_s3_bytes_in_total']?.[0]?.value ?? 0;
+            const s3BytesOut = m['duckdb_s3_bytes_out_total']?.[0]?.value ?? 0;
+            document.getElementById('s3BytesIn').textContent = formatBytes(s3BytesIn);
+            document.getElementById('s3BytesOut').textContent = formatBytes(s3BytesOut);
+
+            // Snapshots (Phase 13e)
+            const snapshotsTotal = m['duckdb_snapshots_total']?.[0]?.value ?? 0;
+            const snapshotsCreated = (m['duckdb_snapshots_created_total'] || []).reduce((s, c) => s + c.value, 0);
+            const snapshotsRestored = m['duckdb_snapshots_restored_total']?.[0]?.value ?? 0;
+            const snapshotsExpired = m['duckdb_snapshots_expired_total']?.[0]?.value ?? 0;
+            const snapshotsSize = m['duckdb_snapshots_size_bytes']?.[0]?.value ?? 0;
+            document.getElementById('snapshotsTotal').textContent = snapshotsTotal.toLocaleString();
+            document.getElementById('snapshotsCreated').textContent = `${snapshotsCreated} created`;
+            document.getElementById('snapshotsRestored').textContent = snapshotsRestored.toLocaleString();
+            document.getElementById('snapshotsExpired').textContent = snapshotsExpired.toLocaleString();
+            document.getElementById('snapshotsSize').textContent = formatBytes(snapshotsSize);
+
+            const snapshotCreateBuckets = (m['duckdb_snapshot_create_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('snapshotCreateP95').textContent =
+                'Create P95: ' + formatDuration(calculatePercentile(snapshotCreateBuckets, 0.95) || 0);
+
+            const snapshotRestoreBuckets = (m['duckdb_snapshot_restore_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('snapshotRestoreP95').textContent =
+                'Restore P95: ' + formatDuration(calculatePercentile(snapshotRestoreBuckets, 0.95) || 0);
+
+            // gRPC (Phase 13b)
+            const grpcRequests = (m['duckdb_grpc_requests_total'] || []).reduce((s, r) => s + r.value, 0);
+            const grpcErrors = (m['duckdb_grpc_errors_total'] || []).reduce((s, e) => s + e.value, 0);
+            const grpcConnections = m['duckdb_grpc_connections_active']?.[0]?.value ?? 0;
+            document.getElementById('grpcRequests').textContent = grpcRequests.toLocaleString();
+            document.getElementById('grpcConnections').textContent = grpcConnections;
+
+            const uniqueCommands = new Set((m['duckdb_grpc_requests_total'] || []).map(r => r.labels.command)).size;
+            document.getElementById('grpcCommands').textContent = `${uniqueCommands} commands`;
+
+            const grpcErrorRate = grpcRequests > 0 ? (grpcErrors / grpcRequests * 100).toFixed(1) : 0;
+            document.getElementById('grpcErrorRate').textContent = grpcErrorRate + '%';
+            document.getElementById('grpcErrorRate').className =
+                'card-value ' + (grpcErrors > 0 ? 'warning' : 'success');
+            document.getElementById('grpcErrors').textContent = `${grpcErrors} errors`;
+
+            const grpcDurationBuckets = (m['duckdb_grpc_request_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('grpcRequestP95').textContent =
+                formatDuration(calculatePercentile(grpcDurationBuckets, 0.95) || 0);
+
+            // Schema Operations (Phase 13g)
+            const schemaOps = (m['duckdb_schema_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('schemaOps').textContent = schemaOps.toLocaleString();
+
+            const schemaDurationBuckets = (m['duckdb_schema_operation_duration_seconds_bucket'] || []).map(b => ({
+                le: b.labels.le === '+Inf' ? '+Inf' : parseFloat(b.labels.le),
+                count: b.value
+            }));
+            document.getElementById('schemaP95').textContent =
+                'P95: ' + formatDuration(calculatePercentile(schemaDurationBuckets, 0.95) || 0);
+
+            // Schema breakdown by operation type
+            const schemaByOp = {};
+            (m['duckdb_schema_operations_total'] || []).forEach(o => {
+                if (o.value > 0) schemaByOp[o.labels.operation] = o.value;
+            });
+            const schemaBreakdownText = Object.entries(schemaByOp)
+                .map(([op, count]) => `${op}: ${count}`)
+                .join(', ') || 'No operations';
+            document.getElementById('schemaBreakdown').textContent = schemaBreakdownText;
+
+            // Bucket Sharing (Phase 13h)
+            const bucketShares = m['duckdb_bucket_shares_total']?.[0]?.value ?? 0;
+            const bucketLinks = m['duckdb_bucket_links_total']?.[0]?.value ?? 0;
+            const sharingOps = (m['duckdb_bucket_sharing_operations_total'] || []).reduce((s, o) => s + o.value, 0);
+            document.getElementById('bucketShares').textContent = bucketShares.toLocaleString();
+            document.getElementById('bucketLinks').textContent = `${bucketLinks} links`;
+            document.getElementById('sharingOps').textContent = sharingOps.toLocaleString();
 
             // Python GC
             const gc0 = m['python_gc_collections_total']?.find(g => g.labels.generation === '0')?.value ?? 0;

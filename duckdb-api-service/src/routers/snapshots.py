@@ -5,6 +5,7 @@ Uses branch-first URL pattern per ADR-012, but snapshots only work on default br
 
 import json
 import shutil
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import duckdb
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src import metrics
 from src.branch_utils import require_default_branch, resolve_branch, validate_project_and_bucket
 from src.config import settings
 from src.database import metadata_db, project_db_manager
@@ -159,6 +161,8 @@ async def create_snapshot_internal(
     Returns:
         Snapshot record dict
     """
+    start_time = time.time()
+
     # Check if snapshots are enabled
     config, _ = resolve_snapshot_config(project_id, bucket_name, table_name)
     if not config.get("enabled", True):
@@ -258,6 +262,12 @@ async def create_snapshot_internal(
         row_count=row_count,
         size_bytes=size_bytes,
     )
+
+    duration = time.time() - start_time
+    metrics.SNAPSHOT_CREATE_DURATION.observe(duration)
+
+    trigger = "manual" if snapshot_type == "manual" else snapshot_type.replace("auto_", "")
+    metrics.SNAPSHOTS_CREATED_TOTAL.labels(type=snapshot_type, trigger=trigger).inc()
 
     return snapshot_record
 
@@ -448,6 +458,8 @@ async def restore_snapshot(
     project_id: str, branch_id: str, snapshot_id: str, request: SnapshotRestoreRequest
 ) -> SnapshotRestoreResponse:
     """Restore a table from a snapshot (default branch only)."""
+    start_time = time.time()
+
     # Resolve branch and require default
     resolved_project_id, resolved_branch_id = resolve_branch(project_id, branch_id)
     require_default_branch(resolved_branch_id, "restore snapshots")
@@ -554,6 +566,10 @@ async def restore_snapshot(
         target_table=target_table,
         row_count=row_count,
     )
+
+    duration = time.time() - start_time
+    metrics.SNAPSHOT_RESTORE_DURATION.observe(duration)
+    metrics.SNAPSHOTS_RESTORED_TOTAL.inc()
 
     return SnapshotRestoreResponse(
         restored_to={"bucket": target_bucket, "table": target_table},

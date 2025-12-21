@@ -14,8 +14,41 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "generated"))
 from proto import service_pb2_grpc
 from src.grpc.servicer import StorageDriverServicer
 from src.database import MetadataDB, ProjectDBManager
+from src import metrics
 
 logger = logging.getLogger(__name__)
+
+
+class MetricsInterceptor(grpc.ServerInterceptor):
+    """
+    gRPC server interceptor for tracking active connections/requests.
+
+    Tracks the number of in-flight gRPC requests as a proxy for connection activity.
+    """
+
+    def intercept_service(self, continuation, handler_call_details):
+        """Intercept incoming requests to track active connections."""
+        metrics.GRPC_CONNECTIONS_ACTIVE.inc()
+
+        def wrapper(behavior, request, context):
+            try:
+                return behavior(request, context)
+            finally:
+                metrics.GRPC_CONNECTIONS_ACTIVE.dec()
+
+        handler = continuation(handler_call_details)
+        if handler is None:
+            return handler
+
+        if handler.unary_unary:
+            return grpc.unary_unary_rpc_method_handler(
+                lambda req, ctx: wrapper(handler.unary_unary, req, ctx),
+                request_deserializer=handler.request_deserializer,
+                response_serializer=handler.response_serializer
+            )
+
+        # Return original handler for non-unary-unary methods
+        return handler
 
 
 def create_server(
@@ -38,7 +71,11 @@ def create_server(
     Returns:
         Configured but not started gRPC server
     """
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    # Create server with metrics interceptor for connection tracking
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        interceptors=[MetricsInterceptor()]
+    )
 
     servicer = StorageDriverServicer(metadata_db, project_manager)
     service_pb2_grpc.add_StorageDriverServiceServicer_to_server(servicer, server)
