@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 12d DONE (Schema Handlers)
+## Current Status: Phase 12h.8 DONE (Backend Audit Complete!)
 
-**Total Tests: 521**
+**Total Tests: 575**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -23,9 +23,16 @@
 | 11c | Workspace Polish | DONE | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
 | 12a | gRPC Server | DONE | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 12b | Connection Backend Registration | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
-| **12c** | **gRPC Core Handlers** | **DONE** | 23 | [phase-12c-core-handlers.md](phase-12c-core-handlers.md) |
-| **12d** | **gRPC Schema Handlers** | **DONE** | 18 | [phase-12-php-driver.md](phase-12-php-driver.md) |
-| 12e-g | Workspace/Sharing/Advanced | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12c | gRPC Core Handlers | DONE | 23 | [phase-12c-core-handlers.md](phase-12c-core-handlers.md) |
+| 12d | gRPC Schema Handlers | DONE | 18 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12e | gRPC Workspace Handlers | DONE | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12h.1 | S3-Compatible API | DONE | 38 | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.2-5 | Connection File Integration | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.6 | File Routing Fix | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.7 | Async Table Creation | TODO | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| **12h.8** | **Backend Audit** | **DONE** | 5 fixes | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12f-g | Driver Commands | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| **13** | **Complete Observability** | **TODO** | ~62 | [phase-13-observability.md](phase-13-observability.md) |
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
@@ -87,7 +94,19 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 [DONE] gRPC Schema Handlers - Phase 12d (18 tests)
        ↓
-[NEXT] Workspace/Sharing/Advanced Handlers - Phase 12e-g
+[DONE] gRPC Workspace Handlers - Phase 12e (17 tests)
+       ↓
+[DONE] S3-Compatible API - Phase 12h.1 (38 tests)
+       ↓
+[DONE] Connection File Integration - Phase 12h.2-5
+       ↓
+[DONE] File Routing Fix - Phase 12h.6 (Upload to DuckDB works!)
+       ↓
+[DONE] Backend Audit - Phase 12h.8 (5 critical files fixed)
+       ↓
+[TODO] Async Table Creation - Phase 12h.7 (Job stuck in waiting)
+       ↓
+[TODO] Complete Observability - Phase 13 (~62 tests)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -112,6 +131,12 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.12 | 2025-12-21 | Phase 12h.8 DONE: Backend audit - fixed 5 files (getAssignedBackends, removeBackend, getRootCredentialsForBackend, getDefaultConnectionForBackend, File PHPDoc) |
+| v7.11 | 2025-12-21 | Phase 12h.6 DONE: File upload to DuckDB works! Fixed getFileStorage(), Provider enum, File DTO |
+| v7.10 | 2024-12-21 | Phase 12h.2 VERIFIED: DuckDB project file storage auto-assignment tested (Project 7) |
+| v7.9 | 2024-12-21 | Phase 12h.2 DONE: Connection File Integration (migration, models, BackendAssign) |
+| v7.8 | 2024-12-21 | Phase 12h.1 DONE: S3-Compatible API + Pre-signed URLs (38 tests), 575 total |
+| v7.7 | 2024-12-21 | Phase 12e DONE: Workspace Handlers (17 tests) |
 | v7.6 | 2024-12-21 | Phase 12d DONE: Schema Handlers (18 tests), 521 total tests |
 | v7.5 | 2024-12-21 | Phase 12c DONE: Core Handlers (23 tests), Connection registration |
 | v7.4 | 2024-12-20 | Phase 12a DONE: gRPC Server (17 tests), unified server, 480 total tests |

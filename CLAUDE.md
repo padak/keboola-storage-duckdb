@@ -84,10 +84,11 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       ├── workspaces.py  # Workspace management
   │       ├── pgwire_auth.py # PG Wire auth bridge (internal)
   │       ├── driver.py      # HTTP bridge for driver commands (Phase 12a.1)
+  │       ├── s3_compat.py   # S3-compatible API (Phase 12h.1)
   │       └── metrics.py     # Prometheus /metrics endpoint
   ├── proto/                 # Protocol Buffer definitions
   ├── generated/             # Generated Python protobuf code
-  └── tests/                 # pytest tests (538 tests)
+  └── tests/                 # pytest tests (575 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -122,12 +123,15 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Connection Backend Registration (Phase 12b)** | **DONE** | - |
 | **Connection Full Integration (Phase 12b.1)** | **DONE** | - |
 | **Secure Project API Keys (Phase 12b.2)** | **DONE** | - |
+| **S3-Compatible API (Phase 12h.1)** | **DONE** | 38 |
+| **Connection File Integration (Phase 12h.2-6)** | **DONE** | - |
+| **Backend Audit (Phase 12h.8)** | **DONE** | 5 fixes |
 | Schema Migrations | TODO | - |
 | PHP Driver Commands (Phase 12f-g) | TODO (last) | - |
 
-**Total: 538 tests PASS** (including 62 E2E + 75 gRPC tests)
+**Total: 575 tests PASS** (including 62 E2E + 75 gRPC + 38 S3 tests)
 
-**Current: Phase 12b.2 DONE - Secure Project API Keys**
+**Current: Phase 12h.8 DONE - Backend Audit Complete (5 critical files fixed)**
 
 **SUCCESS (2024-12-21):** Table creation via Connection works end-to-end with secure project isolation!
 
@@ -138,6 +142,7 @@ connection/                   # Keboola Connection (git submodule/clone)
 - **CREATE TABLE via CSV upload** - Connection calls DuckDB API via HTTP bridge
 - List tables shows created tables with `backend: duckdb`
 - **Secure project isolation** - Each project has its own API key stored in `bi_connectionsCredentials`
+- **S3-Compatible API** - GET/PUT/DELETE/HEAD/ListObjectsV2 + pre-signed URLs
 
 **Phase 12b.2 Implementation:**
 - Project API keys stored encrypted in `bi_connectionsCredentials.password`
@@ -168,7 +173,10 @@ connection/                   # Keboola Connection (git submodule/clone)
 18. ~~gRPC Workspace Handlers (Phase 12e)~~ - DONE
 19. ~~Connection Full Integration (Phase 12b.1)~~ - DONE
 20. ~~Secure Project API Keys (Phase 12b.2)~~ - DONE
-21. **More Driver Commands (Phase 12f-g)** - NEXT
+21. ~~S3-Compatible API (Phase 12h.1)~~ - DONE
+22. ~~Connection File Integration (Phase 12h.2-6)~~ - DONE
+23. ~~Backend Audit (Phase 12h.8)~~ - DONE
+24. **Async Table Creation (Phase 12h.7)** - NEXT
 
 ## Key Decisions (APPROVED)
 
@@ -245,12 +253,13 @@ Usage:
 ```bash
 cd duckdb-api-service
 source .venv/bin/activate
-pytest tests/ -v                  # Run tests (480 total)
+pytest tests/ -v                  # Run tests (575 total)
 python -m src.main                # Run REST API only (port 8000)
 python -m src.unified_server      # Run REST + gRPC (ports 8000, 50051)
 python -m src.grpc.server         # Run gRPC only (port 50051)
 docker compose up --build         # Docker
-open dashboard.html               # Metrics dashboard (auto-refresh)
+open dashboard2.html              # Metrics dashboard - tab-based (recommended)
+open dashboard.html               # Metrics dashboard - single-page view
 ```
 
 ### gRPC Testing with grpcurl
@@ -272,19 +281,25 @@ grpcurl -plaintext -import-path . -proto proto/service.proto \
   localhost:50051 keboola.storageDriver.service.StorageDriverService/Execute
 ```
 
-### Metrics Dashboard
+### Metrics Dashboards
 
-`dashboard.html` - standalone HTML dashboard for Prometheus metrics visualization:
-- **Service Health**: Status, uptime, total requests, error rate (4xx/5xx)
-- **Storage**: Projects/buckets/tables count, size breakdown (metadata/tables/staging/files)
-- **Latency**: P50/P90/P95/P99 percentiles + average (calculated from histograms)
-- **Concurrency**: Active locks, lock acquisitions, lock wait P95, idempotency cache
-- **Dev Branches**: Total branches, CoW operations, CoW duration metrics
-- **Workspaces & PG Wire**: Total workspaces, active sessions, auth rate, query P95
-- **Charts**: Request distribution by status code and HTTP method
-- **Tables**: Endpoint details with latency, table lock activity, Python GC stats
+Two standalone HTML dashboards for Prometheus metrics visualization:
 
-Auto-refreshes every 5s, works with API running on `localhost:8000`.
+**`dashboard.html`** - Full single-page view with all sections vertically
+- All metrics visible on one scrollable page
+- 14 sections: Service Health, Storage, Metadata DB, Import/Export, Files & S3, Snapshots, Concurrency, Dev Branches, Workspaces & PG Wire, gRPC, Schema & Sharing, Charts, Tables
+
+**`dashboard2.html`** - Tab-based navigation (recommended)
+- **Always-visible KPI row**: Status, Uptime, Requests, Error Rate, P95 Latency, Tables, Storage
+- **5 tabs** for organized navigation:
+  - **Overview**: Storage breakdown, latency percentiles, request charts
+  - **Data**: Import/Export, Metadata DB, Schema operations
+  - **APIs**: HTTP REST, gRPC, PG Wire, S3-Compatible (all interfaces together)
+  - **Operations**: Locks, Write Queue, Cache, Branches, Snapshots, Files
+  - **Details**: Endpoints table, Lock activity, Python runtime
+- Error badge on APIs tab when 5xx errors occur
+
+Both dashboards auto-refresh every 5s and work with API on `localhost:8000`.
 
 ### Implemented Endpoints (Current)
 
@@ -307,6 +322,9 @@ Auto-refreshes every 5s, works with API running on `localhost:8000`.
 | `/projects/{id}/files/{id}` | GET/DELETE | Get/Delete file |
 | `/projects/{id}/files/{id}/download` | GET | Download file |
 | `/projects/{id}/settings/snapshots` | GET/PUT/DELETE | Project snapshot config |
+| `/s3/{bucket}/{key}` | GET/PUT/DELETE/HEAD | S3-compatible file operations |
+| `/s3/{bucket}` | GET | S3 ListObjectsV2 |
+| `/s3/{bucket}/presign` | POST | Generate pre-signed URL |
 
 **Branch-First Endpoints (ADR-012)** - all bucket/table operations include `/branches/{branch_id}/`:
 
