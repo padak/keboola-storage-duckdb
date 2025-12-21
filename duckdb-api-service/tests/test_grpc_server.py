@@ -279,8 +279,8 @@ class TestStorageDriverServicer:
         from google.protobuf import any_pb2
         from proto import bucket_pb2
 
-        # Use a bucket command that's not registered yet
-        cmd = bucket_pb2.CreateBucketCommand()
+        # Use a bucket command that's not implemented yet (LinkBucketCommand)
+        cmd = bucket_pb2.LinkBucketCommand()
         request = common_pb2.DriverRequest()
         request.command.Pack(cmd)
 
