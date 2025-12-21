@@ -121,8 +121,12 @@ def json_to_driver_request(request: DriverExecuteRequest) -> common_pb2.DriverRe
     # Pack credentials if present
     if request.credentials:
         creds = credentials_pb2.GenericBackendCredentials()
+        # Support both 'host' and 'project_id' for host field
+        # PHP sends 'project_id', protobuf uses 'host'
         if "host" in request.credentials:
             creds.host = request.credentials["host"]
+        elif "project_id" in request.credentials:
+            creds.host = request.credentials["project_id"]
         if "principal" in request.credentials:
             creds.principal = request.credentials["principal"]
         # Add more credential fields as needed
@@ -140,13 +144,43 @@ def json_to_driver_request(request: DriverExecuteRequest) -> common_pb2.DriverRe
     return driver_request
 
 
+def _snake_to_camel(name: str) -> str:
+    """Convert snake_case to camelCase."""
+    components = name.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+
+def _convert_keys_to_camel_case(data: dict) -> dict:
+    """Recursively convert all dict keys from snake_case to camelCase."""
+    if not isinstance(data, dict):
+        return data
+
+    result = {}
+    for key, value in data.items():
+        new_key = _snake_to_camel(key)
+        if isinstance(value, dict):
+            result[new_key] = _convert_keys_to_camel_case(value)
+        elif isinstance(value, list):
+            result[new_key] = [
+                _convert_keys_to_camel_case(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            result[new_key] = value
+    return result
+
+
 def _create_command_message(type_name: str, command_json: dict):
     """Create a protobuf command message from JSON.
 
     Supports all command types from the driver protocol.
+    The PHP driver sends snake_case field names, but protobuf expects camelCase.
     """
     # Remove type/@type fields before parsing (these are just identifiers, not data)
     command_data = {k: v for k, v in command_json.items() if k not in ("type", "@type")}
+
+    # Convert snake_case keys to camelCase (PHP driver sends snake_case)
+    command_data = _convert_keys_to_camel_case(command_data)
 
     # Map type name to message class
     message_classes = {
