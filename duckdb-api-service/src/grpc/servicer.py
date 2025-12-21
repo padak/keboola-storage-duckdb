@@ -9,13 +9,43 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "generated"))
 
-from proto import service_pb2_grpc, common_pb2, backend_pb2, project_pb2
+from proto import service_pb2_grpc, common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, workspace_pb2
 from src.grpc.utils import get_type_name
 from src.grpc.handlers import (
+    # Backend handlers
     InitBackendHandler,
     RemoveBackendHandler,
+    # Project handlers
     CreateProjectHandler,
     DropProjectHandler,
+    # Bucket handlers (Phase 12c)
+    CreateBucketHandler,
+    DropBucketHandler,
+    # Table handlers (Phase 12c)
+    CreateTableHandler,
+    DropTableHandler,
+    PreviewTableHandler,
+    # Info handlers (Phase 12c)
+    ObjectInfoHandler,
+    # Import/Export handlers (Phase 12c)
+    TableImportFromFileHandler,
+    TableExportToFileHandler,
+    # Schema handlers (Phase 12d)
+    AddColumnHandler,
+    DropColumnHandler,
+    AlterColumnHandler,
+    AddPrimaryKeyHandler,
+    DropPrimaryKeyHandler,
+    DeleteTableRowsHandler,
+    # Workspace handlers (Phase 12e)
+    CreateWorkspaceHandler,
+    DropWorkspaceHandler,
+    ClearWorkspaceHandler,
+    ResetWorkspacePasswordHandler,
+    DropWorkspaceObjectHandler,
+    GrantWorkspaceAccessToProjectHandler,
+    RevokeWorkspaceAccessToProjectHandler,
+    LoadTableToWorkspaceHandler,
 )
 from src.database import MetadataDB, ProjectDBManager
 
@@ -45,6 +75,7 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
         Returns dict mapping command type name to (handler_instance, command_class) tuple.
         """
         return {
+            # Backend handlers
             'InitBackendCommand': (
                 InitBackendHandler(self.metadata_db),
                 backend_pb2.InitBackendCommand
@@ -53,6 +84,7 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
                 RemoveBackendHandler(self.metadata_db),
                 backend_pb2.RemoveBackendCommand
             ),
+            # Project handlers
             'CreateProjectCommand': (
                 CreateProjectHandler(self.metadata_db, self.project_manager),
                 project_pb2.CreateProjectCommand
@@ -60,6 +92,100 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
             'DropProjectCommand': (
                 DropProjectHandler(self.metadata_db, self.project_manager),
                 project_pb2.DropProjectCommand
+            ),
+            # Bucket handlers (Phase 12c)
+            'CreateBucketCommand': (
+                CreateBucketHandler(self.project_manager),
+                bucket_pb2.CreateBucketCommand
+            ),
+            'DropBucketCommand': (
+                DropBucketHandler(self.project_manager),
+                bucket_pb2.DropBucketCommand
+            ),
+            # Table handlers (Phase 12c)
+            'CreateTableCommand': (
+                CreateTableHandler(self.project_manager),
+                table_pb2.CreateTableCommand
+            ),
+            'DropTableCommand': (
+                DropTableHandler(self.project_manager),
+                table_pb2.DropTableCommand
+            ),
+            'PreviewTableCommand': (
+                PreviewTableHandler(self.project_manager),
+                table_pb2.PreviewTableCommand
+            ),
+            # Info handlers (Phase 12c)
+            'ObjectInfoCommand': (
+                ObjectInfoHandler(self.project_manager),
+                info_pb2.ObjectInfoCommand
+            ),
+            # Import/Export handlers (Phase 12c)
+            'TableImportFromFileCommand': (
+                TableImportFromFileHandler(self.project_manager),
+                table_pb2.TableImportFromFileCommand
+            ),
+            'TableExportToFileCommand': (
+                TableExportToFileHandler(self.project_manager),
+                table_pb2.TableExportToFileCommand
+            ),
+            # Schema handlers (Phase 12d)
+            'AddColumnCommand': (
+                AddColumnHandler(self.project_manager),
+                table_pb2.AddColumnCommand
+            ),
+            'DropColumnCommand': (
+                DropColumnHandler(self.project_manager),
+                table_pb2.DropColumnCommand
+            ),
+            'AlterColumnCommand': (
+                AlterColumnHandler(self.project_manager),
+                table_pb2.AlterColumnCommand
+            ),
+            'AddPrimaryKeyCommand': (
+                AddPrimaryKeyHandler(self.project_manager),
+                table_pb2.AddPrimaryKeyCommand
+            ),
+            'DropPrimaryKeyCommand': (
+                DropPrimaryKeyHandler(self.project_manager),
+                table_pb2.DropPrimaryKeyCommand
+            ),
+            'DeleteTableRowsCommand': (
+                DeleteTableRowsHandler(self.project_manager),
+                table_pb2.DeleteTableRowsCommand
+            ),
+            # Workspace handlers (Phase 12e)
+            'CreateWorkspaceCommand': (
+                CreateWorkspaceHandler(self.project_manager, self.metadata_db),
+                workspace_pb2.CreateWorkspaceCommand
+            ),
+            'DropWorkspaceCommand': (
+                DropWorkspaceHandler(self.project_manager, self.metadata_db),
+                workspace_pb2.DropWorkspaceCommand
+            ),
+            'ClearWorkspaceCommand': (
+                ClearWorkspaceHandler(self.project_manager, self.metadata_db),
+                workspace_pb2.ClearWorkspaceCommand
+            ),
+            'ResetWorkspacePasswordCommand': (
+                ResetWorkspacePasswordHandler(self.metadata_db),
+                workspace_pb2.ResetWorkspacePasswordCommand
+            ),
+            'DropWorkspaceObjectCommand': (
+                DropWorkspaceObjectHandler(self.project_manager, self.metadata_db),
+                workspace_pb2.DropWorkspaceObjectCommand
+            ),
+            'GrantWorkspaceAccessToProjectCommand': (
+                GrantWorkspaceAccessToProjectHandler(self.metadata_db),
+                workspace_pb2.GrantWorkspaceAccessToProjectCommand
+            ),
+            'RevokeWorkspaceAccessToProjectCommand': (
+                RevokeWorkspaceAccessToProjectHandler(self.metadata_db),
+                workspace_pb2.RevokeWorkspaceAccessToProjectCommand
+            ),
+            'LoadTableToWorkspaceCommand': (
+                LoadTableToWorkspaceHandler(self.project_manager, self.metadata_db),
+                workspace_pb2.LoadTableToWorkspaceCommand
             ),
         }
 
