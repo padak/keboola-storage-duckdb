@@ -25,7 +25,7 @@ class TableImportFromFileHandler(BaseCommandHandler):
     3. Imports data using COPY FROM or INSERT INTO
     4. Handles full/incremental load modes
 
-    Supports S3, ABS (Azure), and GCS file providers.
+    Supports S3, ABS (Azure), GCS, and HTTP (pre-signed URL) file providers.
     """
 
     def __init__(self, project_manager: ProjectDBManager):
@@ -48,20 +48,30 @@ class TableImportFromFileHandler(BaseCommandHandler):
         dest_path = list(dest.path)
         table_name = dest.tableName
 
-        if len(dest_path) < 2:
-            raise ValueError(
-                "Destination path must contain [project_id, bucket_name]"
-            )
         if not table_name:
             raise ValueError("tableName is required")
+        if len(dest_path) < 1:
+            raise ValueError("Path must contain at least bucket_name")
 
-        project_id = dest_path[0]
-        bucket_name = dest_path[-1]
-
-        # Handle branch in path
-        branch_id = "default"
-        if len(dest_path) > 2:
-            branch_id = dest_path[1]
+        # Parse path flexibly (same as CreateTableHandler):
+        # - [bucket_name] - project_id comes from credentials
+        # - [project_id, bucket_name]
+        # - [project_id, branch_id, bucket_name]
+        if len(dest_path) == 1:
+            # Path contains only bucket_name, get project_id from credentials
+            if not credentials or 'project_id' not in credentials:
+                raise ValueError("Path must contain [project_id, bucket_name] or credentials must have project_id")
+            project_id = credentials['project_id']
+            bucket_name = dest_path[0]
+            branch_id = "default"
+        elif len(dest_path) == 2:
+            project_id = dest_path[0]
+            bucket_name = dest_path[1]
+            branch_id = "default"
+        else:
+            project_id = dest_path[0]
+            bucket_name = dest_path[-1]
+            branch_id = dest_path[1] if len(dest_path) > 2 else "default"
 
         effective_project_id = project_id
         if branch_id and branch_id != "default":
@@ -152,6 +162,51 @@ class TableImportFromFileHandler(BaseCommandHandler):
                 return f"gcs://{root}/{path}/{file_name}"
             return f"gcs://{root}/{file_name}"
 
+        # HTTP/HTTPS provider (e.g., pre-signed URLs) or local file path
+        if provider == table_pb2.ImportExportShared.FileProvider.HTTP:
+            # Check if this is a local file path (starts with /)
+            if root.startswith('/'):
+                # Local filesystem path - build full path
+                local_path = root.rstrip('/')
+                if path:
+                    local_path = f"{local_path}/{path.strip('/')}"
+                if file_name:
+                    local_path = f"{local_path}/{file_name}"
+                return local_path
+
+            # Check if this is a DuckDB bucket (project_N format)
+            # These files are stored locally in files_dir, so read directly from filesystem
+            # to avoid self-calling deadlock (httpfs calling our own S3 API)
+            if root.startswith('project_'):
+                from src.config import settings
+
+                # Build the key (path within bucket)
+                key_parts = []
+                if path:
+                    key_parts.append(path.strip('/'))
+                if file_name:
+                    key_parts.append(file_name)
+                key = '/'.join(key_parts) if key_parts else ''
+
+                # Build local filesystem path
+                # files_dir/project_N/key
+                local_path = settings.files_dir / root / key
+                return str(local_path)
+
+            # For HTTP, root contains the full URL (e.g., pre-signed URL)
+            # If root already contains query parameters (pre-signed), use as-is
+            # Otherwise, append path and fileName
+            if '?' in root:
+                # Pre-signed URL - use root as-is (it contains everything)
+                return root
+            # Regular HTTP URL - build path
+            url = root.rstrip('/')
+            if path:
+                url = f"{url}/{path.strip('/')}"
+            if file_name:
+                url = f"{url}/{file_name}"
+            return url
+
         raise ValueError(f"Unsupported file provider: {provider}")
 
     def _extract_credentials(self, provider, creds_any) -> dict:
@@ -198,15 +253,21 @@ class TableImportFromFileHandler(BaseCommandHandler):
         """Execute the actual import operation."""
         conn = duckdb.connect(str(table_path))
         try:
-            # Configure DuckDB for S3 access if credentials provided
-            if s3_creds.get("key"):
+            # Check if file is from remote source (S3, HTTP, etc.)
+            is_remote = file_url.startswith(('s3://', 'http://', 'https://', 'azure://', 'gcs://'))
+
+            if is_remote:
+                # Load httpfs extension for remote file access
                 conn.execute("INSTALL httpfs; LOAD httpfs;")
-                conn.execute(f"SET s3_access_key_id='{s3_creds['key']}'")
-                conn.execute(f"SET s3_secret_access_key='{s3_creds['secret']}'")
-                if s3_creds.get("region"):
-                    conn.execute(f"SET s3_region='{s3_creds['region']}'")
-                if s3_creds.get("token"):
-                    conn.execute(f"SET s3_session_token='{s3_creds['token']}'")
+
+                # Configure S3 credentials if provided (not needed for HTTP)
+                if s3_creds.get("key"):
+                    conn.execute(f"SET s3_access_key_id='{s3_creds['key']}'")
+                    conn.execute(f"SET s3_secret_access_key='{s3_creds['secret']}'")
+                    if s3_creds.get("region"):
+                        conn.execute(f"SET s3_region='{s3_creds['region']}'")
+                    if s3_creds.get("token"):
+                        conn.execute(f"SET s3_session_token='{s3_creds['token']}'")
 
             # Get column info
             columns_result = conn.execute(f"""
@@ -225,15 +286,29 @@ class TableImportFromFileHandler(BaseCommandHandler):
             if not is_incremental:
                 conn.execute(f"DELETE FROM main.{TABLE_DATA_NAME}")
 
-            # Build CSV options for COPY
-            csv_copy_opts = ["FORMAT CSV", "HEADER true"]
+            # Build CSV options for DuckDB read_csv function
+            # DuckDB read_csv uses: header=true, delim=',', quote='"', escape='"'
+            csv_read_opts = ["header = true"]
             if csv_opts.get("delimiter"):
-                csv_copy_opts.append(f"DELIMITER '{csv_opts['delimiter']}'")
+                csv_read_opts.append(f"delim = '{csv_opts['delimiter']}'")
+            if csv_opts.get("enclosure"):
+                csv_read_opts.append(f"quote = '{csv_opts['enclosure']}'")
+            if csv_opts.get("escaped_by"):
+                csv_read_opts.append(f"escape = '{csv_opts['escaped_by']}'")
 
-            # Import using COPY or INSERT INTO ... SELECT
+            # Import using INSERT INTO ... SELECT from read_csv
+            # Exclude system columns (_timestamp) from the import
+            # The CSV contains user data columns, we add _timestamp automatically
+            data_columns = [c for c in columns if not c.startswith('_')]
+            columns_sql = ', '.join(data_columns)
+
+            # If CSV has columns specified, use them; otherwise use data columns
+            csv_columns = csv_opts.get("columns") if csv_opts.get("columns") else data_columns
+
             copy_sql = f"""
-                INSERT INTO main.{TABLE_DATA_NAME}
-                SELECT * FROM read_csv('{file_url}', {', '.join(csv_copy_opts)})
+                INSERT INTO main.{TABLE_DATA_NAME} ({columns_sql}, _timestamp)
+                SELECT {columns_sql}, CURRENT_TIMESTAMP
+                FROM read_csv('{file_url}', {', '.join(csv_read_opts)})
             """
 
             try:
@@ -275,7 +350,7 @@ class TableExportToFileHandler(BaseCommandHandler):
     3. Exports data using COPY TO
     4. Returns table info
 
-    Supports S3, ABS (Azure), and GCS file providers.
+    Supports S3, ABS (Azure), GCS, and HTTP (pre-signed URL) file providers.
     """
 
     def __init__(self, project_manager: ProjectDBManager):
@@ -400,6 +475,51 @@ class TableExportToFileHandler(BaseCommandHandler):
                 return f"gcs://{root}/{path}/{file_name}"
             return f"gcs://{root}/{file_name}"
 
+        # HTTP/HTTPS provider (e.g., pre-signed URLs) or local file path
+        if provider == table_pb2.ImportExportShared.FileProvider.HTTP:
+            # Check if this is a local file path (starts with /)
+            if root.startswith('/'):
+                # Local filesystem path - build full path
+                local_path = root.rstrip('/')
+                if path:
+                    local_path = f"{local_path}/{path.strip('/')}"
+                if file_name:
+                    local_path = f"{local_path}/{file_name}"
+                return local_path
+
+            # Check if this is a DuckDB bucket (project_N format)
+            # These files are stored locally in files_dir, so read directly from filesystem
+            # to avoid self-calling deadlock (httpfs calling our own S3 API)
+            if root.startswith('project_'):
+                from src.config import settings
+
+                # Build the key (path within bucket)
+                key_parts = []
+                if path:
+                    key_parts.append(path.strip('/'))
+                if file_name:
+                    key_parts.append(file_name)
+                key = '/'.join(key_parts) if key_parts else ''
+
+                # Build local filesystem path
+                # files_dir/project_N/key
+                local_path = settings.files_dir / root / key
+                return str(local_path)
+
+            # For HTTP, root contains the full URL (e.g., pre-signed URL)
+            # If root already contains query parameters (pre-signed), use as-is
+            # Otherwise, append path and fileName
+            if '?' in root:
+                # Pre-signed URL - use root as-is (it contains everything)
+                return root
+            # Regular HTTP URL - build path
+            url = root.rstrip('/')
+            if path:
+                url = f"{url}/{path.strip('/')}"
+            if file_name:
+                url = f"{url}/{file_name}"
+            return url
+
         raise ValueError(f"Unsupported file provider: {provider}")
 
     def _extract_credentials(self, provider, creds_any) -> dict:
@@ -430,13 +550,19 @@ class TableExportToFileHandler(BaseCommandHandler):
         """Execute the actual export operation."""
         conn = duckdb.connect(str(table_path), read_only=True)
         try:
-            # Configure DuckDB for S3 access if credentials provided
-            if s3_creds.get("key"):
+            # Check if file is for remote destination (S3, HTTP, etc.)
+            is_remote = file_url.startswith(('s3://', 'http://', 'https://', 'azure://', 'gcs://'))
+
+            if is_remote:
+                # Load httpfs extension for remote file access
                 conn.execute("INSTALL httpfs; LOAD httpfs;")
-                conn.execute(f"SET s3_access_key_id='{s3_creds['key']}'")
-                conn.execute(f"SET s3_secret_access_key='{s3_creds['secret']}'")
-                if s3_creds.get("region"):
-                    conn.execute(f"SET s3_region='{s3_creds['region']}'")
+
+                # Configure S3 credentials if provided (not needed for HTTP)
+                if s3_creds.get("key"):
+                    conn.execute(f"SET s3_access_key_id='{s3_creds['key']}'")
+                    conn.execute(f"SET s3_secret_access_key='{s3_creds['secret']}'")
+                    if s3_creds.get("region"):
+                        conn.execute(f"SET s3_region='{s3_creds['region']}'")
 
             # Build SELECT query
             columns_sql = ", ".join(columns) if columns else "*"

@@ -133,15 +133,30 @@ class DropTableHandler(BaseCommandHandler):
         path = list(cmd.path)
         table_name = cmd.tableName
 
-        if len(path) < 2:
-            raise ValueError("Path must contain at least [project_id, bucket_name]")
         if not table_name:
             raise ValueError("tableName is required")
+        if len(path) < 1:
+            raise ValueError("Path must contain at least bucket_name")
 
-        # Parse path
-        project_id = path[0]
-        bucket_name = path[-1]
-        branch_id = path[1] if len(path) > 2 else "default"
+        # Parse path flexibly:
+        # - [bucket_name] - project_id comes from credentials
+        # - [project_id, bucket_name]
+        # - [project_id, branch_id, bucket_name]
+        if len(path) == 1:
+            # Path contains only bucket_name, get project_id from credentials
+            if not credentials or 'project_id' not in credentials:
+                raise ValueError("Path must contain [project_id, bucket_name] or credentials must have project_id")
+            project_id = credentials['project_id']
+            bucket_name = path[0]
+            branch_id = "default"
+        elif len(path) == 2:
+            project_id = path[0]
+            bucket_name = path[1]
+            branch_id = "default"
+        else:
+            project_id = path[0]
+            bucket_name = path[-1]
+            branch_id = path[1] if len(path) > 2 else "default"
 
         # Adjust project_id for branch operations
         effective_project_id = project_id
@@ -202,15 +217,30 @@ class PreviewTableHandler(BaseCommandHandler):
         path = list(cmd.path)
         table_name = cmd.tableName
 
-        if len(path) < 2:
-            raise ValueError("Path must contain at least [project_id, bucket_name]")
         if not table_name:
             raise ValueError("tableName is required")
+        if len(path) < 1:
+            raise ValueError("Path must contain at least bucket_name")
 
-        # Parse path
-        project_id = path[0]
-        bucket_name = path[-1]
-        branch_id = path[1] if len(path) > 2 else "default"
+        # Parse path flexibly:
+        # - [bucket_name] - project_id comes from credentials
+        # - [project_id, bucket_name]
+        # - [project_id, branch_id, bucket_name]
+        if len(path) == 1:
+            # Path contains only bucket_name, get project_id from credentials
+            if not credentials or 'project_id' not in credentials:
+                raise ValueError("Path must contain [project_id, bucket_name] or credentials must have project_id")
+            project_id = credentials['project_id']
+            bucket_name = path[0]
+            branch_id = "default"
+        elif len(path) == 2:
+            project_id = path[0]
+            bucket_name = path[1]
+            branch_id = "default"
+        else:
+            project_id = path[0]
+            bucket_name = path[-1]
+            branch_id = path[1] if len(path) > 2 else "default"
 
         # Adjust project_id for branch operations
         effective_project_id = project_id
