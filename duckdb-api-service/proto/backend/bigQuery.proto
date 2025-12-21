@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package keboola.storageDriver.backend.bigQuery;
+
+// Placeholder definitions for BigQuery-specific types
+// Not used by DuckDB driver but required for proto compilation
+
+message TimePartitioning {
+  string type = 1;
+  int64 expirationMs = 2;
+  string field = 3;
+}
+
+message RangePartitioning {
+  string field = 1;
+  Range range = 2;
+
+  message Range {
+    int64 start = 1;
+    int64 end = 2;
+    int64 interval = 3;
+  }
+}
+
+message Clustering {
+  repeated string fields = 1;
+}
