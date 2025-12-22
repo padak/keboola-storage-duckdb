@@ -56,10 +56,11 @@ interface ClientInterface {
 
 ### gRPC vs HTTP Bridge (Team Discussion Dec 2024)
 
-**Context:** Zajca added gRPC interface to storage-backend in [PR #259](https://github.com/keboola/storage-backend/pull/259):
+**Context:** Zajca created DRAFT [PR #259](https://github.com/keboola/storage-backend/pull/259) showing how gRPC could work:
 - Added `service.proto` with RPC interface
 - Generated Python code for gRPC server
 - Created example gRPC server implementation
+- **Note:** This is a DRAFT PR, not merged yet
 
 **Key insight from Zajca:**
 > "Driver API teď definuje datový model toho rozhraní ale ne rozhraní samotné. Původní záměr byl aby to rozhraní byla jedna metoda něco jako `execute` která dostane Request a vrátí Response"
