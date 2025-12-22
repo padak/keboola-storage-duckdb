@@ -41,9 +41,9 @@ interface ClientInterface {
 
 | Driver | Implementation | Location |
 |--------|---------------|----------|
-| **Snowflake** | `HandlerFactory` → PHP handlers → DBAL | `php-storage-driver-snowflake/src/Handler/` |
-| **BigQuery** | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/src/Handler/` |
-| **DuckDB** | HTTP POST to `/driver/execute` → Python API | `connection/Package/StorageDriverDuckdb/` |
+| **Snowflake** | `HandlerFactory` → PHP handlers → DBAL | `storage-backend/packages/php-storage-driver-snowflake/src/Handler/` |
+| **BigQuery** | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/src/Handler/` (standalone repo) |
+| **DuckDB** | HTTP POST to `/driver/execute` → Python API | `connection/Package/StorageDriverDuckdb/src/` |
 
 **DuckDB has gRPC server ready** (`duckdb-api-service/src/grpc/`) but PHP driver uses HTTP bridge for simplicity. Could switch to gRPC if needed.
 
