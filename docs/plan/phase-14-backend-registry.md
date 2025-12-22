@@ -15,11 +15,18 @@ Adding a new backend (DeltaLake, DuckDB, etc.) to Connection requires changes in
 | Wave | Backends | Pattern | Communication |
 |------|----------|---------|---------------|
 | 1 (Legacy) | Redshift, Synapse, Exasol | Direct DBAL | Native database drivers |
-| 2 (Modern) | Snowflake, BigQuery | In-process PHP handlers | Protobuf messages + native SDK (DBAL/Google Cloud) |
+| 2a (Hybrid) | Snowflake | Partial driver (4 handlers) | Most operations via DBAL, few via driver |
+| 2b (Modern) | BigQuery | **Full driver (33+ handlers)** | ALL operations via driver protocol |
 | 3 (On-prem) | DuckDB | HTTP bridge to external service | Protobuf over HTTP to Python API |
 
+**Key insight:** BigQuery is the **reference implementation** for modern backends:
+- Snowflake driver has only 4 handlers (CreateBucket, DevBranch, ProfileTable)
+- BigQuery driver has 33+ handlers covering ALL operations (Project, Bucket, Table, Workspace, Import/Export, etc.)
+- DuckDB follows BigQuery pattern - all operations via driver handlers
+
 **Note:** All drivers use Protobuf messages for command/response structure, but:
-- Snowflake/BigQuery handlers run **in-process** in PHP (no network call to driver)
+- Snowflake is a **hybrid** - most operations still go through legacy DBAL code in Connection
+- BigQuery is **fully driver-based** - Connection delegates everything to driver
 - DuckDB is the only driver that calls an **external service** via HTTP
 
 ### Driver Architecture Details
@@ -39,13 +46,13 @@ interface ClientInterface {
 
 **How each driver implements it:**
 
-| Driver | Implementation | Location |
-|--------|---------------|----------|
-| **Snowflake** | `HandlerFactory` → PHP handlers → DBAL | `storage-backend/packages/php-storage-driver-snowflake/src/Handler/` |
-| **BigQuery** | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/src/Handler/` (standalone repo) |
-| **DuckDB** | HTTP POST to `/driver/execute` → Python API | `connection/Package/StorageDriverDuckdb/src/` |
+| Driver | Handlers | Implementation | Location |
+|--------|----------|---------------|----------|
+| **Snowflake** | 4 (hybrid) | `HandlerFactory` → PHP handlers → DBAL | `storage-backend/packages/php-storage-driver-snowflake/` |
+| **BigQuery** | 33+ (full) | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/` (standalone repo, reference impl) |
+| **DuckDB** | 26+ (full) | HTTP POST → Python API → handlers | `duckdb-api-service/src/grpc/handlers/` |
 
-**DuckDB has gRPC server ready** (`duckdb-api-service/src/grpc/`) but PHP driver uses HTTP bridge for simplicity. Could switch to gRPC if needed.
+**DuckDB follows BigQuery pattern** - all operations via driver handlers. Has gRPC server ready (`duckdb-api-service/src/grpc/`) but PHP driver uses HTTP bridge for simplicity.
 
 ### Critical Hardcoding Points (15+ files)
 
