@@ -14,9 +14,13 @@ Adding a new backend (DeltaLake, DuckDB, etc.) to Connection requires changes in
 
 | Wave | Backends | Pattern | Communication |
 |------|----------|---------|---------------|
-| 1 (Legacy) | Redshift, Synapse, Exasol | Direct DBAL | Native drivers |
-| 2 (Modern) | Snowflake, BigQuery | gRPC handlers | Protobuf messages |
-| 3 (On-prem) | DuckDB | HTTP bridge | JSON/Protobuf over HTTP |
+| 1 (Legacy) | Redshift, Synapse, Exasol | Direct DBAL | Native database drivers |
+| 2 (Modern) | Snowflake, BigQuery | In-process PHP handlers | Protobuf messages + native SDK (DBAL/Google Cloud) |
+| 3 (On-prem) | DuckDB | HTTP bridge to external service | Protobuf over HTTP to Python API |
+
+**Note:** All drivers use Protobuf messages for command/response structure, but:
+- Snowflake/BigQuery handlers run **in-process** in PHP (no network call to driver)
+- DuckDB is the only driver that calls an **external service** via HTTP
 
 ### Critical Hardcoding Points (15+ files)
 
@@ -68,7 +72,7 @@ interface BackendRegistryInterface
 final class BackendCapabilities
 {
     public function __construct(
-        public readonly bool $isDriverBased,     // true = gRPC/HTTP, false = legacy DBAL
+        public readonly bool $isDriverBased,     // true = uses driver protocol (Protobuf handlers), false = legacy DBAL
         public readonly bool $supportsWorkspace,
         public readonly bool $supportsSharing,
         public readonly bool $supportsBranches,
