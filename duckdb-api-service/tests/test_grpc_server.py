@@ -277,10 +277,10 @@ class TestStorageDriverServicer:
     def test_execute_unsupported_command(self, servicer):
         """Unsupported command returns UNIMPLEMENTED."""
         from google.protobuf import any_pb2
-        from proto import bucket_pb2
+        from proto import project_pb2
 
-        # Use a bucket command that's not implemented yet (LinkBucketCommand)
-        cmd = bucket_pb2.LinkBucketCommand()
+        # Use a project command that's not implemented (UpdateProjectCommand)
+        cmd = project_pb2.UpdateProjectCommand()
         request = common_pb2.DriverRequest()
         request.command.Pack(cmd)
 

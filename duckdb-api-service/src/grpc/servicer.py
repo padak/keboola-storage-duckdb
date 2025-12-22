@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "generated"))
 
-from proto import service_pb2_grpc, common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, workspace_pb2
+from proto import service_pb2_grpc, common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, workspace_pb2, executeQuery_pb2
 from src.grpc.utils import get_type_name
 from src.grpc.handlers import (
     # Backend handlers
@@ -49,6 +49,18 @@ from src.grpc.handlers import (
     GrantWorkspaceAccessToProjectHandler,
     RevokeWorkspaceAccessToProjectHandler,
     LoadTableToWorkspaceHandler,
+    # Bucket sharing handlers (Phase 12f)
+    ShareBucketHandler,
+    UnshareBucketHandler,
+    LinkBucketHandler,
+    UnlinkBucketHandler,
+    GrantBucketAccessToReadOnlyRoleHandler,
+    RevokeBucketAccessFromReadOnlyRoleHandler,
+    # Branch handlers (Phase 12g)
+    CreateDevBranchHandler,
+    DropDevBranchHandler,
+    # Query handler (Phase 12g)
+    ExecuteQueryHandler,
 )
 from src.database import MetadataDB, ProjectDBManager
 
@@ -189,6 +201,45 @@ class StorageDriverServicer(service_pb2_grpc.StorageDriverServiceServicer):
             'LoadTableToWorkspaceCommand': (
                 LoadTableToWorkspaceHandler(self.project_manager, self.metadata_db),
                 workspace_pb2.LoadTableToWorkspaceCommand
+            ),
+            # Bucket sharing handlers (Phase 12f)
+            'ShareBucketCommand': (
+                ShareBucketHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.ShareBucketCommand
+            ),
+            'UnshareBucketCommand': (
+                UnshareBucketHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.UnshareBucketCommand
+            ),
+            'LinkBucketCommand': (
+                LinkBucketHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.LinkBucketCommand
+            ),
+            'UnlinkBucketCommand': (
+                UnlinkBucketHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.UnlinkBucketCommand
+            ),
+            'GrantBucketAccessToReadOnlyRoleCommand': (
+                GrantBucketAccessToReadOnlyRoleHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.GrantBucketAccessToReadOnlyRoleCommand
+            ),
+            'RevokeBucketAccessFromReadOnlyRoleCommand': (
+                RevokeBucketAccessFromReadOnlyRoleHandler(self.metadata_db, self.project_manager),
+                bucket_pb2.RevokeBucketAccessFromReadOnlyRoleCommand
+            ),
+            # Branch handlers (Phase 12g)
+            'CreateDevBranchCommand': (
+                CreateDevBranchHandler(self.metadata_db, self.project_manager),
+                project_pb2.CreateDevBranchCommand
+            ),
+            'DropDevBranchCommand': (
+                DropDevBranchHandler(self.metadata_db, self.project_manager),
+                project_pb2.DropDevBranchCommand
+            ),
+            # Query handler (Phase 12g)
+            'ExecuteQueryCommand': (
+                ExecuteQueryHandler(self.metadata_db, self.project_manager),
+                executeQuery_pb2.ExecuteQueryCommand
             ),
         }
 

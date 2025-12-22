@@ -125,13 +125,17 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Secure Project API Keys (Phase 12b.2)** | **DONE** | - |
 | **S3-Compatible API (Phase 12h.1)** | **DONE** | 38 |
 | **Connection File Integration (Phase 12h.2-6)** | **DONE** | - |
+| **Async Table Creation (Phase 12h.7)** | **DONE** | - |
 | **Backend Audit (Phase 12h.8)** | **DONE** | 5 fixes |
+| **Import/Preview Fixes (Phase 12h.9-12)** | **DONE** | - |
+| **Complete Observability (Phase 13)** | **DONE** | - |
+| **Bucket Sharing Handlers (Phase 12f)** | **DONE** | 15 |
+| **Branch & Query Handlers (Phase 12g)** | **DONE** | - |
 | Schema Migrations | TODO | - |
-| PHP Driver Commands (Phase 12f-g) | TODO (last) | - |
 
-**Total: 575 tests PASS** (including 62 E2E + 75 gRPC + 38 S3 tests)
+**Total: 590 tests PASS** (including 62 E2E + 90 gRPC + 38 S3 tests)
 
-**Current: Phase 12h.8 DONE - Backend Audit Complete (5 critical files fixed)**
+**Current: ALL PHASES DONE - MVP Complete!**
 
 **SUCCESS (2024-12-21):** Table creation via Connection works end-to-end with secure project isolation!
 
@@ -247,6 +251,36 @@ Usage:
 | Dev branches full copy | CoW (ADR-007) post-MVP |
 | Bez DR/Backup API | Dokumentace, post-MVP |
 | Bez encryption at rest | Filesystem-level (LUKS) |
+| **UI file upload nefunguje** | **Pouzivat Storage API** (viz nize) |
+
+## Known Limitation: Connection UI File Upload
+
+**Problem:** Connection UI pouziva zastaraly `POST /upload-file` endpoint pro nahravani CSV souboru. Tento endpoint pro DuckDB backend neexistuje a vraci 404.
+
+**Pricina:** DuckDB adapter nepodporuje legacy form upload (viz `DuckDbAdapter::createLegacyFormUploadParams()`). Moderni flow pouziva pre-signed URLs.
+
+**Workaround:** Pro vytvareni tabulek pouzivat Storage API primo:
+
+```bash
+# 1. Pripravit soubor pro upload
+curl -X POST "https://localhost:8700/v2/storage/files/prepare" \
+  -H "X-StorageApi-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "myfile.csv", "federationToken": true}'
+
+# 2. Uploadnout soubor na pre-signed URL (z odpovedi)
+curl -X PUT "$PRESIGNED_URL" \
+  -H "Content-Type: text/csv" \
+  --data-binary @myfile.csv
+
+# 3. Vytvorit tabulku z uploadovaneho souboru
+curl -X POST "https://localhost:8700/v2/storage/buckets/in.c-test/tables-async" \
+  -H "X-StorageApi-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "mytable", "dataFileId": "<file_id>"}'
+```
+
+**Reseni (post-MVP):** Upravit Connection UI aby pro DuckDB backend pouzivalo pre-signed URL flow misto legacy form upload.
 
 ## DuckDB API Service Quick Reference
 
@@ -366,6 +400,11 @@ Where `branch_id`:
 5. **DuckDB requires `pytz`** for TIMESTAMPTZ columns
 6. **JSON columns** returned as strings - parse with `json.loads()`
 7. **Use `@property` for paths** in singletons (for test overrides)
+8. **File size after close** - DuckDB uses WAL, always read file size AFTER `conn.close()` (size can be 60x larger after close)
+9. **Connection caches sizes** - Table `dataSizeBytes` is cached in MySQL `bi_metadata_tables`, update via SQL if needed:
+   ```sql
+   UPDATE bi_metadata_tables SET dataSizeBytes = <actual_size> WHERE idBucket = <id> AND name = '<table>';
+   ```
 
 ### Testing with pytest
 

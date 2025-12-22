@@ -578,8 +578,8 @@ class TestHTTPBridgeIntegration:
         assert "DropPrimaryKeyCommand" in command_types
         assert "DeleteTableRowsCommand" in command_types
 
-        # Verify total count (26 commands as of Phase 12e)
-        assert data["total_commands"] == 26
+        # Verify total count (35 commands as of Phase 12f-g)
+        assert data["total_commands"] == 35
 
     def test_add_column_via_http(self, client, phase12d_table, admin_headers, project_db_manager):
         """Test AddColumnCommand via HTTP bridge."""

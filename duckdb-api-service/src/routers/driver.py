@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "generated"))
 
-from proto import common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, credentials_pb2, workspace_pb2
+from proto import common_pb2, backend_pb2, project_pb2, bucket_pb2, table_pb2, info_pb2, credentials_pb2, workspace_pb2, executeQuery_pb2
 from src.database import metadata_db, project_db_manager
 from src.grpc.servicer import StorageDriverServicer
 
@@ -218,6 +218,18 @@ def _create_command_message(type_name: str, command_json: dict):
         "GrantWorkspaceAccessToProjectCommand": workspace_pb2.GrantWorkspaceAccessToProjectCommand,
         "RevokeWorkspaceAccessToProjectCommand": workspace_pb2.RevokeWorkspaceAccessToProjectCommand,
         "LoadTableToWorkspaceCommand": workspace_pb2.LoadTableToWorkspaceCommand,
+        # Bucket sharing commands (Phase 12f)
+        "ShareBucketCommand": bucket_pb2.ShareBucketCommand,
+        "UnshareBucketCommand": bucket_pb2.UnshareBucketCommand,
+        "LinkBucketCommand": bucket_pb2.LinkBucketCommand,
+        "UnlinkBucketCommand": bucket_pb2.UnlinkBucketCommand,
+        "GrantBucketAccessToReadOnlyRoleCommand": bucket_pb2.GrantBucketAccessToReadOnlyRoleCommand,
+        "RevokeBucketAccessFromReadOnlyRoleCommand": bucket_pb2.RevokeBucketAccessFromReadOnlyRoleCommand,
+        # Branch commands (Phase 12g)
+        "CreateDevBranchCommand": project_pb2.CreateDevBranchCommand,
+        "DropDevBranchCommand": project_pb2.DropDevBranchCommand,
+        # Query command (Phase 12g)
+        "ExecuteQueryCommand": executeQuery_pb2.ExecuteQueryCommand,
     }
 
     message_class = message_classes.get(type_name)
@@ -302,6 +314,16 @@ def _unpack_response(type_name: str, any_proto: AnyProto):
         # DropWorkspaceCommand, ClearWorkspaceCommand, DropWorkspaceObjectCommand,
         # GrantWorkspaceAccessToProjectCommand, RevokeWorkspaceAccessToProjectCommand,
         # LoadTableToWorkspaceCommand return None
+        # Bucket sharing responses (Phase 12f)
+        "ShareBucketResponse": bucket_pb2.ShareBucketResponse,
+        "LinkedBucketResponse": bucket_pb2.LinkedBucketResponse,
+        "GrantBucketAccessToReadOnlyRoleResponse": bucket_pb2.GrantBucketAccessToReadOnlyRoleResponse,
+        # UnshareBucketCommand, UnlinkBucketCommand, RevokeBucketAccessFromReadOnlyRoleCommand return None
+        # Branch responses (Phase 12g)
+        "CreateDevBranchResponse": project_pb2.CreateDevBranchResponse,
+        # DropDevBranchCommand returns None
+        # Query response (Phase 12g)
+        "ExecuteQueryResponse": executeQuery_pb2.ExecuteQueryResponse,
     }
 
     response_class = response_classes.get(type_name)
@@ -677,6 +699,90 @@ async def list_supported_commands() -> dict:
                     }
                 }
             },
+            # Bucket sharing commands (Phase 12f)
+            {
+                "type": "ShareBucketCommand",
+                "description": "Share a bucket with another project",
+                "example": {
+                    "type": "ShareBucketCommand",
+                    "sourceProjectId": "my-project",
+                    "sourceBucketId": "in_c_sales"
+                }
+            },
+            {
+                "type": "UnshareBucketCommand",
+                "description": "Unshare a bucket",
+                "example": {
+                    "type": "UnshareBucketCommand",
+                    "bucketObjectName": "in_c_sales",
+                    "bucketShareRoleName": "share_my-project_in_c_sales"
+                }
+            },
+            {
+                "type": "LinkBucketCommand",
+                "description": "Link a shared bucket from another project",
+                "example": {
+                    "type": "LinkBucketCommand",
+                    "targetProjectId": "target-project",
+                    "targetBucketId": "linked_sales",
+                    "sourceShareRoleName": "share_source-project_in_c_sales"
+                }
+            },
+            {
+                "type": "UnlinkBucketCommand",
+                "description": "Unlink a previously linked bucket",
+                "example": {
+                    "type": "UnlinkBucketCommand",
+                    "bucketObjectName": "linked_sales"
+                }
+            },
+            {
+                "type": "GrantBucketAccessToReadOnlyRoleCommand",
+                "description": "Grant readonly access to a bucket",
+                "example": {
+                    "type": "GrantBucketAccessToReadOnlyRoleCommand",
+                    "path": ["my-project", "in_c_sales"],
+                    "projectReadOnlyRoleName": "readonly_role"
+                }
+            },
+            {
+                "type": "RevokeBucketAccessFromReadOnlyRoleCommand",
+                "description": "Revoke readonly access from a bucket",
+                "example": {
+                    "type": "RevokeBucketAccessFromReadOnlyRoleCommand",
+                    "bucketObjectName": "in_c_sales",
+                    "projectReadOnlyRoleName": "readonly_role"
+                }
+            },
+            # Branch commands (Phase 12g)
+            {
+                "type": "CreateDevBranchCommand",
+                "description": "Create a new dev branch",
+                "example": {
+                    "type": "CreateDevBranchCommand",
+                    "projectId": "my-project",
+                    "branchId": "feature-123"
+                }
+            },
+            {
+                "type": "DropDevBranchCommand",
+                "description": "Drop a dev branch",
+                "example": {
+                    "type": "DropDevBranchCommand",
+                    "devBranchReadOnlyRoleName": "branch_my-project_feature-123_readonly"
+                }
+            },
+            # Query command (Phase 12g)
+            {
+                "type": "ExecuteQueryCommand",
+                "description": "Execute a SQL query on project database",
+                "example": {
+                    "type": "ExecuteQueryCommand",
+                    "query": "SELECT * FROM my_table LIMIT 10",
+                    "pathRestriction": ["my-project", "in_c_sales"],
+                    "timeout": 60
+                }
+            },
         ],
-        "total_commands": 26
+        "total_commands": 35
     }

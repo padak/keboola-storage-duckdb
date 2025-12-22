@@ -74,10 +74,26 @@
   - `LoadTableToWorkspaceHandler`: Load table from project to workspace
 - **Verified:** HTTP bridge tested with CreateWorkspace, returns credentials
 
-### Phase 12f-g: Additional Handlers - TODO
-- **Status:** Not Started
-- **Phase 12f:** Sharing handlers (ShareBucket, UnshareBucket, LinkBucket, UnlinkBucket, Grant/RevokeReadOnly)
-- **Phase 12g:** Advanced (DevBranch, ExecuteQuery)
+### Phase 12f: Bucket Sharing Handlers - DONE
+- **Status:** DONE (2024-12-22)
+- **Tests:** 15 (handler tests + servicer integration)
+- **HTTP Bridge:** Updated with 9 new commands (35 total)
+- **Implementation:** 6 new handlers in `src/grpc/handlers/bucket_sharing.py`:
+  - `ShareBucketHandler`: Share bucket with another project
+  - `UnshareBucketHandler`: Unshare bucket
+  - `LinkBucketHandler`: Link shared bucket (ATTACH + views)
+  - `UnlinkBucketHandler`: Unlink bucket (drop views + DETACH)
+  - `GrantBucketAccessToReadOnlyRoleHandler`: Grant readonly (DuckDB no-op, logged)
+  - `RevokeBucketAccessFromReadOnlyRoleHandler`: Revoke readonly (DuckDB no-op, logged)
+
+### Phase 12g: Branch and Query Handlers - DONE
+- **Status:** DONE (2024-12-22)
+- **Implementation:** 3 new handlers:
+  - `src/grpc/handlers/branch.py`:
+    - `CreateDevBranchHandler`: Create dev branch
+    - `DropDevBranchHandler`: Drop dev branch
+  - `src/grpc/handlers/query.py`:
+    - `ExecuteQueryHandler`: Execute SQL query on project database
 
 ---
 

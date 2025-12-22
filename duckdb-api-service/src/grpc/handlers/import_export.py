@@ -327,7 +327,11 @@ class TableImportFromFileHandler(BaseCommandHandler):
             # Calculate imported rows
             imported_rows = rows_after - (0 if not is_incremental else rows_before)
 
-            # Get file size
+            # Close connection BEFORE reading file size
+            # DuckDB uses WAL and doesn't flush all data until close
+            conn.close()
+
+            # Get file size after close (now includes all flushed WAL data)
             size_bytes = table_path.stat().st_size
 
             return {
@@ -336,8 +340,9 @@ class TableImportFromFileHandler(BaseCommandHandler):
                 "size_bytes": size_bytes,
                 "columns": columns,
             }
-        finally:
+        except Exception:
             conn.close()
+            raise
 
 
 class TableExportToFileHandler(BaseCommandHandler):

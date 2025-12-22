@@ -419,6 +419,63 @@ Soucasny stav:
 
 ---
 
+### 11. Internal Table Naming: `main.data` - VYRESENO
+
+**Otazka:** Jak se jmenuje tabulka uvnitr kazdeho `.duckdb` souboru?
+
+**Rozhodnuti:** Vzdy `main.data` (konstanta `TABLE_DATA_NAME` v kodu)
+
+```
+orders.duckdb:       main.data  (obsahuje data orders)
+customers.duckdb:    main.data  (obsahuje data customers)
+products.duckdb:     main.data  (obsahuje data products)
+```
+
+**Duvody:**
+
+1. **Soubor = identita** - jmeno tabulky nese soubor (`orders.duckdb`), ne interni tabulka
+2. **ATTACH konzistence** - vsechny soubory maji stejnou strukturu, zjednodusuje kod
+3. **Rename = rename souboru** - nepotrebujes `ALTER TABLE` uvnitr, staci `os.rename()`
+4. **Snapshoty** - `cp orders.duckdb snapshot_xxx.duckdb` - interni struktura zustava stejna
+5. **User-facing vrstva** - uzivatele vidi hezka jmena pres VIEWs (viz ADR-013)
+
+**Implementace v kodu:**
+
+```python
+# src/database.py
+TABLE_DATA_NAME = "data"
+
+# Pouziti pri vytvareni tabulky:
+conn.execute(f"CREATE TABLE {TABLE_DATA_NAME} ({columns_sql})")
+
+# Pouziti pri cteni:
+conn.execute(f"SELECT * FROM {TABLE_DATA_NAME}")
+```
+
+**Workspace session (user-facing):**
+
+```sql
+-- Interni ATTACH s prefixem _att_
+ATTACH 'in_c_sales/orders.duckdb' AS _att_in_c_sales_orders (READ_ONLY)
+ATTACH 'in_c_sales/customers.duckdb' AS _att_in_c_sales_customers (READ_ONLY)
+
+-- User-facing VIEWs (viz ADR-013)
+CREATE VIEW in_c_sales.orders AS SELECT * FROM _att_in_c_sales_orders.main.data
+CREATE VIEW in_c_sales.customers AS SELECT * FROM _att_in_c_sales_customers.main.data
+
+-- Uzivatel pak pise cisty SQL:
+SELECT o.*, c.name
+FROM in_c_sales.orders o
+JOIN in_c_sales.customers c ON o.customer_id = c.id
+```
+
+**Alternativa (zamítnuta):** Pojmenovat tabulku podle souboru (`main.orders` v `orders.duckdb`)
+- Nevyhoda: rename tabulky = `ALTER TABLE` uvnitr souboru
+- Nevyhoda: kod by musel dynamicky zjistovat jmeno tabulky
+- Nevyhoda: nekonzistence mezi soubory
+
+---
+
 ## Dalsi kroky - DONE
 
 1. [x] **Rozhodnout** - ACCEPTED pro MVP

@@ -24,6 +24,19 @@ from .workspace import (
     RevokeWorkspaceAccessToProjectHandler,
     LoadTableToWorkspaceHandler,
 )
+# Bucket sharing handlers (Phase 12f)
+from .bucket_sharing import (
+    ShareBucketHandler,
+    UnshareBucketHandler,
+    LinkBucketHandler,
+    UnlinkBucketHandler,
+    GrantBucketAccessToReadOnlyRoleHandler,
+    RevokeBucketAccessFromReadOnlyRoleHandler,
+)
+# Branch handlers (Phase 12g)
+from .branch import CreateDevBranchHandler, DropDevBranchHandler
+# Query handler (Phase 12g)
+from .query import ExecuteQueryHandler
 
 __all__ = [
     # Backend handlers
@@ -60,4 +73,16 @@ __all__ = [
     'GrantWorkspaceAccessToProjectHandler',
     'RevokeWorkspaceAccessToProjectHandler',
     'LoadTableToWorkspaceHandler',
+    # Bucket sharing handlers (Phase 12f)
+    'ShareBucketHandler',
+    'UnshareBucketHandler',
+    'LinkBucketHandler',
+    'UnlinkBucketHandler',
+    'GrantBucketAccessToReadOnlyRoleHandler',
+    'RevokeBucketAccessFromReadOnlyRoleHandler',
+    # Branch handlers (Phase 12g)
+    'CreateDevBranchHandler',
+    'DropDevBranchHandler',
+    # Query handler (Phase 12g)
+    'ExecuteQueryHandler',
 ]

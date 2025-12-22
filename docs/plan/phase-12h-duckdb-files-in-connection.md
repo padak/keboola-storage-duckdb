@@ -14,7 +14,7 @@
 | **Phase 12h.4: File Import Flow** | **DONE** | Proto + handlers updated |
 | **Phase 12h.5: File Upload Adapter** | **DONE** | Adapter + Request classes |
 | **Phase 12h.6: File Routing Fix** | **DONE** | Upload to DuckDB works! |
-| Phase 12h.7: Async Table Creation | TODO | Job stuck in processing |
+| **Phase 12h.7: Async Table Creation** | **DONE** | Fixed via 12h.11 |
 | **Phase 12h.8: Backend Audit** | **DONE** | 5 files fixed |
 | **Phase 12h.9: Bucket Mismatch Fix** | **DONE** | 3 files fixed |
 | **Phase 12h.10: Import URL Fix** | SUPERSEDED | See 12h.11 |

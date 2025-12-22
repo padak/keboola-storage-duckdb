@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 12h.8 DONE (Backend Audit Complete!)
+## Current Status: ALL PHASES DONE - MVP Complete!
 
-**Total Tests: 575**
+**Total Tests: 590**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -29,10 +29,11 @@
 | 12h.1 | S3-Compatible API | DONE | 38 | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
 | 12h.2-5 | Connection File Integration | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
 | 12h.6 | File Routing Fix | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
-| 12h.7 | Async Table Creation | TODO | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.7 | Async Table Creation | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
 | **12h.8** | **Backend Audit** | **DONE** | 5 fixes | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
-| 12f-g | Driver Commands | TODO | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
-| **13** | **Complete Observability** | **TODO** | ~62 | [phase-13-observability.md](phase-13-observability.md) |
+| 12f | Bucket Sharing Handlers | DONE | 15 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12g | Branch & Query Handlers | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 13 | Complete Observability | DONE | - | [phase-13-observability.md](phase-13-observability.md) |
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
@@ -104,9 +105,15 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 [DONE] Backend Audit - Phase 12h.8 (5 critical files fixed)
        ↓
-[TODO] Async Table Creation - Phase 12h.7 (Job stuck in waiting)
+[DONE] Async Table Creation - Phase 12h.7 (Fixed via 12h.11)
        ↓
-[TODO] Complete Observability - Phase 13 (~62 tests)
+[DONE] Bucket Sharing Handlers - Phase 12f (15 tests)
+       ↓
+[DONE] Branch & Query Handlers - Phase 12g (3 handlers)
+       ↓
+[DONE] Complete Observability - Phase 13 (all metrics implemented)
+
+*** MVP COMPLETE! ***
 ```
 
 ## E2E Test Coverage (Phase 11c)
