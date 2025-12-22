@@ -34,6 +34,14 @@
 | 12f | Bucket Sharing Handlers | DONE | 15 | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 12g | Branch & Query Handlers | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 13 | Complete Observability | DONE | - | [phase-13-observability.md](phase-13-observability.md) |
+| **14** | **Backend Plugin Architecture** | **PROPOSAL** | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
+
+### Phase 14: Backend Plugin Architecture - PROPOSAL
+
+Navrh na refactoring Connection codebase pro snadnejsi pridavani novych backendu:
+- `BackendRegistry` - centralni registr backendu
+- `BackendCapabilities` - feature flags per backend
+- Cil: novy backend = 1 PHP trida + DI config (misto 15+ zmen)
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
