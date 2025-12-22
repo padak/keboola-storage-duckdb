@@ -1,9 +1,16 @@
 # ADR-015: Observability and Operation Tracking
 
-**Status:** Proposed
+**Status:** PARTIAL - Table schema implemented, API endpoints TODO
 **Date:** 2025-12-21
 **Authors:** Claude Code
 **Deciders:** TBD
+
+**Implementation Status:**
+- [x] Phase 1.1: Schema (`operation_log` table in metadata.duckdb)
+- [ ] Phase 1.2: API endpoints (`/operations`, `/operations/stats`)
+- [ ] Phase 1.3: Retention cleanup job
+- [ ] Phase 2: Enhanced Prometheus metrics
+- [ ] Phase 3: Analytics endpoints
 
 ## Context
 

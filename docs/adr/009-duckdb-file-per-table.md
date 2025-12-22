@@ -480,7 +480,7 @@ JOIN in_c_sales.customers c ON o.customer_id = c.id
 
 1. [x] **Rozhodnout** - ACCEPTED pro MVP
 2. [x] **Otestovat ATTACH limity** - Codex: 4096 OK
-3. [ ] **Refaktorovat** implementaci (viz plan v duckdb-driver-plan.md)
+3. [x] **Refaktorovat** implementaci - DONE (2024-12-17)
 4. [x] **Aktualizovat ADR-002** - marked as Superseded
 
 ---
