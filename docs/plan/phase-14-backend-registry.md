@@ -52,7 +52,39 @@ interface ClientInterface {
 | **BigQuery** | 33+ (full) | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/` (standalone repo, reference impl) |
 | **DuckDB** | 26+ (full) | HTTP POST → Python API → handlers | `duckdb-api-service/src/grpc/handlers/` |
 
-**DuckDB follows BigQuery pattern** - all operations via driver handlers. Has gRPC server ready (`duckdb-api-service/src/grpc/`) but PHP driver uses HTTP bridge for simplicity.
+**DuckDB follows BigQuery pattern** - all operations via driver handlers. Has gRPC server ready (`duckdb-api-service/src/grpc/`) but PHP driver currently uses HTTP bridge.
+
+### gRPC vs HTTP Bridge (Team Discussion Dec 2024)
+
+**Context:** Zajca added gRPC interface to storage-backend in [PR #259](https://github.com/keboola/storage-backend/pull/259):
+- Added `service.proto` with RPC interface
+- Generated Python code for gRPC server
+- Created example gRPC server implementation
+
+**Key insight from Zajca:**
+> "Driver API teď definuje datový model toho rozhraní ale ne rozhraní samotné. Původní záměr byl aby to rozhraní byla jedna metoda něco jako `execute` která dostane Request a vrátí Response"
+
+**Why gRPC is preferred (Vojta Biberle):**
+> "gRPC ti vygeneruje klienta i server a celou komunikaci mezi nimi vyřeší. Kdybys vygeneroval server a jen implementoval handlery, budeš to mít hned a nebudeš muset psát samotný PHP klient pro tvou service."
+
+**What's missing for gRPC (Tomas Fejfar):**
+> "do connection přidat generický grpc (to je ten http interface), abysme si mohli přes ty protocol buffery povídat i s něčím 'venku' mimo aplikaci"
+
+**Current DuckDB situation:**
+- We have gRPC server ready: `duckdb-api-service/src/grpc/server.py`
+- We have all handlers implemented: `duckdb-api-service/src/grpc/handlers/`
+- PHP driver uses HTTP bridge: `connection/Package/StorageDriverDuckdb/src/DuckDBDriverClient.php`
+- **TODO:** Switch from HTTP to gRPC for better integration
+
+**Recommended architecture:**
+```
+Connection → gRPC Client → network → gRPC Server → Python handlers → DuckDB
+```
+
+Instead of current:
+```
+Connection → HTTP Client → network → REST API → Python handlers → DuckDB
+```
 
 ### Critical Hardcoding Points (15+ files)
 
@@ -356,3 +388,6 @@ File: Package/StorageBackend/docs/adding-new-backend.md
 - `docs/adr/014-grpc-driver-interface.md` - gRPC protocol design
 - `docs/plan/phase-12-php-driver.md` - DuckDB driver integration
 - `docs/bigquery-driver-research.md` - BigQuery driver analysis
+- [Zajca's PR #259](https://github.com/keboola/storage-backend/pull/259) - Added gRPC service.proto and Python example
+- `storage-backend/packages/php-storage-driver-common/proto/service.proto` - gRPC service definition
+- `storage-backend/packages/php-storage-driver-common/generated-py/examples/grpc_server.py` - Example gRPC server
