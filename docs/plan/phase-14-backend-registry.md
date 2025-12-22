@@ -22,6 +22,31 @@ Adding a new backend (DeltaLake, DuckDB, etc.) to Connection requires changes in
 - Snowflake/BigQuery handlers run **in-process** in PHP (no network call to driver)
 - DuckDB is the only driver that calls an **external service** via HTTP
 
+### Driver Architecture Details
+
+All "driver-based" backends implement `ClientInterface` with `runCommand()` method:
+
+```php
+interface ClientInterface {
+    public function runCommand(
+        Message $credentials,      // GenericBackendCredentials (Protobuf)
+        Message $command,          // Command like CreateTableCommand (Protobuf)
+        array $features,           // Feature flags
+        Message $runtimeOptions,   // Runtime config
+    ): ?Message;                   // Response (Protobuf)
+}
+```
+
+**How each driver implements it:**
+
+| Driver | Implementation | Location |
+|--------|---------------|----------|
+| **Snowflake** | `HandlerFactory` → PHP handlers → DBAL | `php-storage-driver-snowflake/src/Handler/` |
+| **BigQuery** | `HandlerFactory` → PHP handlers → Google Cloud SDK | `php-storage-driver-bigquery/src/Handler/` |
+| **DuckDB** | HTTP POST to `/driver/execute` → Python API | `connection/Package/StorageDriverDuckdb/` |
+
+**DuckDB has gRPC server ready** (`duckdb-api-service/src/grpc/`) but PHP driver uses HTTP bridge for simplicity. Could switch to gRPC if needed.
+
 ### Critical Hardcoding Points (15+ files)
 
 **CRITICAL (must change for any backend):**
