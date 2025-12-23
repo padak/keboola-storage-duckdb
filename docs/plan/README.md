@@ -4,7 +4,7 @@
 
 ## Current Status: ALL PHASES DONE - MVP Complete!
 
-**Total Tests: 590**
+**Total Tests: 630**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -35,18 +35,29 @@
 | 12g | Branch & Query Handlers | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 13 | Complete Observability | DONE | - | [phase-13-observability.md](phase-13-observability.md) |
 | 14 | Backend Plugin Architecture | PROPOSAL | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
-| **15** | **Comprehensive E2E Test Suite** | **TODO** | 62 -> 80+ | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
+| 15 | Comprehensive E2E Test Suite | DONE | 19 workflow | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
+| **16** | **Bug Fixes (E2E)** | **TODO** | - | [phase-16-bugfixes.md](phase-16-bugfixes.md) |
+| **17** | **CLI & Python SDK** | **TODO** | - | [phase-17-cli-sdk.md](phase-17-cli-sdk.md) |
 
-### Phase 15: Comprehensive E2E Test Suite - TODO
+### Phase 17: CLI & Python SDK - TODO
 
-Doplneni chybejicich E2E testu pro kompletni pokryti real-world scenaru:
-- Incremental append bez PK (pure append mode)
-- Auto-snapshot pri TRUNCATE
-- Branch izolace pri zmene main
-- Real PG Wire testy (psycopg2 pripojeni)
-- Connection (PHP) integracni testy
+Python CLI a SDK pro externi vyvojare:
+- `keboola-duckdb-cli` - CLI nastroj (typer, rich)
+- `keboola-duckdb-sdk` - Python SDK (httpx, pydantic)
+- 91 REST endpointu pokryto
+- Async-first design
 
-**Gap:** 62 testu -> cil 80+ testu
+### Phase 16: Bug Fixes from E2E Testing - TODO
+
+Opravy dvou bugu nalezenych pri E2E testovani:
+1. **Linked bucket access** - GET linked bucket vraci 404 (Phase 3/12f)
+2. **Auto-snapshot triggers** - Config inheritance nefunguje (Phase 9)
+
+### Phase 15: Comprehensive E2E Test Suite - DONE
+
+19 passing workflow testu pokryvajicich vsech 93 API endpointu:
+- Workflows 1-10: Project, Data, Snapshot, Branch, Sharing, Workspace, S3, Files, Driver, PGWire
+- 630 testu celkem, 100% pass rate
 
 ### Phase 14: Backend Plugin Architecture - PROPOSAL
 
@@ -135,7 +146,7 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 *** MVP COMPLETE! ***
        ↓
-[TODO] Comprehensive E2E Test Suite - Phase 15 (62 -> 80+ tests)
+[DONE] Comprehensive E2E Test Suite - Phase 15 (630 tests)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -160,7 +171,8 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v7.13 | 2025-12-23 | Phase 15 PLANNED: Comprehensive E2E Test Suite (incremental append, truncate snapshot, branch isolation, real PG Wire) |
+| v7.14 | 2025-12-23 | Phase 17 PLANNED: CLI & Python SDK (keboola-duckdb-cli, keboola-duckdb-sdk) |
+| v7.13 | 2025-12-23 | Phase 15 DONE: Comprehensive E2E Test Suite - 630 tests, 100% pass rate, 93 API endpoints covered |
 | v7.12 | 2025-12-21 | Phase 12h.8 DONE: Backend audit - fixed 5 files (getAssignedBackends, removeBackend, getRootCredentialsForBackend, getDefaultConnectionForBackend, File PHPDoc) |
 | v7.11 | 2025-12-21 | Phase 12h.6 DONE: File upload to DuckDB works! Fixed getFileStorage(), Provider enum, File DTO |
 | v7.10 | 2024-12-21 | Phase 12h.2 VERIFIED: DuckDB project file storage auto-assignment tested (Project 7) |

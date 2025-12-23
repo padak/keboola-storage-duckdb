@@ -547,10 +547,11 @@ class TestImportWithColumnMapping:
         )
         rows = preview_response.json()["rows"]
         assert len(rows) == 2
-        assert rows[0]["id"] == 1
-        assert rows[0]["name"] == "Alice"
-        assert rows[0]["email"] == "alice@test.com"
-        assert rows[0]["age"] == 30
+        # Find row by ID (order is not guaranteed)
+        row1 = next(r for r in rows if r["id"] == 1)
+        assert row1["name"] == "Alice"
+        assert row1["email"] == "alice@test.com"
+        assert row1["age"] == 30
 
     def test_import_with_all_columns(self, client, project_with_table):
         """Test importing CSV with all table columns present."""
@@ -581,10 +582,11 @@ class TestImportWithColumnMapping:
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
-        assert rows[0]["id"] == 1
-        assert rows[0]["name"] == "Alice"
-        assert rows[0]["email"] == "alice@test.com"
-        assert rows[0]["age"] == 30
+        # Find row by ID (order is not guaranteed)
+        row1 = next(r for r in rows if r["id"] == 1)
+        assert row1["name"] == "Alice"
+        assert row1["email"] == "alice@test.com"
+        assert row1["age"] == 30
 
 
 class TestExportWithFilter:
@@ -971,3 +973,166 @@ class TestCompleteDataPipeline:
         )
         assert export_response.status_code == 200
         assert export_response.json()["rows_exported"] == 3
+
+
+class TestIncrementalAppendWithoutPK:
+    """Test incremental import WITHOUT primary key (pure append mode).
+
+    When a table has no primary key:
+    - Incremental import should APPEND all rows (no deduplication)
+    - Same data imported twice results in duplicates
+    - This is expected behavior for event/log tables
+    """
+
+    @pytest.fixture
+    def project_with_table_no_pk(self, client):
+        """Create a test project with table WITHOUT primary key."""
+        project_id = "append-no-pk-project"
+
+        # Create project
+        response = client.post(
+            "/projects",
+            json={"id": project_id, "name": "Append No PK Test"},
+            headers={"Authorization": "Bearer test-admin-key"},
+        )
+        assert response.status_code == 201
+        api_key = response.json()["api_key"]
+
+        # Create bucket
+        response = client.post(
+            f"/projects/{project_id}/branches/default/buckets",
+            json={"name": "in_c_events"},
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert response.status_code == 201
+
+        # Create table WITHOUT primary key (event log pattern)
+        response = client.post(
+            f"/projects/{project_id}/branches/default/buckets/in_c_events/tables",
+            json={
+                "name": "events",
+                "columns": [
+                    {"name": "timestamp", "type": "TIMESTAMP"},
+                    {"name": "event_type", "type": "VARCHAR"},
+                    {"name": "user_id", "type": "INTEGER"},
+                    {"name": "data", "type": "VARCHAR"},
+                ],
+                # NO primary_key - this is the key difference!
+            },
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        assert response.status_code == 201
+
+        return {
+            "project_id": project_id,
+            "bucket_name": "in_c_events",
+            "table_name": "events",
+            "api_key": api_key,
+        }
+
+    def test_incremental_append_duplicates_allowed(self, client, project_with_table_no_pk):
+        """Without PK, incremental import appends ALL rows including duplicates."""
+        p = project_with_table_no_pk
+
+        # Initial import: 3 events
+        csv_content1 = b"timestamp,event_type,user_id,data\n2024-01-01 10:00:00,click,1,button_a\n2024-01-01 10:01:00,view,2,page_home\n2024-01-01 10:02:00,click,1,button_b\n"
+        file_id1 = _upload_file(client, p["project_id"], p["api_key"], csv_content1, "events1.csv")
+
+        import_resp1 = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id1
+        )
+        assert import_resp1.status_code == 200
+        assert import_resp1.json()["table_rows_after"] == 3
+
+        # Import SAME data again with incremental=True
+        # Without PK, this should APPEND (not deduplicate)
+        file_id2 = _upload_file(client, p["project_id"], p["api_key"], csv_content1, "events2.csv")
+
+        import_resp2 = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id2,
+            import_options={"incremental": True}
+        )
+        assert import_resp2.status_code == 200
+        # Should have 6 rows now (3 original + 3 duplicates appended)
+        assert import_resp2.json()["table_rows_after"] == 6
+
+        # Verify via preview
+        preview_resp = client.get(
+            f"/projects/{p['project_id']}/branches/default/buckets/{p['bucket_name']}/tables/{p['table_name']}/preview",
+            headers={"Authorization": f"Bearer {p['api_key']}"},
+        )
+        assert preview_resp.status_code == 200
+        rows = preview_resp.json()["rows"]
+        assert len(rows) == 6
+
+        # Count duplicates - should have 2 of each original event
+        click_count = sum(1 for r in rows if r["event_type"] == "click")
+        view_count = sum(1 for r in rows if r["event_type"] == "view")
+        assert click_count == 4  # 2 clicks * 2 imports
+        assert view_count == 2   # 1 view * 2 imports
+
+    def test_incremental_append_large_dataset_no_pk(self, client, project_with_table_no_pk):
+        """Test appending large datasets without PK."""
+        p = project_with_table_no_pk
+
+        # Generate 1000 events
+        header = b"timestamp,event_type,user_id,data\n"
+        rows = []
+        for i in range(1000):
+            event_type = ["click", "view", "scroll", "submit"][i % 4]
+            rows.append(f"2024-01-01 {i // 60:02d}:{i % 60:02d}:00,{event_type},{i % 100},data_{i}\n".encode())
+        csv_content = header + b"".join(rows)
+
+        # First batch
+        file_id1 = _upload_file(client, p["project_id"], p["api_key"], csv_content, "batch1.csv")
+        import_resp1 = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id1
+        )
+        assert import_resp1.status_code == 200
+        assert import_resp1.json()["table_rows_after"] == 1000
+
+        # Second batch (incremental append)
+        file_id2 = _upload_file(client, p["project_id"], p["api_key"], csv_content, "batch2.csv")
+        import_resp2 = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id2,
+            import_options={"incremental": True}
+        )
+        assert import_resp2.status_code == 200
+        assert import_resp2.json()["table_rows_after"] == 2000
+
+        # Third batch
+        file_id3 = _upload_file(client, p["project_id"], p["api_key"], csv_content, "batch3.csv")
+        import_resp3 = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id3,
+            import_options={"incremental": True}
+        )
+        assert import_resp3.status_code == 200
+        assert import_resp3.json()["table_rows_after"] == 3000
+
+    def test_full_import_replaces_all_without_pk(self, client, project_with_table_no_pk):
+        """Full import (incremental=False) replaces all data even without PK."""
+        p = project_with_table_no_pk
+
+        # Initial import
+        csv_content1 = b"timestamp,event_type,user_id,data\n2024-01-01 10:00:00,click,1,old_data\n"
+        file_id1 = _upload_file(client, p["project_id"], p["api_key"], csv_content1, "old.csv")
+        _import_file(client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id1)
+
+        # Full import (not incremental) - should replace
+        csv_content2 = b"timestamp,event_type,user_id,data\n2024-02-01 10:00:00,view,2,new_data_1\n2024-02-01 10:01:00,scroll,3,new_data_2\n"
+        file_id2 = _upload_file(client, p["project_id"], p["api_key"], csv_content2, "new.csv")
+        import_resp = _import_file(
+            client, p["project_id"], p["bucket_name"], p["table_name"], p["api_key"], file_id2,
+            import_options={"incremental": False}  # Explicit full import
+        )
+        assert import_resp.status_code == 200
+        assert import_resp.json()["table_rows_after"] == 2  # Only new data
+
+        # Verify old data is gone
+        preview_resp = client.get(
+            f"/projects/{p['project_id']}/branches/default/buckets/{p['bucket_name']}/tables/{p['table_name']}/preview",
+            headers={"Authorization": f"Bearer {p['api_key']}"},
+        )
+        rows = preview_resp.json()["rows"]
+        assert len(rows) == 2
+        assert all("new_data" in r["data"] for r in rows)

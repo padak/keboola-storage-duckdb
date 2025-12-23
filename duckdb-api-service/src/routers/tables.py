@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from src.branch_utils import (
     get_table_source,
     resolve_branch,
+    resolve_linked_bucket,
     validate_project_and_bucket,
     validate_project_db_exists,
 )
@@ -58,14 +59,21 @@ def _get_request_id() -> str | None:
 def _table_exists_in_context(
     project_id: str, branch_id: str | None, bucket_name: str, table_name: str
 ) -> bool:
-    """Check if table exists in the given branch context."""
+    """Check if table exists in the given branch context (including linked buckets)."""
+    # Resolve linked bucket to source project if linked
+    effective_project_id, effective_bucket_name, _ = resolve_linked_bucket(
+        project_id, bucket_name
+    )
+
     if branch_id is None:
-        # Default branch - check main
-        return project_db_manager.table_exists(project_id, bucket_name, table_name)
+        # Default branch - check main (or linked source)
+        return project_db_manager.table_exists(
+            effective_project_id, effective_bucket_name, table_name
+        )
     else:
         # Dev branch - check if exists in main OR branch
         exists_in_main = project_db_manager.table_exists(
-            project_id, bucket_name, table_name
+            effective_project_id, effective_bucket_name, table_name
         )
         exists_in_branch = metadata_db.is_table_in_branch(
             branch_id, bucket_name, table_name
@@ -460,15 +468,19 @@ async def get_table(
     # Validate bucket exists
     validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
+    # Resolve linked bucket to source project if linked
+    effective_project_id, effective_bucket_name, is_linked = resolve_linked_bucket(
+        resolved_project_id, bucket_name
+    )
+
     # Determine source
-    source = get_table_source(
+    source: Literal["main", "branch", "linked"] = "linked" if is_linked else get_table_source(
         resolved_project_id, resolved_branch_id, bucket_name, table_name
     )
 
-    # Get table data (always from main for now - Live View)
-    # TODO: For branches, read from branch file if source == "branch"
+    # Get table data from effective location (follows links)
     table_data = project_db_manager.get_table(
-        resolved_project_id, bucket_name, table_name
+        effective_project_id, effective_bucket_name, table_name
     )
     if not table_data:
         raise HTTPException(
@@ -736,6 +748,11 @@ async def preview_table(
     # Validate bucket exists
     validate_project_and_bucket(resolved_project_id, resolved_branch_id, bucket_name)
 
+    # Resolve linked bucket to source project if linked
+    effective_project_id, effective_bucket_name, _ = resolve_linked_bucket(
+        resolved_project_id, bucket_name
+    )
+
     # Check if table exists
     if not _table_exists_in_context(
         resolved_project_id, resolved_branch_id, bucket_name, table_name
@@ -754,11 +771,10 @@ async def preview_table(
         )
 
     try:
-        # Get preview data (from main for now - Live View)
-        # TODO: For branches with CoW, read from branch file
+        # Get preview data from effective location (follows links)
         preview_data = project_db_manager.get_table_preview(
-            project_id=resolved_project_id,
-            bucket_name=bucket_name,
+            project_id=effective_project_id,
+            bucket_name=effective_bucket_name,
             table_name=table_name,
             limit=limit,
         )

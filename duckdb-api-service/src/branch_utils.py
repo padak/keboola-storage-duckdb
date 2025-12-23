@@ -84,9 +84,10 @@ def validate_project_db_exists(project_id: str) -> None:
 
 def validate_bucket_exists(project_id: str, bucket_name: str) -> None:
     """
-    Validate that bucket exists in project.
+    Validate that bucket exists in project (owned or linked).
 
     Note: Buckets are always defined in main project (branches share buckets).
+    Linked buckets (from other projects) are also valid.
 
     Args:
         project_id: The project ID
@@ -95,15 +96,47 @@ def validate_bucket_exists(project_id: str, bucket_name: str) -> None:
     Raises:
         HTTPException 404 if bucket not found
     """
-    if not project_db_manager.bucket_exists(project_id, bucket_name):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
+    # Check for owned bucket
+    if project_db_manager.bucket_exists(project_id, bucket_name):
+        return
+
+    # Check for linked bucket
+    link = metadata_db.get_bucket_link(project_id, bucket_name)
+    if link:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "error": "bucket_not_found",
+            "message": f"Bucket {bucket_name} not found in project {project_id}",
+            "details": {"project_id": project_id, "bucket_name": bucket_name},
+        },
+    )
+
+
+def resolve_linked_bucket(
+    project_id: str, bucket_name: str
+) -> tuple[str, str, bool]:
+    """
+    Resolve bucket to its actual location, following links if necessary.
+
+    Args:
+        project_id: The project ID
+        bucket_name: The bucket name
+
+    Returns:
+        Tuple of (effective_project_id, effective_bucket_name, is_linked)
+        - For owned buckets: (project_id, bucket_name, False)
+        - For linked buckets: (source_project_id, source_bucket_name, True)
+    """
+    # Check for linked bucket
+    link = metadata_db.get_bucket_link(project_id, bucket_name)
+    if link:
+        return (link["source_project_id"], link["source_bucket_name"], True)
+
+    # Owned bucket
+    return (project_id, bucket_name, False)
 
 
 def validate_project_and_bucket(

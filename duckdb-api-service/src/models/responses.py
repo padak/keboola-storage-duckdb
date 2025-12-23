@@ -126,6 +126,9 @@ class BucketResponse(BaseModel):
     name: str = Field(description="Bucket name (schema name)")
     table_count: int = Field(default=0, description="Number of tables in bucket")
     description: str | None = Field(default=None, description="Bucket description")
+    is_linked: bool = Field(default=False, description="True if bucket is linked from another project")
+    source_project_id: str | None = Field(default=None, description="Source project ID if linked")
+    source_bucket_name: str | None = Field(default=None, description="Source bucket name if linked")
 
 
 class BucketListResponse(BaseModel):

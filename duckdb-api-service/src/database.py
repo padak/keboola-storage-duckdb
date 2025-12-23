@@ -1111,6 +1111,30 @@ class MetadataDB:
         )
         return True
 
+    def list_bucket_links(
+        self,
+        target_project_id: str,
+    ) -> list[dict[str, Any]]:
+        """List all bucket links for a project."""
+        results = self.execute(
+            """
+            SELECT target_bucket_name, source_project_id, source_bucket_name, attached_db_alias
+            FROM bucket_links
+            WHERE target_project_id = ?
+            ORDER BY target_bucket_name
+            """,
+            [target_project_id],
+        )
+        return [
+            {
+                "target_bucket_name": row[0],
+                "source_project_id": row[1],
+                "source_bucket_name": row[2],
+                "attached_db_alias": row[3],
+            }
+            for row in results
+        ]
+
     # ========================================
     # API key operations
     # ========================================
