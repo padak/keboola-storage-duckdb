@@ -481,46 +481,32 @@ This ensures each phase has documented progress and test coverage for future ses
 
 ## Local Connection
 
-```bash
-cd connection
-docker compose up apache supervisor
-# URL: https://localhost:8700/admin
-# Login: dev@keboola.com / devdevdev
-```
+### Prerequisites
+
+1. **Mount MySQL data disk** (macOS sparse image):
+   ```bash
+   hdiutil attach -mountpoint ./docker/.mysql-accounts-datadir ~/ocker-image-mysql-accounts.sparseimage
+   ```
+
+2. **Start services:**
+   ```bash
+   cd connection
+   docker compose up apache supervisor
+   # URL: https://localhost:8700/admin
+   # Login: dev@keboola.com / devdevdev
+   ```
 
 ### DuckDB Backend Configuration
 
-Connection needs these environment variables to use DuckDB backend:
+DuckDB environment variables are configured in `connection/.env.local`:
 
 ```bash
-# Required for DuckDB driver
-DUCKDB_SERVICE_URL=http://duckdb-service:8000
-DUCKDB_ADMIN_API_KEY=your-admin-api-key
+# Already set in .env.local:
+DUCKDB_SERVICE_URL=http://host.docker.internal:8000
+DUCKDB_ADMIN_API_KEY=xxx
 ```
 
-**Setup options:**
-
-1. **Add to connection/.env:**
-   ```bash
-   DUCKDB_SERVICE_URL=http://localhost:8000
-   DUCKDB_ADMIN_API_KEY=test-admin-key
-   ```
-
-2. **Add to connection/docker-compose.yml:**
-   ```yaml
-   services:
-     apache:
-       environment:
-         DUCKDB_SERVICE_URL: http://duckdb-service:8000
-         DUCKDB_ADMIN_API_KEY: ${DUCKDB_ADMIN_API_KEY}
-   ```
-
-3. **Add to connection/config/services.yaml (defaults):**
-   ```yaml
-   parameters:
-     env(DUCKDB_SERVICE_URL): 'http://localhost:8000'
-     env(DUCKDB_ADMIN_API_KEY): ''
-   ```
+Note: `host.docker.internal` allows Docker containers to reach services on the host machine.
 
 ### DuckDB Integration via API (Phase 12b.1)
 
@@ -563,5 +549,3 @@ curl -s -k -X POST "https://localhost:8700/manage/projects/{project_id}/tokens" 
 curl -s -k "https://localhost:8700/v2/storage/buckets" \
   -H "X-StorageApi-Token: $STORAGE_TOKEN"
 ```
-
-**Note:** Table creation is blocked by missing Zend ORM reference rules. See phase-12-php-driver.md for details.
