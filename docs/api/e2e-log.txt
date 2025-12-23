@@ -1,0 +1,579 @@
+(.venv) padak@Petr--MacBook-Pro duckdb-api-service % make workflow-log
+Running workflows with protocol logging...
+WORKFLOW_LOG=1 .venv/bin/pytest tests/test_workflows_e2e.py -v -s
+==================================== test session starts =====================================
+platform darwin -- Python 3.14.2, pytest-9.0.2, pluggy-1.6.0 -- /Users/padak/github/Keboola Storage v3/duckdb-api-service/.venv/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/padak/github/Keboola Storage v3/duckdb-api-service
+configfile: pytest.ini
+plugins: anyio-4.12.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 19 items                                                                           
+
+tests/test_workflows_e2e.py::TestWorkflow1ProjectLifecycle::test_health_check PASSED
+tests/test_workflows_e2e.py::TestWorkflow1ProjectLifecycle::test_metrics_endpoint PASSED
+tests/test_workflows_e2e.py::TestWorkflow1ProjectLifecycle::test_backend_init PASSED
+tests/test_workflows_e2e.py::TestWorkflow1ProjectLifecycle::test_full_project_lifecycle 
+============================================================
+=== Workflow 1: Project Lifecycle ===
+============================================================
+
+[1/10] POST /projects
+       Request: {
+  "id": "proj_test_1766532917_2a02cce7"
+}
+       Response: 201 Created - project_id=proj_test_1766532917_2a02cce7
+
+[2/10] GET /projects
+       Response: 200 OK - 1 projects found
+
+[3/10] GET /projects/proj_test_1766532917_2a02cce7
+       Response: 200 OK
+
+[4/10] PUT /projects/proj_test_1766532917_2a02cce7
+       Request: {
+  "name": "Updated test_1766532917_2a02cce7"
+}
+       Response: 200 OK - project updated
+
+[5/10] POST /projects/proj_test_1766532917_2a02cce7/api-keys
+       Request: {
+  "description": "CI/CD Key"
+}
+       Response: 201 Created - new API key created: key_556b09c7
+
+[6/10] GET /projects/proj_test_1766532917_2a02cce7/api-keys
+       Response: 200 OK - 2 API keys
+
+[7/10] GET /projects/proj_test_1766532917_2a02cce7/api-keys/key_556b09c7
+       Response: 200 OK
+
+[8/10] POST /projects/proj_test_1766532917_2a02cce7/api-keys/key_556b09c7/rotate
+       Response: 201 Created - key rotated successfully
+       -> Verifying old key is invalid
+
+[9/10] DELETE /projects/proj_test_1766532917_2a02cce7/api-keys/key_556b09c7
+       Response: 204 No Content - key revoked
+
+[10/10] GET /projects/proj_test_1766532917_2a02cce7/stats
+       Response: 200 OK - buckets=0, tables=0
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow2DataPipeline::test_full_data_pipeline 
+============================================================
+=== Workflow 2: Data Pipeline ===
+============================================================
+
+[1/19] POST /projects
+       Request: {
+  "id": "pipeline_test_1766532918_c6371891"
+}
+       Response: 201 Created - project_id=pipeline_test_1766532918_c6371891
+
+[2/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets
+       Request: {
+  "name": "in_c_data"
+}
+       Response: 201 Created - bucket=in_c_data
+
+[3/19] GET /projects/pipeline_test_1766532918_c6371891/branches/default/buckets
+       Response: 200 OK - 1 bucket found
+
+[4/19] GET /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data
+       Response: 200 OK
+
+[5/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables
+       Request: {
+  "name": "users",
+  "columns": [
+    {
+      "name": "id",
+      "type": "INTEGER"
+    },
+    {
+      "name": "name",
+      "type": "VARCHAR"
+    },
+    {
+      "name": "email",
+      "type": "VARC...
+       Response: 201 Created - table=users, 4 columns
+
+[6/19] GET /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables
+       Response: 200 OK - 1 table found
+
+[7/19] GET /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users
+       Response: 200 OK
+
+[8/19] POST /projects/pipeline_test_1766532918_c6371891/files/prepare + upload + register
+       -> file_id=41aa765b-1259-4367-93a2-8a0b2f218676, 3 rows CSV
+
+[9/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/import/file
+       Request: {
+  "file_id": "41aa765b-1259-4367-93a2-8a0b2f218676"
+}
+       Response: 200 OK - 3 rows imported
+
+[10/19] GET /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/preview
+       Response: 200 OK - 3 rows: Alice, Bob, Charlie
+
+[11/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/columns
+       Request: {
+  "name": "status",
+  "type": "VARCHAR"
+}
+       Response: 201 Created - column 'status' added
+
+[12/19] PUT /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/columns/status
+       Request: {
+  "new_name": "user_status"
+}
+       Response: 200 OK - renamed to 'user_status'
+
+[13/19] DELETE /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/columns/user_status
+       Response: 200 OK - column dropped
+
+[14/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/primary-key
+       Request: {
+  "columns": [
+    "id"
+  ]
+}
+       Response: 201 Created - PK set on 'id'
+
+[15/19] DELETE /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/primary-key
+       Response: 200 OK - PK removed
+
+[16/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/profile
+       Response: 200 OK - 4 column stats
+
+[17/19] POST /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/export
+       Request: {
+  "format": "csv"
+}
+       Response: 200 OK - exported to file_id=d4d5b2e3-c5da-432e-984c-8fecb4595638
+
+[18/19] DELETE /projects/pipeline_test_1766532918_c6371891/branches/default/buckets/in_c_data/tables/users/rows
+       Request: {
+  "where_clause": "age > 30"
+}
+       Response: 200 OK - 1 row deleted (Charlie, age 35)
+       -> Final state: 2 rows remain (Alice, Bob)
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow3SnapshotRecovery::test_full_snapshot_workflow 
+============================================================
+=== Workflow 3: Snapshot Recovery ===
+============================================================
+       -> Setting up project with bucket, table, and 3 rows of data
+
+[1/14] GET /projects/snapshot_test_1766532919_867bb4bf/settings/snapshots
+       Response: 200 OK - project snapshot config retrieved
+
+[2/14] PUT /projects/snapshot_test_1766532919_867bb4bf/settings/snapshots
+       Request: {
+  "enabled": true,
+  "auto_snapshot_triggers": {
+    "truncate_table": true,
+    "drop_table": true
+  }
+}
+       Response: 200 OK - auto-snapshot enabled for truncate/drop
+
+[3/14] GET /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/settings/snapshots
+       Response: 200 OK
+
+[4/14] PUT /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/settings/snapshots
+       Request: {
+  "auto_snapshot_triggers": {
+    "delete_all_rows": true
+  }
+}
+       Response: 200 OK - bucket: enable auto-snapshot for delete_all_rows
+
+[5/14] GET /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/tables/users/settings/snapshots
+       Response: 200 OK
+
+[6/14] PUT /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/tables/users/settings/snapshots
+       Request: {
+  "enabled": true
+}
+       Response: 200 OK - table: snapshots enabled
+
+[7/14] POST /projects/snapshot_test_1766532919_867bb4bf/branches/default/snapshots
+       Request: {
+  "bucket": "in_c_data",
+  "table": "users"
+}
+       Response: 201 Created - snapshot_id=snap_users_20251223_233520_305
+
+[8/14] GET /projects/snapshot_test_1766532919_867bb4bf/branches/default/snapshots?bucket=in_c_data&table=users
+       Response: 200 OK - 1 snapshots found
+
+[9/14] GET /projects/snapshot_test_1766532919_867bb4bf/branches/default/snapshots/snap_users_20251223_233520_305
+       Response: 200 OK - snapshot has 3 rows
+
+[10/14] DELETE /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/tables/users/rows
+       Request: {
+  "where_clause": "1=1"
+}
+       Response: 200 OK - table truncated
+       -> Table now has 0 rows
+
+[11/14] POST /projects/snapshot_test_1766532919_867bb4bf/branches/default/snapshots/snap_users_20251223_233520_305/restore
+       Response: 200 OK - snapshot restored
+       -> Data recovered: 3 rows restored
+
+[12/14] DELETE /projects/snapshot_test_1766532919_867bb4bf/settings/snapshots
+       Response: 204 No Content - project config reset
+
+[13/14] DELETE /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/settings/snapshots
+       Response: 204 No Content - bucket config reset
+
+[14/14] DELETE /projects/snapshot_test_1766532919_867bb4bf/branches/default/buckets/in_c_data/tables/users/settings/snapshots
+       Response: 204 No Content - table config reset
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow4BranchDevelopment::test_branch_isolation_workflow 
+============================================================
+=== Workflow 4: Branch Development ===
+============================================================
+       -> Setting up project with bucket, table, and 3 rows in main
+
+[1/6] POST /projects/branch_test_1766532920_5537511f/branches
+       Request: {
+  "name": "feature_test_1766532920_5537511f"
+}
+       Response: 201 Created - branch_id=e21acd0e
+
+[2/6] GET /projects/branch_test_1766532920_5537511f/branches
+       Response: 200 OK - 1 dev branches
+
+[3/6] GET /projects/branch_test_1766532920_5537511f/branches/e21acd0e
+       Response: 200 OK
+
+[4/6] GET /projects/branch_test_1766532920_5537511f/branches/e21acd0e/buckets/in_c_data/tables/users/preview
+       Response: 200 OK - branch sees 3 rows (live view of main)
+       -> Adding 1 row to MAIN (David)
+       -> Main now has 4 rows
+       -> Branch also sees 4 rows (live view, no CoW yet)
+
+[5/6] POST /projects/branch_test_1766532920_5537511f/branches/e21acd0e/tables/in_c_data/users/pull
+       Response: 200 OK - pulled latest from main
+
+[6/6] DELETE /projects/branch_test_1766532920_5537511f/branches/e21acd0e
+       Response: 204 No Content - branch deleted
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow5BucketSharing::test_bucket_sharing_workflow 
+============================================================
+=== Workflow 5: Bucket Sharing ===
+============================================================
+       -> Creating Project A with bucket, table, and 2 rows
+       -> Creating Project B
+
+[1/10] POST /projects/share_a_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/share
+       Request: {
+  "target_project_id": "share_b_test_1766532922_efe0aeff"
+}
+       Response: 200 OK - bucket shared from A to B
+
+[2/10] POST /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/link
+       Request: {
+  "source_project_id": "share_a_test_1766532922_efe0aeff"
+}
+       Response: 201 Created - B linked to A's bucket
+
+[3/10] GET /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared
+       Response: 200 OK - B can read bucket metadata
+
+[4/10] GET /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/tables/orders/preview
+       Response: 200 OK - B can read 2 rows from A's table
+
+[5/10] POST /projects/share_a_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/grant-readonly
+       Response: 200 OK - readonly grant applied
+
+[6/10] POST /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/tables
+       Request: {
+  "name": "new_table"
+}
+       Response: 201 Created - B can create local table in linked bucket
+
+[7/10] DELETE /projects/share_a_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/grant-readonly
+       Response: 204 No Content - readonly grant revoked
+
+[8/10] DELETE /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/link
+       Response: 204 No Content - B unlinked from bucket
+       -> Bucket no longer visible in B
+
+[9/10] DELETE /projects/share_a_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/share
+       Response: 204 No Content - A unshared bucket from B
+
+[10/10] POST /projects/share_b_test_1766532922_efe0aeff/branches/default/buckets/in_c_shared/link (after unshare)
+       Response: 201 Created - MVP: link succeeds (share enforcement not implemented)
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow6WorkspaceSQL::test_workspace_workflow 
+============================================================
+=== Workflow 6: Workspace SQL ===
+============================================================
+       -> Setting up project with bucket, table, and 2 rows
+
+[1/12] POST /projects/workspace_test_1766532923_fd692615/workspaces
+       Request: {
+  "name": "analytics_test_1766532923_fd692615"
+}
+       Response: 201 Created - ws_id=ws_480e0116, credentials provided
+
+[2/12] GET /projects/workspace_test_1766532923_fd692615/workspaces
+       Response: 200 OK - 1 workspaces
+
+[3/12] GET /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116
+       Response: 200 OK
+
+[4/12] POST /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116/load
+       Request: {
+  "tables": [
+    {
+      "bucket": "in_c_data",
+      "table": "users"
+    }
+  ]
+}
+       Response: 200 OK - table loaded into workspace
+
+[5/12] POST /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116/credentials/reset
+       Response: 200 OK - credentials reset
+       -> Creating dev branch
+
+[6/12] POST /projects/workspace_test_1766532923_fd692615/branches/b70f4cbe/workspaces
+       Request: {
+  "name": "branch_ws_test_1766532923_fd692615"
+}
+       Response: 201 Created - branch workspace created: ws_2ece7129
+
+[7/12] GET /projects/workspace_test_1766532923_fd692615/branches/b70f4cbe/workspaces
+       Response: 200 OK - 1 branch workspaces
+
+[8/12] GET /projects/workspace_test_1766532923_fd692615/branches/b70f4cbe/workspaces/ws_2ece7129
+       Response: 200 OK
+
+[9/12] DELETE /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116/objects/temp_table
+       Response: 404 Not Found - object dropped (or not found)
+
+[10/12] POST /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116/clear
+       Response: 204 No Content - workspace cleared
+
+[11/12] DELETE /projects/workspace_test_1766532923_fd692615/branches/b70f4cbe/workspaces/ws_2ece7129
+       Response: 204 No Content - branch workspace deleted
+
+[12/12] DELETE /projects/workspace_test_1766532923_fd692615/workspaces/ws_480e0116
+       Response: 204 No Content - workspace deleted
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow7S3Compatible::test_s3_compatible_workflow 
+============================================================
+=== Workflow 7: S3 Compatible ===
+============================================================
+       -> Creating project for S3 testing
+
+[1/6] PUT /s3/project_s3_test_1766532925_8819b7d7/test/test_1766532925_8819b7d7/data.csv
+       Response: 200 OK - uploaded 22 bytes
+
+[2/6] HEAD /s3/project_s3_test_1766532925_8819b7d7/test/test_1766532925_8819b7d7/data.csv
+       Response: 200 OK - Content-Length=22
+
+[3/6] GET /s3/project_s3_test_1766532925_8819b7d7/test/test_1766532925_8819b7d7/data.csv
+       Response: 200 OK - content matches
+       -> Uploading second file for listing test
+
+[4/6] GET /s3/project_s3_test_1766532925_8819b7d7?prefix=test/test_1766532925_8819b7d7/
+       Response: 200 OK - 2 objects listed (XML response)
+
+[5/6] POST /s3/project_s3_test_1766532925_8819b7d7/presign
+       Request: {
+  "key": "test/test_1766532925_8819b7d7/data.csv",
+  "method": "GET"
+}
+       Response: 200 OK - presigned URL generated
+       -> Testing presigned URL access (no auth required)
+
+[6/6] DELETE /s3/project_s3_test_1766532925_8819b7d7/test/test_1766532925_8819b7d7/data.csv
+       Response: 204 No Content - object deleted
+       -> Object verified as deleted
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow8FilesManagement::test_files_management_workflow 
+============================================================
+=== Workflow 8: Files Management ===
+============================================================
+       -> Creating project for file management testing
+
+[1/7] POST /projects/files_test_1766532925_cf756b61/files/prepare
+       Request: {
+  "filename": "data_test_1766532925_cf756b61.csv"
+}
+       Response: 200 OK - upload_key=434717f8-3253-40a4-a1a6-0da9dd2f6425
+
+[2/7] POST /projects/files_test_1766532925_cf756b61/files/upload/434717f8-3253-40a4-a1a6-0da9dd2f6425
+       Response: 200 OK - uploaded 49 bytes
+
+[3/7] POST /projects/files_test_1766532925_cf756b61/files
+       Request: {
+  "upload_key": "434717f8-3253-40a4-a1a6-0da9dd2f6425"
+}
+       Response: 201 Created - file_id=01bf5007-1793-465e-86a1-6bab3db87d0a
+
+[4/7] GET /projects/files_test_1766532925_cf756b61/files
+       Response: 200 OK - 1 files found
+
+[5/7] GET /projects/files_test_1766532925_cf756b61/files/01bf5007-1793-465e-86a1-6bab3db87d0a
+       Response: 200 OK - data_test_1766532925_cf756b61.csv, 49 bytes
+
+[6/7] GET /projects/files_test_1766532925_cf756b61/files/01bf5007-1793-465e-86a1-6bab3db87d0a/download
+       Response: 200 OK - content matches
+
+[7/7] DELETE /projects/files_test_1766532925_cf756b61/files/01bf5007-1793-465e-86a1-6bab3db87d0a
+       Response: 204 No Content - file deleted
+       -> File verified as deleted
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow9DriverBridge::test_driver_bridge_workflow 
+============================================================
+=== Workflow 9: Driver Bridge ===
+============================================================
+
+[1/2] GET /driver/commands
+       Response: 200 OK - 33 commands available
+
+[2/2] POST /driver/execute
+       Request: {
+  "command": {
+    "type": "InitBackendCommand"
+  }
+}
+       Response: 200 OK - InitBackendCommand executed
+       -> Testing error handling with invalid command
+       -> Invalid command properly rejected: 400
+PASSED
+tests/test_workflows_e2e.py::TestWorkflow10PGWireSessions::test_pgwire_sessions_workflow 
+============================================================
+=== Workflow 10: PG Wire Sessions ===
+============================================================
+       -> Creating project and workspace for PG Wire testing
+       -> Workspace created: ws_0582c907
+
+[1/4] POST /internal/pgwire/auth
+       Request: {
+  "username": "ws_ws_0582c907_2e416e1a"
+}
+       Response: 200 OK - authenticated: workspace_id=ws_0582c907
+
+[2/4] POST /internal/pgwire/sessions
+       Request: {
+  "session_id": "sess_test_1766532926_1e08948f",
+  "workspace_id": "ws_0582c907"
+}
+       Response: 201 Created - session created: sess_test_1766532926_1e08948f
+
+[3/4] GET /internal/pgwire/sessions
+       Response: 200 OK - 1 sessions found
+
+[4/4] DELETE /internal/pgwire/sessions/sess_test_1766532926_1e08948f
+       Response: 204 No Content - session closed
+       -> Session verified as closed
+PASSED
+tests/test_workflows_e2e.py::TestIncrementalAppendWithoutPK::test_incremental_append_without_pk 
+============================================================
+=== Incremental Append Without PK ===
+============================================================
+       -> Creating project with table WITHOUT primary key
+
+[1/3] POST /projects/append_test_1766532926_f82c061c/branches/default/buckets/in_c_events/tables/events/import/file
+       Request: {
+  "initial import": "3 rows"
+}
+       Response: 200 OK - 3 rows imported
+
+[2/3] POST /projects/append_test_1766532926_f82c061c/branches/default/buckets/in_c_events/tables/events/import/file
+       Request: {
+  "incremental": true,
+  "same data": "3 rows"
+}
+       Response: 200 OK - 3 more rows imported incrementally
+
+[3/3] Verify row count
+       -> SUCCESS: 6 rows total (no deduplication without PK)
+PASSED
+tests/test_workflows_e2e.py::TestSnapshotBeforeTruncate::test_auto_snapshot_before_truncate 
+============================================================
+=== Auto-Snapshot Before Truncate ===
+============================================================
+       -> Creating project and enabling auto-snapshot for truncate
+
+[1/4] PUT /projects/autosnap_test_1766532927_5c249b16/settings/snapshots
+       Request: {
+  "enabled": true,
+  "triggers": [
+    "truncate",
+    "delete_all"
+  ]
+}
+       -> Auto-snapshot triggers enabled
+       -> Creating table with 3 rows
+
+[2/4] GET /projects/autosnap_test_1766532927_5c249b16/branches/default/snapshots (before truncate)
+       Response: 200 OK - 0 snapshots before
+
+[3/4] DELETE /projects/autosnap_test_1766532927_5c249b16/branches/default/buckets/in_c_data/tables/users/rows
+       Request: {
+  "where_clause": "1=1"
+}
+       Response: 200 OK - table truncated
+       -> Table is now empty
+
+[4/4] GET /projects/autosnap_test_1766532927_5c249b16/branches/default/snapshots (after truncate)
+       Response: 200 OK - 1 snapshots after (auto-snapshot created)
+       -> Auto-snapshot verified: 3 rows preserved
+PASSED
+tests/test_workflows_e2e.py::TestBucketDeletion::test_delete_bucket 
+============================================================
+=== Bucket Deletion ===
+============================================================
+       -> Creating project and bucket
+
+[1/1] DELETE /projects/delbucket_test_1766532928_176b644c/branches/default/buckets/in_c_temp
+       Response: 204 No Content - bucket deleted
+       -> Bucket verified as deleted
+PASSED
+tests/test_workflows_e2e.py::TestTableDeletion::test_delete_table 
+============================================================
+=== Table Deletion ===
+============================================================
+       -> Creating project, bucket, and table
+
+[1/1] DELETE /projects/deltable_test_1766532929_7316f150/branches/default/buckets/in_c_data/tables/temp_table
+       Response: 204 No Content - table deleted
+       -> Table verified as deleted
+PASSED
+tests/test_workflows_e2e.py::TestSnapshotDeletion::test_delete_snapshot 
+============================================================
+=== Snapshot Deletion ===
+============================================================
+       -> Creating project, table, data, and snapshot
+
+[1/2] POST /projects/delsnap_test_1766532930_2c23968b/branches/default/snapshots
+       Request: {
+  "bucket": "in_c_data",
+  "table": "users"
+}
+       Response: 201 Created - snapshot_id=snap_users_20251223_233530_746
+
+[2/2] DELETE /projects/delsnap_test_1766532930_2c23968b/branches/default/snapshots/snap_users_20251223_233530_746
+       Response: 204 No Content - snapshot deleted
+       -> Snapshot verified as deleted
+PASSED
+tests/test_workflows_e2e.py::TestBackendRemove::test_backend_remove 
+============================================================
+=== Backend Remove ===
+============================================================
+
+[1/1] POST /backend/remove
+       Response: 200 OK - backend removed
+       -> Re-initializing backend for other tests
+PASSED
+
+==================================== 19 passed in 15.69s =====================================
+(.venv) padak@Petr--MacBook-Pro duckdb-api-service % 
