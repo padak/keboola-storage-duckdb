@@ -2,139 +2,153 @@
 
 > On-premise Keboola bez Snowflake a bez S3
 
-## Jak cist tuto dokumentaci
+## Aktualni stav: MVP COMPLETE
 
-### 1. Zacni zde: Puvodni zadani
-
-**[zajca.md](zajca.md)** - Puvodni pozadavky od Zajcy. Kratky soubor, ktery vysvetluje PROC to delame a na co navazujeme (BigQuery driver jako reference).
-
-### 2. Pochop DuckDB
-
-**[duckdb-technical-research.md](duckdb-technical-research.md)** - Technicky vyzkum DuckDB. Obsahuje:
-- Jak funguje import souboru v Keboola
-- Kompletni seznam 33 povinnnych + 2 volitelnych driver operaci
-- DuckDB limity a concurrency model (single-writer!)
-- ATTACH pro cross-database JOINy
-- Doporuceni pro organizaci souboru
-
-Cti toto, pokud chces pochopit TECHNICKE OMEZENI DuckDB.
-
-### 3. Pochop Keboola features
-
-**[duckdb-keboola-features.md](duckdb-keboola-features.md)** - Mapovani Keboola features na DuckDB. Obsahuje:
-- Bucket sharing a linked buckets
-- Dev branches
-- Snapshoty a time-travel
-- Query Service a write serialization
-- Python integrace a AI agenti
-
-Cti toto, pokud chces pochopit JAK KEBOOLA FUNGUJE a jak to namapovat na DuckDB.
-
-### 4. Pochop Storage API
-
-**[duckdb-api-endpoints.md](duckdb-api-endpoints.md)** - Seznam vsech Storage API endpointu, ktere driver musi podporovat. Rozdeleno na:
-- Endpointy ktere resi DRIVER (buckety, tabulky, workspaces...)
-- Endpointy ktere resi CONNECTION (tokeny, eventy, joby...)
-- Mapovani na BigQuery driver commands
-
-Cti toto, pokud chces vedet CO PRESNE MUSI DRIVER IMPLEMENTOVAT.
-
-### 5. Architektonicka rozhodnuti (ADR)
-
-Adresar **[adr/](adr/)** obsahuje zaznam architektonickych rozhodnuti:
-
-| ADR | Soubor | Rozhodnuti |
-|-----|--------|------------|
-| 001 | [001-duckdb-microservice-architecture.md](adr/001-duckdb-microservice-architecture.md) | Python microservice misto PHP FFI |
-| 002 | [002-duckdb-file-organization.md](adr/002-duckdb-file-organization.md) | 1 projekt = 1 DuckDB soubor |
-| 003 | [003-duckdb-branch-strategy.md](adr/003-duckdb-branch-strategy.md) | Dev branches = separate soubory |
-| 004 | [004-duckdb-snapshots.md](adr/004-duckdb-snapshots.md) | Snapshoty = Parquet export |
-| 005 | [005-duckdb-write-serialization.md](adr/005-duckdb-write-serialization.md) | Write queue pro serializaci |
-| 006 | [006-duckdb-on-prem-storage.md](adr/006-duckdb-on-prem-storage.md) | Storage Files = lokalni FS |
-
-Cti ADR, pokud chces pochopit PROC jsme se rozhodli tak, jak jsme se rozhodli.
-
-### 6. Implementacni plan
-
-**[duckdb-driver-plan.md](duckdb-driver-plan.md)** - Hlavni implementacni plan (v4). Obsahuje:
-- **NOVA SEKCE: Protocol Buffers** - kriticka komponenta pro integraci!
-- Architektura (ASCII diagram s detailem komunikace)
-- Seznam vsech protobuf Commands a Responses
-- Vsech 35 driver commands s prirazenim k fazim
-- Struktura Python API Service
-- **Detailni struktura PHP driveru** s 33+ handlery
-- **Faze 0: PHP Driver Setup** (nova kriticka faze)
-- 13 implementacnich fazi (vcetne nove Faze 0)
-- Kompletni API endpointy
-- Technologie a zavislosti
-
-**TOTO JE HLAVNI DOKUMENT** - pouzivej ho jako checklist pri implementaci.
+**590 testu** | **93 API endpointu** | **35 gRPC handleru**
 
 ---
 
-## Doporucene poradi cteni
+## Hlavni dokumentace
 
-```
-Pro pochopeni projektu:
-zajca.md -> duckdb-technical-research.md -> duckdb-keboola-features.md
+### 1. Implementacni plan (START HERE)
 
-Pro pochopeni rozhodnuti:
-adr/001-*.md -> adr/002-*.md -> ... -> adr/006-*.md
+**[plan/README.md](plan/README.md)** - Hlavni implementacni plan s fazemi 1-15
 
-Pro implementaci:
-duckdb-driver-plan.md (hlavni reference)
-duckdb-api-endpoints.md (co implementovat)
-```
+| Faze | Stav | Popis |
+|------|------|-------|
+| 1-11 | DONE | Core API (projekty, buckety, tabulky, snapshoty, branche, workspaces) |
+| 12 | DONE | Connection Integration (gRPC, S3 API) |
+| 13 | DONE | Observability (Prometheus metriky) |
+| 14 | PROPOSAL | Backend Plugin Architecture |
+| 15 | TODO | Comprehensive E2E Test Suite |
 
----
-
-## Ostatni soubory
+### 2. API Reference
 
 | Soubor | Popis |
 |--------|-------|
-| [time-tracker.md](time-tracker.md) | Sledovani casu straveneho na projektu |
+| **[api/duckapi.json](api/duckapi.json)** | OpenAPI specifikace (93 endpointu) |
+| [api/keboola.apib](api/keboola.apib) | Keboola Storage API Blueprint (reference) |
+| [api/keboolamanagementapi.apib](api/keboolamanagementapi.apib) | Keboola Management API Blueprint (reference) |
+
+### 3. Architecture Decision Records (ADR)
+
+**[adr/](adr/)** - 15 architektonickych rozhodnuti
+
+| ADR | Rozhodnuti | Stav |
+|-----|------------|------|
+| [001](adr/001-duckdb-microservice-architecture.md) | Python microservice (ne PHP FFI) | IMPLEMENTED |
+| [002](adr/002-duckdb-file-organization.md) | 1 projekt = 1 DuckDB soubor | SUPERSEDED by 009 |
+| [003](adr/003-duckdb-branch-strategy.md) | Dev branches = separate soubory | SUPERSEDED by 007 |
+| [004](adr/004-duckdb-snapshots.md) | Snapshoty = Parquet export | IMPLEMENTED |
+| [005](adr/005-duckdb-write-serialization.md) | Write queue pro serializaci | IMPLEMENTED |
+| [006](adr/006-duckdb-on-prem-storage.md) | Storage Files = lokalni FS | IMPLEMENTED |
+| [007](adr/007-duckdb-cow-branching.md) | Copy-on-Write branching | APPROVED (post-MVP) |
+| [008](adr/008-central-metadata-database.md) | Centralni metadata.duckdb | IMPLEMENTED |
+| **[009](adr/009-duckdb-file-per-table.md)** | **1 tabulka = 1 DuckDB soubor** | **IMPLEMENTED** |
+| [010](adr/010-duckdb-sql-interface.md) | PG Wire SQL interface | IMPLEMENTED |
+| [011](adr/011-apache-arrow-integration.md) | Apache Arrow integrace | DEFERRED |
+| **[012](adr/012-branch-first-api-design.md)** | **Branch-First API design** | **IMPLEMENTED** |
+| [013](adr/013-sql-object-naming-convention.md) | SQL naming conventions | IMPLEMENTED |
+| **[014](adr/014-grpc-driver-interface.md)** | **gRPC driver interface** | **IMPLEMENTED** |
+| [015](adr/015-observability-and-operation-tracking.md) | Observability & metriky | IMPLEMENTED |
+
+**Klicove ADR:** 009 (per-table files), 012 (branch-first API), 014 (gRPC)
+
+### 4. Dalsi dokumenty
+
+| Soubor | Popis |
+|--------|-------|
+| [plan/decisions.md](plan/decisions.md) | Vsechna schvalena rozhodnuti |
+| [plan/risks.md](plan/risks.md) | Akceptovana rizika pro MVP |
+| [connection-duckdb-patch.md](connection-duckdb-patch.md) | Zmeny v Connection pro DuckDB |
+| [local-connection.md](local-connection.md) | Navod na lokalni Connection setup |
+
+### 5. Puvodni vyzkum (historicke)
+
+| Soubor | Popis |
+|--------|-------|
+| [zajca.md](zajca.md) | Puvodni zadani od Zajcy |
+| [duckdb-technical-research.md](duckdb-technical-research.md) | Technicky vyzkum DuckDB |
+| [duckdb-keboola-features.md](duckdb-keboola-features.md) | Mapovani Keboola features |
+| [duckdb-api-endpoints.md](duckdb-api-endpoints.md) | Puvodni seznam API endpointu |
+| [bigquery-driver-research.md](bigquery-driver-research.md) | Analyza BigQuery driveru |
 
 ---
 
-## Architektura (TL;DR)
+## Architektura
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        ON-PREMISE KEBOOLA                               │
-├────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  Keboola Connection (PHP)                                               │
-│  │                                                                      │
-│  ├── Services (TableInfoService, ImportService, ...)                    │
-│  │        │                                                             │
-│  │        │  PROTOBUF MESSAGES (Commands/Responses)                     │
-│  │        ▼                                                             │
-│  └── StorageDriverDuckdb Package                                        │
-│       ├── DuckdbDriverClient (implements ClientInterface)               │
-│       ├── HandlerFactory (33+ handlers)                                 │
-│       └── DuckdbApiClient ─────────────────────┐                        │
-│                                                │ REST/JSON              │
-│                                                ▼                        │
-│                                     DuckDB API Service (Python)         │
-│                                     ├── FastAPI                         │
-│                                     ├── Write Queue                     │
-│                                     └── DuckDB Connection Manager       │
-│                                                │                        │
-│                                                ▼                        │
-│                                     LOCAL FILESYSTEM                    │
-│                                     /data/duckdb/*.duckdb               │
-│                                     /data/files/*                       │
-│                                     /data/snapshots/*                   │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           ON-PREMISE KEBOOLA                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Keboola Connection (PHP)                                                    │
+│  │                                                                           │
+│  ├── Storage API (/v2/storage/*)                                             │
+│  │        │                                                                  │
+│  │        │  gRPC (Protocol Buffers)                                         │
+│  │        ▼                                                                  │
+│  └── DuckDB Driver ──────────────────────────────┐                           │
+│       └── DuckdbDriverClient                     │                           │
+│                                                  │ HTTP REST/JSON            │
+│                                                  ▼                           │
+│                                       ┌─────────────────────────┐            │
+│                                       │  DuckDB API Service     │            │
+│                                       │  (Python FastAPI)       │            │
+│                                       ├─────────────────────────┤            │
+│                                       │  - REST API (port 8000) │            │
+│                                       │  - gRPC (port 50051)    │            │
+│                                       │  - PG Wire (port 5432)  │            │
+│                                       │  - S3 API (/s3/*)       │            │
+│                                       │  - Prometheus /metrics  │            │
+│                                       └───────────┬─────────────┘            │
+│                                                   │                          │
+│                                                   ▼                          │
+│                                       ┌─────────────────────────┐            │
+│                                       │   LOCAL FILESYSTEM      │            │
+│                                       ├─────────────────────────┤            │
+│                                       │  /data/duckdb/          │            │
+│                                       │  ├── project_X/         │            │
+│                                       │  │   └── bucket/        │            │
+│                                       │  │       └── table.duckdb│           │
+│                                       │  └── metadata.duckdb    │            │
+│                                       │                         │            │
+│                                       │  /data/files/           │            │
+│                                       │  └── project_X/...      │            │
+│                                       └─────────────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Klicove rozhodnuti:**
-- **Protocol Buffers** pro komunikaci Connection ↔ Driver (KRITICKE!)
-- DuckDB bezi v Python microservice (ne PHP FFI)
-- PHP Driver Package implementuje `ClientInterface` z `storage-driver-common`
-- REST/JSON pro interní komunikaci PHP ↔ Python
-- 1 Keboola projekt = 1 DuckDB soubor
-- Dev branches = separate DuckDB soubory (plna implementace)
-- Snapshoty = Parquet export
-- Write operace serializovany pres async frontu
-- Storage Files na lokalnim filesystem (ne S3)
+**Klicova rozhodnuti:**
+- **1 tabulka = 1 DuckDB soubor** (ADR-009) - parallel writes, easy branching
+- **Branch-First API** (ADR-012) - `/branches/{branch_id}/buckets/...`
+- **gRPC + HTTP bridge** (ADR-014) - flexibilni integrace s Connection
+- **PG Wire** - SQL pristup pres PostgreSQL klienty (DBeaver, psql, psycopg2)
+- **S3-Compatible API** - pre-signed URLs pro file upload/download
+
+---
+
+## Quick Start
+
+```bash
+# Spustit DuckDB API Service
+cd duckdb-api-service
+source .venv/bin/activate
+python -m src.unified_server  # REST + gRPC + PG Wire
+
+# Spustit testy
+pytest tests/ -v
+
+# Otevrit metriky dashboard
+open dashboard2.html
+```
+
+---
+
+## Post-MVP TODO
+
+Viz [CLAUDE.md](../CLAUDE.md) sekce "Post-MVP TODO & Technical Debt":
+- Phase 15: E2E Test Suite
+- CoW branching (ADR-007)
+- HA / Multi-instance
+- Key rotation, RBAC
