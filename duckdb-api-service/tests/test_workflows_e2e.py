@@ -25,9 +25,11 @@ import threading
 from pathlib import Path
 from io import BytesIO
 
+import logging
 import pytest
 import httpx
 import uvicorn
+import structlog
 
 # Import FastAPI app
 from src.main import app
@@ -98,6 +100,23 @@ def e2e_server(tmp_path_factory):
     # Set environment variables
     os.environ["DATA_DIR"] = str(data_dir)
     os.environ["ADMIN_API_KEY"] = TEST_ADMIN_KEY
+
+    # Suppress application logs when WORKFLOW_LOG is enabled (cleaner protocol output)
+    # Must be done BEFORE any logging happens
+    if os.environ.get("WORKFLOW_LOG", "0") == "1":
+        # Reconfigure structlog to only show errors
+        structlog.reset_defaults()
+        structlog.configure(
+            processors=[
+                structlog.processors.add_log_level,
+                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.dev.ConsoleRenderer(),
+            ],
+            wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL),
+            context_class=dict,
+            logger_factory=structlog.PrintLoggerFactory(),
+            cache_logger_on_first_use=False,
+        )
 
     # Patch settings
     settings.data_dir = data_dir
