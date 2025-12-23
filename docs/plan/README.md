@@ -34,7 +34,19 @@
 | 12f | Bucket Sharing Handlers | DONE | 15 | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 12g | Branch & Query Handlers | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
 | 13 | Complete Observability | DONE | - | [phase-13-observability.md](phase-13-observability.md) |
-| **14** | **Backend Plugin Architecture** | **PROPOSAL** | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
+| 14 | Backend Plugin Architecture | PROPOSAL | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
+| **15** | **Comprehensive E2E Test Suite** | **TODO** | 62 -> 80+ | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
+
+### Phase 15: Comprehensive E2E Test Suite - TODO
+
+Doplneni chybejicich E2E testu pro kompletni pokryti real-world scenaru:
+- Incremental append bez PK (pure append mode)
+- Auto-snapshot pri TRUNCATE
+- Branch izolace pri zmene main
+- Real PG Wire testy (psycopg2 pripojeni)
+- Connection (PHP) integracni testy
+
+**Gap:** 62 testu -> cil 80+ testu
 
 ### Phase 14: Backend Plugin Architecture - PROPOSAL
 
@@ -120,8 +132,10 @@ All bucket/table endpoints now use branch-first URL pattern:
 [DONE] Branch & Query Handlers - Phase 12g (3 handlers)
        ↓
 [DONE] Complete Observability - Phase 13 (all metrics implemented)
-
+       ↓
 *** MVP COMPLETE! ***
+       ↓
+[TODO] Comprehensive E2E Test Suite - Phase 15 (62 -> 80+ tests)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -146,6 +160,7 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.13 | 2025-12-23 | Phase 15 PLANNED: Comprehensive E2E Test Suite (incremental append, truncate snapshot, branch isolation, real PG Wire) |
 | v7.12 | 2025-12-21 | Phase 12h.8 DONE: Backend audit - fixed 5 files (getAssignedBackends, removeBackend, getRootCredentialsForBackend, getDefaultConnectionForBackend, File PHPDoc) |
 | v7.11 | 2025-12-21 | Phase 12h.6 DONE: File upload to DuckDB works! Fixed getFileStorage(), Provider enum, File DTO |
 | v7.10 | 2024-12-21 | Phase 12h.2 VERIFIED: DuckDB project file storage auto-assignment tested (Project 7) |

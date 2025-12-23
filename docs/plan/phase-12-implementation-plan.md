@@ -1,6 +1,6 @@
 # Phase 12: Connection Integration - Implementation Plan
 
-**Status:** READY FOR IMPLEMENTATION (2024-12-20)
+**Status:** DONE (2024-12-22)
 **Goal:** Enable creating Keboola projects with DuckDB backend via gRPC integration
 
 ## Executive Summary
@@ -990,18 +990,24 @@ case BackendSupportsInterface::BACKEND_DUCKDB:
 | RevokeWorkspaceAccessToProjectCommand | RevokeWorkspaceAccessToProjectHandler | DONE |
 | LoadTableToWorkspaceCommand | LoadTableToWorkspaceHandler | DONE |
 
-### Phase 12f-g: TODO
+### Phase 12f: Bucket Sharing Handlers - DONE (2024-12-22)
 | Command | Handler | Status |
 |---------|---------|--------|
-| ShareBucketCommand | ShareBucketHandler | TODO |
-| UnshareBucketCommand | UnshareBucketHandler | TODO |
-| LinkBucketCommand | LinkBucketHandler | TODO |
-| UnlinkBucketCommand | UnlinkBucketHandler | TODO |
-| CreateDevBranchCommand | CreateDevBranchHandler | TODO |
-| DropDevBranchCommand | DropDevBranchHandler | TODO |
-| ExecuteQueryCommand | ExecuteQueryHandler | TODO |
+| ShareBucketCommand | ShareBucketHandler | DONE |
+| UnshareBucketCommand | UnshareBucketHandler | DONE |
+| LinkBucketCommand | LinkBucketHandler | DONE |
+| UnlinkBucketCommand | UnlinkBucketHandler | DONE |
+| GrantBucketAccessToReadOnlyRoleCommand | GrantBucketAccessToReadOnlyRoleHandler | DONE |
+| RevokeBucketAccessFromReadOnlyRoleCommand | RevokeBucketAccessFromReadOnlyRoleHandler | DONE |
 
-**Total: 26 commands implemented, 7+ remaining**
+### Phase 12g: Branch & Query Handlers - DONE (2024-12-22)
+| Command | Handler | Status |
+|---------|---------|--------|
+| CreateDevBranchCommand | CreateDevBranchHandler | DONE |
+| DropDevBranchCommand | DropDevBranchHandler | DONE |
+| ExecuteQueryCommand | ExecuteQueryHandler | DONE |
+
+**Total: 35 commands implemented - ALL DONE**
 
 ---
 

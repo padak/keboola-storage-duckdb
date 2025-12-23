@@ -132,8 +132,49 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Bucket Sharing Handlers (Phase 12f)** | **DONE** | 15 |
 | **Branch & Query Handlers (Phase 12g)** | **DONE** | - |
 | Schema Migrations | TODO | - |
+| **Phase 15: E2E Test Suite** | **TODO** | - |
 
 **Total: 590 tests PASS** (including 62 E2E + 90 gRPC + 38 S3 tests)
+
+## Post-MVP TODO & Technical Debt
+
+### Phase 15: Comprehensive E2E Test Suite (TODO)
+
+Doplneni chybejicich E2E testu - viz `docs/plan/phase-15-e2e-tests.md`:
+- **93 API endpointu** k otestovani, 84 pokryto, 9 TODO
+- Testy s naming convention `test_{timestamp}_*` pro izolaci
+- Real PG Wire testy (psycopg2 pripojeni)
+- S3 testy s boto3 klientem
+- Incremental append bez PK
+- Branch izolace testy
+- Auto-snapshot pri TRUNCATE
+
+### Phase 11c: Workspace Polish (Partially TODO)
+
+Viz `docs/plan/phase-11c-workspace-polish.md`:
+- [ ] Admin force-disconnect sessions
+- [ ] Query audit logging
+- [ ] Query performance tracing
+- [ ] Real PG Wire E2E tests (ne mock)
+- [ ] Resource limits enforcement
+- [ ] Load & performance tests
+
+### Post-MVP Technical Debt (from risks.md & ADRs)
+
+| Item | Current State | Target | Reference |
+|------|---------------|--------|-----------|
+| **Dev branches full copy** | Directory copy (slow for large projects) | CoW (Copy-on-Write) | ADR-007 |
+| **HA / Multi-instance** | Single FastAPI instance | Leader election / Read replicas | risks.md |
+| **Auth model** | Static API keys | Key rotation, RBAC, mTLS | risks.md |
+| **Encryption at rest** | None (relies on LUKS) | DuckDB-level encryption | risks.md |
+| **DR/Backup API** | Manual (filesystem snapshots) | Built-in backup/restore endpoints | risks.md |
+| **Schema migrations** | Manual | Versioning + startup migration | risks.md |
+
+**ADR-007 CoW Branching** - APPROVED but not implemented:
+- Branch vidi LIVE data z main (ne snapshot)
+- Copy-on-Write pri prvnim zapisu do tabulky
+- Merge = pouze konfigurace, NE tabulky
+- Post-MVP optimalizace pro velke projekty
 
 **Current: ALL PHASES DONE - MVP Complete!**
 
