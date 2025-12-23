@@ -264,8 +264,10 @@ class TestTableWithAllDataTypes:
         rows = preview_response.json()["rows"]
         assert len(rows) == 2
 
-        # Verify data types
-        row1 = rows[0]
+        # Verify data types - find rows by ID (order is not guaranteed)
+        row1 = next(r for r in rows if r["id"] == 1)
+        row2 = next(r for r in rows if r["id"] == 2)
+
         assert row1["col_varchar"] == "Hello"
         assert row1["col_bigint"] == 9223372036854775807
         assert row1["col_boolean"] is True
@@ -275,6 +277,10 @@ class TestTableWithAllDataTypes:
         # JSON is returned as string - verify it's valid JSON
         json_data = json.loads(row1["col_json"])
         assert json_data["key"] == "value"
+
+        # Verify row2 as well
+        assert row2["col_varchar"] == "World"
+        assert row2["col_boolean"] is False
 
         # 4. Export and verify type preservation
         export_response = e2e_client.post(

@@ -204,6 +204,7 @@ async def create_bucket(
 
     Note: Buckets are shared across branches, so this always returns
     buckets from main project regardless of branch_id.
+    Includes both owned buckets and linked buckets from other projects.
     """,
     dependencies=[Depends(require_project_access)],
 )
@@ -222,12 +223,33 @@ async def list_buckets(project_id: str, branch_id: str) -> BucketListResponse:
     validate_project_db_exists(resolved_project_id)
 
     try:
-        # Always list from main (buckets are shared)
+        # List owned buckets from main (buckets are shared)
         buckets = project_db_manager.list_buckets(resolved_project_id)
+        bucket_responses = [BucketResponse(**b) for b in buckets]
+
+        # List linked buckets
+        linked_buckets = metadata_db.list_bucket_links(resolved_project_id)
+        for link in linked_buckets:
+            # Get source bucket info for table count
+            source_bucket = project_db_manager.get_bucket(
+                link["source_project_id"], link["source_bucket_name"]
+            )
+            table_count = source_bucket.get("table_count", 0) if source_bucket else 0
+
+            bucket_responses.append(
+                BucketResponse(
+                    name=link["target_bucket_name"],
+                    table_count=table_count,
+                    description=f"Linked from {link['source_project_id']}.{link['source_bucket_name']}",
+                    is_linked=True,
+                    source_project_id=link["source_project_id"],
+                    source_bucket_name=link["source_bucket_name"],
+                )
+            )
 
         return BucketListResponse(
-            buckets=[BucketResponse(**b) for b in buckets],
-            total=len(buckets),
+            buckets=bucket_responses,
+            total=len(bucket_responses),
         )
 
     except Exception as e:
@@ -275,17 +297,35 @@ async def get_bucket(
 
     # Get bucket from main
     bucket = project_db_manager.get_bucket(resolved_project_id, bucket_name)
-    if not bucket:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": "bucket_not_found",
-                "message": f"Bucket {bucket_name} not found in project {project_id}",
-                "details": {"project_id": project_id, "bucket_name": bucket_name},
-            },
-        )
+    if bucket:
+        return BucketResponse(**bucket)
 
-    return BucketResponse(**bucket)
+    # Check if this is a linked bucket
+    link = metadata_db.get_bucket_link(resolved_project_id, bucket_name)
+    if link:
+        # Get source bucket info
+        source_bucket = project_db_manager.get_bucket(
+            link["source_project_id"], link["source_bucket_name"]
+        )
+        if source_bucket:
+            # Return source bucket info with linked metadata
+            return BucketResponse(
+                name=bucket_name,
+                table_count=source_bucket.get("table_count", 0),
+                description=f"Linked from {link['source_project_id']}.{link['source_bucket_name']}",
+                is_linked=True,
+                source_project_id=link["source_project_id"],
+                source_bucket_name=link["source_bucket_name"],
+            )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "error": "bucket_not_found",
+            "message": f"Bucket {bucket_name} not found in project {project_id}",
+            "details": {"project_id": project_id, "bucket_name": bucket_name},
+        },
+    )
 
 
 @router.delete(

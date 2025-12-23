@@ -547,10 +547,11 @@ class TestImportWithColumnMapping:
         )
         rows = preview_response.json()["rows"]
         assert len(rows) == 2
-        assert rows[0]["id"] == 1
-        assert rows[0]["name"] == "Alice"
-        assert rows[0]["email"] == "alice@test.com"
-        assert rows[0]["age"] == 30
+        # Find row by ID (order is not guaranteed)
+        row1 = next(r for r in rows if r["id"] == 1)
+        assert row1["name"] == "Alice"
+        assert row1["email"] == "alice@test.com"
+        assert row1["age"] == 30
 
     def test_import_with_all_columns(self, client, project_with_table):
         """Test importing CSV with all table columns present."""
@@ -581,10 +582,11 @@ class TestImportWithColumnMapping:
             headers={"Authorization": f"Bearer {project_with_table['api_key']}"},
         )
         rows = preview_response.json()["rows"]
-        assert rows[0]["id"] == 1
-        assert rows[0]["name"] == "Alice"
-        assert rows[0]["email"] == "alice@test.com"
-        assert rows[0]["age"] == 30
+        # Find row by ID (order is not guaranteed)
+        row1 = next(r for r in rows if r["id"] == 1)
+        assert row1["name"] == "Alice"
+        assert row1["email"] == "alice@test.com"
+        assert row1["age"] == 30
 
 
 class TestExportWithFilter:

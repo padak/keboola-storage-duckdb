@@ -251,10 +251,10 @@ class TestDeleteProject:
         # ADR-009: Project directory should be deleted
         assert not project_dir.exists()
 
-        # Project should be marked as deleted in metadata
+        # Project is hard-deleted from metadata (not soft-deleted)
+        # GET should return 404 as project no longer exists
         get_response = client.get("/projects/delete_test", headers=admin_headers)
-        assert get_response.status_code == 200
-        assert get_response.json()["status"] == "deleted"
+        assert get_response.status_code == 404
 
         # Project API key should be deleted
         project_headers = {"Authorization": f"Bearer {api_key}"}
