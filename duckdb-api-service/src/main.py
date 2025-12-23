@@ -11,7 +11,7 @@ import time
 import uuid
 
 from src.config import settings
-from src.routers import api_keys, backend, branches, buckets, bucket_sharing, files, projects, tables, table_schema, table_import, metrics, pgwire_auth, snapshot_settings, snapshots, workspaces
+from src.routers import api_keys, backend, branches, buckets, bucket_sharing, driver, files, projects, s3_compat, tables, table_schema, table_import, metrics, pgwire_auth, snapshot_settings, snapshots, workspaces
 from src.database import metadata_db
 from src.middleware.idempotency import IdempotencyMiddleware
 from src.middleware.metrics import MetricsMiddleware, normalize_path
@@ -257,6 +257,8 @@ app.include_router(snapshots.router)
 app.include_router(branches.router)
 app.include_router(workspaces.router)
 app.include_router(pgwire_auth.router)
+app.include_router(driver.router)
+app.include_router(s3_compat.router)
 app.include_router(metrics.router)
 
 # Root endpoint

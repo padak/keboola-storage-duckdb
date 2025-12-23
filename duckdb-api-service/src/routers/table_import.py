@@ -24,6 +24,7 @@ import duckdb
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src import metrics
 from src.branch_utils import (
     require_default_branch,
     resolve_branch,
@@ -446,6 +447,19 @@ async def import_from_file(
         duration_ms=duration_ms,
     )
 
+    # Record metrics
+    mode = "incremental" if request.import_options.incremental else "full"
+    metrics.IMPORT_OPERATIONS_TOTAL.labels(
+        format=request.format, mode=mode, status="success"
+    ).inc()
+    metrics.IMPORT_DURATION.labels(format=request.format).observe(
+        (time.time() - start_time)
+    )
+    metrics.IMPORT_ROWS_TOTAL.inc(imported_rows)
+    metrics.IMPORT_BYTES_TOTAL.labels(format=request.format).inc(
+        file_path.stat().st_size
+    )
+
     return ImportResponse(
         imported_rows=imported_rows,
         table_rows_after=rows_after,
@@ -667,6 +681,15 @@ async def export_to_file(
         },
         duration_ms=duration_ms,
     )
+
+    # Record export metrics
+    metrics.EXPORT_OPERATIONS_TOTAL.labels(
+        format=request.format, status="success"
+    ).inc()
+    metrics.EXPORT_DURATION.labels(format=request.format).observe(
+        (time.time() - start_time)
+    )
+    metrics.EXPORT_ROWS_TOTAL.inc(rows_exported)
 
     return ExportResponse(
         file_id=file_id,

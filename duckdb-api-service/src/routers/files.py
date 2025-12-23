@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse
 from src.config import settings
 from src.database import metadata_db
 from src.dependencies import require_project_access
+from src import metrics
 from src.models.responses import (
     ErrorResponse,
     FileListResponse,
@@ -302,6 +303,10 @@ async def upload_file(
             request_id=request_id,
         )
 
+        metrics.FILES_UPLOADS_TOTAL.labels(status="success").inc()
+        metrics.FILES_UPLOAD_BYTES_TOTAL.inc(size_bytes)
+        metrics.FILES_UPLOAD_DURATION.observe((time.time() - start_time))
+
         return FileUploadResponse(
             upload_key=upload_key,
             staging_path=f"staging/{staging_filename}",
@@ -310,6 +315,7 @@ async def upload_file(
         )
 
     except HTTPException:
+        metrics.FILES_UPLOADS_TOTAL.labels(status="error").inc()
         raise
     except Exception as e:
         logger.error(
@@ -319,7 +325,7 @@ async def upload_file(
             error=str(e),
             request_id=request_id,
         )
-        # Clean up partial file
+        metrics.FILES_UPLOADS_TOTAL.labels(status="error").inc()
         if staging_path.exists():
             staging_path.unlink()
         raise HTTPException(
@@ -659,6 +665,9 @@ async def download_file(
                 "details": {"file_id": file_id},
             },
         )
+
+    metrics.FILES_DOWNLOADS_TOTAL.labels(status="success").inc()
+    metrics.FILES_DOWNLOAD_BYTES_TOTAL.inc(file_record["size_bytes"])
 
     return FileResponse(
         path=str(file_path),

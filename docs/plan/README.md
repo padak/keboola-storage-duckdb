@@ -2,9 +2,9 @@
 
 > **Goal:** On-premise Keboola without Snowflake and S3
 
-## Current Status: Phase 12 TODO (PHP Driver)
+## Current Status: ALL PHASES DONE - MVP Complete!
 
-**Total Tests: 463**
+**Total Tests: 590**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -20,8 +20,40 @@
 | 10 | Dev Branches + Branch-First API | DONE | 34 | [phase-10-branches.md](phase-10-branches.md) |
 | 11a | Workspaces REST API | DONE | 41 | [phase-11-workspaces.md](phase-11-workspaces.md) |
 | 11b | PG Wire Server | DONE | 26 | [phase-11b-pgwire.md](phase-11b-pgwire.md) |
-| 11c | Workspace Polish | IN PROGRESS | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
-| **12** | **PHP Driver** | **TODO** | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 11c | Workspace Polish | DONE | 62 E2E | [phase-11c-workspace-polish.md](phase-11c-workspace-polish.md) |
+| 12a | gRPC Server | DONE | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12b | Connection Backend Registration | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12c | gRPC Core Handlers | DONE | 23 | [phase-12c-core-handlers.md](phase-12c-core-handlers.md) |
+| 12d | gRPC Schema Handlers | DONE | 18 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12e | gRPC Workspace Handlers | DONE | 17 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12h.1 | S3-Compatible API | DONE | 38 | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.2-5 | Connection File Integration | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.6 | File Routing Fix | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12h.7 | Async Table Creation | DONE | - | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| **12h.8** | **Backend Audit** | **DONE** | 5 fixes | [phase-12h-duckdb-files-in-connection.md](phase-12h-duckdb-files-in-connection.md) |
+| 12f | Bucket Sharing Handlers | DONE | 15 | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 12g | Branch & Query Handlers | DONE | - | [phase-12-php-driver.md](phase-12-php-driver.md) |
+| 13 | Complete Observability | DONE | - | [phase-13-observability.md](phase-13-observability.md) |
+| 14 | Backend Plugin Architecture | PROPOSAL | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
+| **15** | **Comprehensive E2E Test Suite** | **TODO** | 62 -> 80+ | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
+
+### Phase 15: Comprehensive E2E Test Suite - TODO
+
+Doplneni chybejicich E2E testu pro kompletni pokryti real-world scenaru:
+- Incremental append bez PK (pure append mode)
+- Auto-snapshot pri TRUNCATE
+- Branch izolace pri zmene main
+- Real PG Wire testy (psycopg2 pripojeni)
+- Connection (PHP) integracni testy
+
+**Gap:** 62 testu -> cil 80+ testu
+
+### Phase 14: Backend Plugin Architecture - PROPOSAL
+
+Navrh na refactoring Connection codebase pro snadnejsi pridavani novych backendu:
+- `BackendRegistry` - centralni registr backendu
+- `BackendCapabilities` - feature flags per backend
+- Cil: novy backend = 1 PHP trida + DI config (misto 15+ zmen)
 
 ### Phase 10: Branch-First API (ADR-012) - DONE
 
@@ -77,7 +109,33 @@ All bucket/table endpoints now use branch-first URL pattern:
        ↓
 [DONE] Workspace Polish + E2E Tests (62 tests)
        ↓
-[LAST] PHP Driver Package
+[DONE] gRPC Server - Phase 12a (17 tests)
+       ↓
+[DONE] gRPC Core Handlers - Phase 12c (23 tests)
+       ↓
+[DONE] gRPC Schema Handlers - Phase 12d (18 tests)
+       ↓
+[DONE] gRPC Workspace Handlers - Phase 12e (17 tests)
+       ↓
+[DONE] S3-Compatible API - Phase 12h.1 (38 tests)
+       ↓
+[DONE] Connection File Integration - Phase 12h.2-5
+       ↓
+[DONE] File Routing Fix - Phase 12h.6 (Upload to DuckDB works!)
+       ↓
+[DONE] Backend Audit - Phase 12h.8 (5 critical files fixed)
+       ↓
+[DONE] Async Table Creation - Phase 12h.7 (Fixed via 12h.11)
+       ↓
+[DONE] Bucket Sharing Handlers - Phase 12f (15 tests)
+       ↓
+[DONE] Branch & Query Handlers - Phase 12g (3 handlers)
+       ↓
+[DONE] Complete Observability - Phase 13 (all metrics implemented)
+       ↓
+*** MVP COMPLETE! ***
+       ↓
+[TODO] Comprehensive E2E Test Suite - Phase 15 (62 -> 80+ tests)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -102,6 +160,16 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.13 | 2025-12-23 | Phase 15 PLANNED: Comprehensive E2E Test Suite (incremental append, truncate snapshot, branch isolation, real PG Wire) |
+| v7.12 | 2025-12-21 | Phase 12h.8 DONE: Backend audit - fixed 5 files (getAssignedBackends, removeBackend, getRootCredentialsForBackend, getDefaultConnectionForBackend, File PHPDoc) |
+| v7.11 | 2025-12-21 | Phase 12h.6 DONE: File upload to DuckDB works! Fixed getFileStorage(), Provider enum, File DTO |
+| v7.10 | 2024-12-21 | Phase 12h.2 VERIFIED: DuckDB project file storage auto-assignment tested (Project 7) |
+| v7.9 | 2024-12-21 | Phase 12h.2 DONE: Connection File Integration (migration, models, BackendAssign) |
+| v7.8 | 2024-12-21 | Phase 12h.1 DONE: S3-Compatible API + Pre-signed URLs (38 tests), 575 total |
+| v7.7 | 2024-12-21 | Phase 12e DONE: Workspace Handlers (17 tests) |
+| v7.6 | 2024-12-21 | Phase 12d DONE: Schema Handlers (18 tests), 521 total tests |
+| v7.5 | 2024-12-21 | Phase 12c DONE: Core Handlers (23 tests), Connection registration |
+| v7.4 | 2024-12-20 | Phase 12a DONE: gRPC Server (17 tests), unified server, 480 total tests |
 | v7.3 | 2024-12-19 | Update test count to 463, ADR-010 updated for buenavista |
 | v7.2 | 2024-12-19 | Phase 10 DONE: Branch-First API refactoring complete |
 | v7.1 | 2024-12-19 | ADR-012: Branch-First API design, Phase 10 refactoring |

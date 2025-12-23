@@ -263,6 +263,262 @@ BRANCH_TABLES_TOTAL = Gauge(
 )
 
 # =============================================================================
+# Metadata DB Metrics (Phase 13a)
+# =============================================================================
+
+METADATA_QUERIES_TOTAL = Counter(
+    "duckdb_metadata_queries_total",
+    "Total metadata database queries",
+    ["operation"]  # read, write
+)
+
+METADATA_QUERY_DURATION = Histogram(
+    "duckdb_metadata_query_duration_seconds",
+    "Metadata query duration in seconds",
+    ["operation"],  # read, write
+    buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5]
+)
+
+METADATA_CONNECTIONS_ACTIVE = Gauge(
+    "duckdb_metadata_connections_active",
+    "Active connections to metadata.duckdb"
+)
+
+# =============================================================================
+# gRPC Metrics (Phase 13b)
+# =============================================================================
+
+GRPC_REQUESTS_TOTAL = Counter(
+    "duckdb_grpc_requests_total",
+    "Total gRPC requests",
+    ["command", "status"]  # command: CreateBucket, CreateTable, etc.; status: success, error
+)
+
+GRPC_REQUEST_DURATION = Histogram(
+    "duckdb_grpc_request_duration_seconds",
+    "gRPC request duration in seconds",
+    ["command"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 30.0]
+)
+
+GRPC_CONNECTIONS_ACTIVE = Gauge(
+    "duckdb_grpc_connections_active",
+    "Active gRPC connections"
+)
+
+GRPC_ERRORS_TOTAL = Counter(
+    "duckdb_grpc_errors_total",
+    "gRPC errors by type",
+    ["command", "error_type"]  # error_type: invalid_argument, not_found, internal, unimplemented
+)
+
+# =============================================================================
+# Import/Export Metrics (Phase 13c)
+# =============================================================================
+
+IMPORT_OPERATIONS_TOTAL = Counter(
+    "duckdb_import_operations_total",
+    "Total import operations",
+    ["format", "mode", "status"]  # format: csv/parquet, mode: full/incremental, status: success/error
+)
+
+IMPORT_DURATION = Histogram(
+    "duckdb_import_duration_seconds",
+    "Import operation duration in seconds",
+    ["format"],
+    buckets=[0.1, 0.5, 1.0, 5.0, 30.0, 60.0, 300.0, 600.0]
+)
+
+IMPORT_ROWS_TOTAL = Counter(
+    "duckdb_import_rows_total",
+    "Total rows imported"
+)
+
+IMPORT_BYTES_TOTAL = Counter(
+    "duckdb_import_bytes_total",
+    "Total bytes imported",
+    ["format"]
+)
+
+EXPORT_OPERATIONS_TOTAL = Counter(
+    "duckdb_export_operations_total",
+    "Total export operations",
+    ["format", "status"]
+)
+
+EXPORT_DURATION = Histogram(
+    "duckdb_export_duration_seconds",
+    "Export operation duration in seconds",
+    ["format"],
+    buckets=[0.1, 0.5, 1.0, 5.0, 30.0, 60.0, 300.0]
+)
+
+EXPORT_ROWS_TOTAL = Counter(
+    "duckdb_export_rows_total",
+    "Total rows exported"
+)
+
+# =============================================================================
+# S3 Compat Metrics (Phase 13d)
+# =============================================================================
+
+S3_OPERATIONS_TOTAL = Counter(
+    "duckdb_s3_operations_total",
+    "Total S3-compatible API operations",
+    ["operation", "status"]  # operation: GetObject, PutObject, DeleteObject, ListObjects, HeadObject
+)
+
+S3_OPERATION_DURATION = Histogram(
+    "duckdb_s3_operation_duration_seconds",
+    "S3 operation duration in seconds",
+    ["operation"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]
+)
+
+S3_BYTES_IN_TOTAL = Counter(
+    "duckdb_s3_bytes_in_total",
+    "Total bytes received via S3 API"
+)
+
+S3_BYTES_OUT_TOTAL = Counter(
+    "duckdb_s3_bytes_out_total",
+    "Total bytes sent via S3 API"
+)
+
+S3_MULTIPART_UPLOADS_ACTIVE = Gauge(
+    "duckdb_s3_multipart_uploads_active",
+    "Active multipart uploads"
+)
+
+S3_PRESIGN_REQUESTS_TOTAL = Counter(
+    "duckdb_s3_presign_requests_total",
+    "Pre-signed URL generation requests",
+    ["method"]  # GET, PUT
+)
+
+# =============================================================================
+# Snapshots Metrics (Phase 13e)
+# =============================================================================
+
+SNAPSHOTS_TOTAL = Gauge(
+    "duckdb_snapshots_total",
+    "Total snapshots",
+    ["type"]  # manual, auto
+)
+
+SNAPSHOTS_CREATED_TOTAL = Counter(
+    "duckdb_snapshots_created_total",
+    "Total snapshots created",
+    ["type", "trigger"]  # type: manual/auto, trigger: manual, drop_table, truncate
+)
+
+SNAPSHOTS_RESTORED_TOTAL = Counter(
+    "duckdb_snapshots_restored_total",
+    "Total snapshots restored"
+)
+
+SNAPSHOT_CREATE_DURATION = Histogram(
+    "duckdb_snapshot_create_duration_seconds",
+    "Snapshot creation duration in seconds",
+    buckets=[0.01, 0.1, 0.5, 1.0, 5.0, 30.0]
+)
+
+SNAPSHOT_RESTORE_DURATION = Histogram(
+    "duckdb_snapshot_restore_duration_seconds",
+    "Snapshot restore duration in seconds",
+    buckets=[0.1, 0.5, 1.0, 5.0, 30.0, 60.0]
+)
+
+SNAPSHOTS_SIZE_BYTES = Gauge(
+    "duckdb_snapshots_size_bytes",
+    "Total snapshot storage size in bytes"
+)
+
+SNAPSHOTS_EXPIRED_TOTAL = Counter(
+    "duckdb_snapshots_expired_total",
+    "Total snapshots expired by retention"
+)
+
+# =============================================================================
+# Files API Metrics (Phase 13f)
+# =============================================================================
+
+FILES_UPLOADS_TOTAL = Counter(
+    "duckdb_files_uploads_total",
+    "Total file uploads",
+    ["status"]  # success, error
+)
+
+FILES_DOWNLOADS_TOTAL = Counter(
+    "duckdb_files_downloads_total",
+    "Total file downloads",
+    ["status"]
+)
+
+FILES_UPLOAD_BYTES_TOTAL = Counter(
+    "duckdb_files_upload_bytes_total",
+    "Total bytes uploaded via Files API"
+)
+
+FILES_DOWNLOAD_BYTES_TOTAL = Counter(
+    "duckdb_files_download_bytes_total",
+    "Total bytes downloaded via Files API"
+)
+
+FILES_UPLOAD_DURATION = Histogram(
+    "duckdb_files_upload_duration_seconds",
+    "File upload duration in seconds",
+    buckets=[0.1, 0.5, 1.0, 5.0, 30.0, 60.0]
+)
+
+FILES_STAGING_COUNT = Gauge(
+    "duckdb_files_staging_count",
+    "Files in staging (pending upload)"
+)
+
+FILES_TOTAL = Gauge(
+    "duckdb_files_total",
+    "Total registered files"
+)
+
+# =============================================================================
+# Schema Operations Metrics (Phase 13g)
+# =============================================================================
+
+SCHEMA_OPERATIONS_TOTAL = Counter(
+    "duckdb_schema_operations_total",
+    "Total schema operations",
+    ["operation", "status"]  # operation: add_column, drop_column, alter_column, add_pk, drop_pk
+)
+
+SCHEMA_OPERATION_DURATION = Histogram(
+    "duckdb_schema_operation_duration_seconds",
+    "Schema operation duration in seconds",
+    ["operation"],
+    buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 30.0]
+)
+
+# =============================================================================
+# Bucket Sharing Metrics (Phase 13h)
+# =============================================================================
+
+BUCKET_SHARES_TOTAL = Gauge(
+    "duckdb_bucket_shares_total",
+    "Total bucket shares"
+)
+
+BUCKET_LINKS_TOTAL = Gauge(
+    "duckdb_bucket_links_total",
+    "Total bucket links"
+)
+
+BUCKET_SHARING_OPERATIONS = Counter(
+    "duckdb_bucket_sharing_operations_total",
+    "Bucket sharing operations",
+    ["operation", "status"]  # operation: share, unshare, link, unlink, grant_readonly
+)
+
+# =============================================================================
 # Service Info
 # =============================================================================
 

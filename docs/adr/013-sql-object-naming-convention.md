@@ -2,7 +2,7 @@
 
 ## Status
 
-**DRAFT** - Needs decision
+**IMPLEMENTED** - Varianta B (underscore konvence) pouzita v implementaci
 
 ## Datum
 
@@ -267,7 +267,7 @@ SELECT * FROM information_schema.tables WHERE table_schema = 'in_c_sales';
 ## Rozhodnuti
 
 [ ] Varianta A - Keboola plna kompatibilita
-[ ] Varianta B - Underscore konvence (Doporuceno)
+[x] Varianta B - Underscore konvence (Doporuceno) - **IMPLEMENTED**
 [ ] Varianta C - Jednoduche nazvy
 [ ] Varianta D - Hybrid
 

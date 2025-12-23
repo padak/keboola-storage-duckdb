@@ -22,6 +22,7 @@ from src.branch_utils import (
 )
 from src.database import metadata_db, project_db_manager
 from src.dependencies import require_project_access
+from src import metrics
 from src.models.responses import (
     BucketLinkRequest,
     BucketResponse,
@@ -154,6 +155,8 @@ async def share_bucket(
             duration_ms=duration_ms,
         )
 
+        metrics.BUCKET_SHARING_OPERATIONS.labels(operation="share", status="success").inc()
+
         # Get updated share list
         all_shares = metadata_db.get_bucket_shares(project_id, bucket_name)
 
@@ -265,6 +268,8 @@ async def unshare_bucket(
             target_project=target_project_id,
             duration_ms=duration_ms,
         )
+
+        metrics.BUCKET_SHARING_OPERATIONS.labels(operation="unshare", status="success").inc()
 
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -452,6 +457,8 @@ async def link_bucket(
             duration_ms=duration_ms,
         )
 
+        metrics.BUCKET_SHARING_OPERATIONS.labels(operation="link", status="success").inc()
+
         return BucketResponse(
             name=bucket_name,
             table_count=len(created_views),
@@ -602,6 +609,8 @@ async def unlink_bucket(
             duration_ms=duration_ms,
         )
 
+        metrics.BUCKET_SHARING_OPERATIONS.labels(operation="unlink", status="success").inc()
+
     except HTTPException:
         raise
     except Exception as e:
@@ -700,6 +709,8 @@ async def grant_readonly_access(
         duration_ms=duration_ms,
     )
 
+    metrics.BUCKET_SHARING_OPERATIONS.labels(operation="grant_readonly", status="success").inc()
+
     return {
         "status": "success",
         "message": "Readonly access is enforced via ATTACH READ_ONLY when linking buckets",
@@ -765,3 +776,5 @@ async def revoke_readonly_access(
         bucket_name=bucket_name,
         duration_ms=duration_ms,
     )
+
+    metrics.BUCKET_SHARING_OPERATIONS.labels(operation="revoke_readonly", status="success").inc()

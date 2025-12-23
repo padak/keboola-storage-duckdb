@@ -1,6 +1,11 @@
 # Subprojects (separate repositories)
 connection/
 php-storage-driver-bigquery/
+storage-backend/
+
+# Personal notes (not for git)
+docs/zajca*.md
+duckdb-api-service/tests/sample_data/padak.md
 
 # Python
 .venv/

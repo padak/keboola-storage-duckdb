@@ -398,14 +398,21 @@ async def delete_project(project_id: str) -> None:
         )
 
     try:
-        # 1. Delete API keys for this project
-        metadata_db.delete_project_api_keys(project_id)
+        # 1. Cascade delete all related metadata records
+        # (respects FK constraints: sessions -> workspaces -> branches -> project)
+        deleted_counts = metadata_db.cascade_delete_project_metadata(project_id)
 
-        # 2. Delete DB file
+        # 2. Delete DB files (project directory with all buckets/tables)
         project_db_manager.delete_project_db(project_id)
 
-        # 3. Mark as deleted in metadata (soft delete)
-        metadata_db.delete_project(project_id)
+        # 3. Hard delete project record from metadata
+        metadata_db.hard_delete_project(project_id)
+
+        logger.info(
+            "cascade_delete_completed",
+            project_id=project_id,
+            deleted_counts=deleted_counts,
+        )
 
         duration_ms = int((time.time() - start_time) * 1000)
 

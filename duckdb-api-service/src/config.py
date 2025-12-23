@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Self-referential URL for S3-compatible API (used for file imports)
+    # When running in Docker, this should be the internal service URL
+    service_url: str = "http://localhost:8000"
+
     # Storage paths - all derived from data_dir by default
     data_dir: Path = Path("./data")
 
@@ -51,6 +55,12 @@ class Settings(BaseSettings):
     # Timeouts (seconds)
     operation_timeout: int = 240
     connection_timeout: int = 10
+
+    # S3 Pre-signed URL settings
+    presign_secret_key: str | None = None  # Secret key for signing URLs (auto-generated if not set)
+    presign_default_expiry: int = 3600  # Default URL expiry in seconds (1 hour)
+    presign_max_expiry: int = 604800  # Max URL expiry in seconds (7 days)
+    base_url: str = "http://localhost:8000"  # Base URL for pre-signed URLs
 
     # PG Wire server settings (Phase 11b)
     pgwire_host: str = "localhost"

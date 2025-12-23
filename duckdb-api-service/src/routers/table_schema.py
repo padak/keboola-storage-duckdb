@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from src import metrics
 from src.branch_utils import (
     resolve_branch,
     validate_project_and_bucket,
@@ -190,6 +191,9 @@ async def add_column(
             duration_ms=duration_ms,
         )
 
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="add_column", status="success").inc()
+        metrics.SCHEMA_OPERATION_DURATION.labels(operation="add_column").observe(time.time() - start_time)
+
         return TableResponse(
             name=table_data["name"],
             bucket=table_data["bucket"],
@@ -226,6 +230,8 @@ async def add_column(
             error=str(e),
             exc_info=True,
         )
+
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="add_column", status="error").inc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -390,6 +396,9 @@ async def drop_column(
             duration_ms=duration_ms,
         )
 
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="drop_column", status="success").inc()
+        metrics.SCHEMA_OPERATION_DURATION.labels(operation="drop_column").observe(time.time() - start_time)
+
         return TableResponse(
             name=table_data["name"],
             bucket=table_data["bucket"],
@@ -426,6 +435,8 @@ async def drop_column(
             error=str(e),
             exc_info=True,
         )
+
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="drop_column", status="error").inc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -580,6 +591,9 @@ async def alter_column(
             duration_ms=duration_ms,
         )
 
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="alter_column", status="success").inc()
+        metrics.SCHEMA_OPERATION_DURATION.labels(operation="alter_column").observe(time.time() - start_time)
+
         return TableResponse(
             name=table_data["name"],
             bucket=table_data["bucket"],
@@ -616,6 +630,8 @@ async def alter_column(
             error=str(e),
             exc_info=True,
         )
+
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="alter_column", status="error").inc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -747,6 +763,9 @@ async def add_primary_key(
             duration_ms=duration_ms,
         )
 
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="add_pk", status="success").inc()
+        metrics.SCHEMA_OPERATION_DURATION.labels(operation="add_pk").observe(time.time() - start_time)
+
         return TableResponse(
             name=table_data["name"],
             bucket=table_data["bucket"],
@@ -791,6 +810,8 @@ async def add_primary_key(
             error=str(e),
             exc_info=True,
         )
+
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="add_pk", status="error").inc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -896,6 +917,9 @@ async def drop_primary_key(
             duration_ms=duration_ms,
         )
 
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="drop_pk", status="success").inc()
+        metrics.SCHEMA_OPERATION_DURATION.labels(operation="drop_pk").observe(time.time() - start_time)
+
         return TableResponse(
             name=table_data["name"],
             bucket=table_data["bucket"],
@@ -940,6 +964,8 @@ async def drop_primary_key(
             error=str(e),
             exc_info=True,
         )
+
+        metrics.SCHEMA_OPERATIONS_TOTAL.labels(operation="drop_pk", status="error").inc()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

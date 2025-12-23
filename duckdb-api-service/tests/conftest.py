@@ -82,3 +82,28 @@ def initialized_backend(client, temp_data_dir, admin_headers):
     assert response.status_code == 200
 
     yield temp_data_dir
+
+
+@pytest.fixture
+def metadata_db(temp_data_dir):
+    """Create MetadataDB instance with temporary storage."""
+    from src.database import MetadataDB
+
+    # Reset singleton for testing
+    MetadataDB._instance = None
+
+    db = MetadataDB()
+    db.initialize()
+
+    yield db
+
+    # Cleanup singleton after test
+    MetadataDB._instance = None
+
+
+@pytest.fixture
+def project_db_manager(temp_data_dir):
+    """Create ProjectDBManager instance with temporary storage."""
+    from src.database import ProjectDBManager
+
+    return ProjectDBManager()

@@ -16,6 +16,22 @@ scrape_configs:
     scrape_interval: 15s
 ```
 
+## Dashboards
+
+Two standalone HTML dashboards are available for real-time metrics visualization:
+
+| Dashboard | Description |
+|-----------|-------------|
+| `dashboard2.html` | **Recommended** - Tab-based navigation with always-visible KPI row |
+| `dashboard.html` | Full single-page view with all 14 sections vertically |
+
+```bash
+# Open in browser (API must be running on localhost:8000)
+open dashboard2.html
+```
+
+Both dashboards auto-refresh every 5s, support light/dark themes, and calculate percentiles from histogram data.
+
 ---
 
 ## Service Health Metrics
@@ -822,6 +838,497 @@ sum(duckdb_storage_size_bytes) by (type)
 duckdb_projects_total
 duckdb_tables_total
 ```
+
+---
+
+## Metadata DB Metrics (Phase 13a)
+
+### `duckdb_metadata_queries_total`
+**Type:** Counter
+
+Total number of queries to the central metadata.duckdb file.
+
+**Labels:**
+- `operation` - Query type: `read` or `write`
+
+**Example:**
+```
+duckdb_metadata_queries_total{operation="read"} 1500.0
+duckdb_metadata_queries_total{operation="write"} 350.0
+```
+
+**Interpretation:**
+- High write count indicates frequent metadata modifications
+- Metadata DB is single-writer, so writes are serialized
+
+---
+
+### `duckdb_metadata_query_duration_seconds`
+**Type:** Histogram
+
+Duration of metadata database queries in seconds.
+
+**Labels:**
+- `operation` - Query type: `read` or `write`
+
+**Buckets:** 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms
+
+**Example:**
+```
+duckdb_metadata_query_duration_seconds_bucket{operation="write",le="0.01"} 340.0
+duckdb_metadata_query_duration_seconds_bucket{operation="write",le="+Inf"} 350.0
+```
+
+**PromQL - P95 metadata latency:**
+```promql
+histogram_quantile(0.95,
+  sum by (operation, le) (rate(duckdb_metadata_query_duration_seconds_bucket[5m]))
+)
+```
+
+---
+
+### `duckdb_metadata_connections_active`
+**Type:** Gauge
+
+Number of active connections to metadata.duckdb.
+
+**Example:**
+```
+duckdb_metadata_connections_active 2.0
+```
+
+**Interpretation:**
+- Should typically be low (1-5)
+- High values may indicate slow metadata operations
+
+---
+
+## gRPC Metrics (Phase 13b)
+
+### `duckdb_grpc_requests_total`
+**Type:** Counter
+
+Total number of gRPC requests.
+
+**Labels:**
+- `command` - Command type (CreateBucket, CreateTable, InitBackend, etc.)
+- `status` - Result status: `success` or `error`
+
+**Example:**
+```
+duckdb_grpc_requests_total{command="CreateTableCommand",status="success"} 150.0
+duckdb_grpc_requests_total{command="CreateBucketCommand",status="success"} 50.0
+```
+
+**PromQL - gRPC request rate by command:**
+```promql
+sum by (command) (rate(duckdb_grpc_requests_total[5m]))
+```
+
+---
+
+### `duckdb_grpc_request_duration_seconds`
+**Type:** Histogram
+
+gRPC request duration in seconds.
+
+**Labels:**
+- `command` - Command type
+
+**Buckets:** 10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s, 30s
+
+**PromQL - P95 gRPC latency by command:**
+```promql
+histogram_quantile(0.95,
+  sum by (command, le) (rate(duckdb_grpc_request_duration_seconds_bucket[5m]))
+)
+```
+
+---
+
+### `duckdb_grpc_connections_active`
+**Type:** Gauge
+
+Number of active gRPC connections (in-flight requests).
+
+**Example:**
+```
+duckdb_grpc_connections_active 3.0
+```
+
+---
+
+### `duckdb_grpc_errors_total`
+**Type:** Counter
+
+Total gRPC errors by type.
+
+**Labels:**
+- `command` - Command type
+- `error_type` - Error category: `invalid_argument`, `not_found`, `internal`, `unimplemented`
+
+**Example:**
+```
+duckdb_grpc_errors_total{command="CreateTableCommand",error_type="not_found"} 5.0
+```
+
+---
+
+## Import/Export Metrics (Phase 13c)
+
+### `duckdb_import_operations_total`
+**Type:** Counter
+
+Total import operations.
+
+**Labels:**
+- `format` - File format: `csv` or `parquet`
+- `mode` - Import mode: `full` or `incremental`
+- `status` - Result: `success` or `error`
+
+---
+
+### `duckdb_import_duration_seconds`
+**Type:** Histogram
+
+Import operation duration in seconds.
+
+**Labels:**
+- `format` - File format
+
+**Buckets:** 100ms, 500ms, 1s, 5s, 30s, 60s, 300s, 600s
+
+---
+
+### `duckdb_import_rows_total`
+**Type:** Counter
+
+Total rows imported.
+
+---
+
+### `duckdb_import_bytes_total`
+**Type:** Counter
+
+Total bytes imported by format.
+
+**Labels:**
+- `format` - File format
+
+---
+
+### `duckdb_export_operations_total`
+**Type:** Counter
+
+Total export operations.
+
+**Labels:**
+- `format` - File format: `csv` or `parquet`
+- `status` - Result: `success` or `error`
+
+---
+
+### `duckdb_export_duration_seconds`
+**Type:** Histogram
+
+Export operation duration in seconds.
+
+**Labels:**
+- `format` - File format
+
+---
+
+### `duckdb_export_rows_total`
+**Type:** Counter
+
+Total rows exported.
+
+---
+
+## S3 Compatible API Metrics (Phase 13d)
+
+### `duckdb_s3_operations_total`
+**Type:** Counter
+
+Total S3-compatible API operations.
+
+**Labels:**
+- `operation` - S3 operation: `GetObject`, `PutObject`, `DeleteObject`, `HeadObject`, `ListObjectsV2`
+- `status` - Result: `success` or `error`
+
+**Example:**
+```
+duckdb_s3_operations_total{operation="GetObject",status="success"} 500.0
+duckdb_s3_operations_total{operation="PutObject",status="success"} 150.0
+```
+
+---
+
+### `duckdb_s3_operation_duration_seconds`
+**Type:** Histogram
+
+S3 operation duration in seconds.
+
+**Labels:**
+- `operation` - S3 operation type
+
+**Buckets:** 10ms, 50ms, 100ms, 500ms, 1s, 5s, 30s
+
+---
+
+### `duckdb_s3_bytes_in_total`
+**Type:** Counter
+
+Total bytes received via S3 API (PutObject).
+
+---
+
+### `duckdb_s3_bytes_out_total`
+**Type:** Counter
+
+Total bytes sent via S3 API (GetObject).
+
+---
+
+### `duckdb_s3_multipart_uploads_active`
+**Type:** Gauge
+
+Number of active multipart uploads in progress.
+
+**Example:**
+```
+duckdb_s3_multipart_uploads_active 2.0
+```
+
+**Interpretation:**
+- Non-zero values indicate uploads in progress
+- High sustained values may indicate stuck uploads
+
+---
+
+### `duckdb_s3_presign_requests_total`
+**Type:** Counter
+
+Pre-signed URL generation requests.
+
+**Labels:**
+- `method` - HTTP method: `GET`, `PUT`, `DELETE`, `HEAD`
+
+---
+
+## Snapshots Metrics (Phase 13e)
+
+### `duckdb_snapshots_total`
+**Type:** Gauge
+
+Total number of snapshots currently stored.
+
+**Example:**
+```
+duckdb_snapshots_total 42.0
+```
+
+---
+
+### `duckdb_snapshots_created_total`
+**Type:** Counter
+
+Total snapshots created.
+
+**Labels:**
+- `type` - Snapshot type: `manual` or `auto`
+- `trigger` - Creation trigger: `manual`, `drop_table`, `truncate`
+
+---
+
+### `duckdb_snapshots_size_bytes`
+**Type:** Gauge
+
+Total storage size of all snapshots in bytes.
+
+**Example:**
+```
+duckdb_snapshots_size_bytes 1.5e+09
+```
+
+---
+
+### `duckdb_snapshots_expired_total`
+**Type:** Counter
+
+Total snapshots expired by retention policy.
+
+**Example:**
+```
+duckdb_snapshots_expired_total 15.0
+```
+
+---
+
+### `duckdb_snapshot_create_duration_seconds`
+**Type:** Histogram
+
+Snapshot creation duration in seconds.
+
+**Buckets:** 10ms, 100ms, 500ms, 1s, 5s, 30s
+
+---
+
+### `duckdb_snapshots_restored_total`
+**Type:** Counter
+
+Total snapshots restored.
+
+---
+
+### `duckdb_snapshot_restore_duration_seconds`
+**Type:** Histogram
+
+Snapshot restore duration in seconds.
+
+**Buckets:** 100ms, 500ms, 1s, 5s, 30s, 60s
+
+---
+
+## Files API Metrics (Phase 13f)
+
+### `duckdb_files_total`
+**Type:** Gauge
+
+Total number of registered files.
+
+**Example:**
+```
+duckdb_files_total 150.0
+```
+
+---
+
+### `duckdb_files_staging_count`
+**Type:** Gauge
+
+Number of files in staging (pending upload completion).
+
+**Example:**
+```
+duckdb_files_staging_count 3.0
+```
+
+**Interpretation:**
+- Non-zero values indicate uploads in progress
+- High sustained values may indicate stuck uploads
+
+---
+
+### `duckdb_files_uploads_total`
+**Type:** Counter
+
+Total file uploads.
+
+**Labels:**
+- `status` - Result: `success` or `error`
+
+---
+
+### `duckdb_files_downloads_total`
+**Type:** Counter
+
+Total file downloads.
+
+**Labels:**
+- `status` - Result: `success` or `error`
+
+---
+
+### `duckdb_files_upload_bytes_total`
+**Type:** Counter
+
+Total bytes uploaded via Files API.
+
+---
+
+### `duckdb_files_download_bytes_total`
+**Type:** Counter
+
+Total bytes downloaded via Files API.
+
+---
+
+### `duckdb_files_upload_duration_seconds`
+**Type:** Histogram
+
+File upload duration in seconds.
+
+**Buckets:** 100ms, 500ms, 1s, 5s, 30s, 60s
+
+---
+
+## Schema Operations Metrics (Phase 13g)
+
+### `duckdb_schema_operations_total`
+**Type:** Counter
+
+Total schema operations.
+
+**Labels:**
+- `operation` - Schema operation: `add_column`, `drop_column`, `alter_column`, `add_pk`, `drop_pk`
+- `status` - Result: `success` or `error`
+
+**Example:**
+```
+duckdb_schema_operations_total{operation="add_column",status="success"} 25.0
+duckdb_schema_operations_total{operation="add_pk",status="success"} 10.0
+```
+
+---
+
+### `duckdb_schema_operation_duration_seconds`
+**Type:** Histogram
+
+Schema operation duration in seconds.
+
+**Labels:**
+- `operation` - Schema operation type
+
+**Buckets:** 10ms, 50ms, 100ms, 500ms, 1s, 5s, 30s
+
+---
+
+## Bucket Sharing Metrics (Phase 13h)
+
+### `duckdb_bucket_shares_total`
+**Type:** Gauge
+
+Total number of active bucket shares.
+
+**Example:**
+```
+duckdb_bucket_shares_total 12.0
+```
+
+---
+
+### `duckdb_bucket_links_total`
+**Type:** Gauge
+
+Total number of active bucket links.
+
+**Example:**
+```
+duckdb_bucket_links_total 8.0
+```
+
+---
+
+### `duckdb_bucket_sharing_operations_total`
+**Type:** Counter
+
+Total bucket sharing operations.
+
+**Labels:**
+- `operation` - Sharing operation: `share`, `unshare`, `link`, `unlink`, `grant_readonly`, `revoke_readonly`
+- `status` - Result: `success` or `error`
 
 ---
 

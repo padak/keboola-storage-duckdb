@@ -21,6 +21,7 @@ import duckdb
 import structlog
 
 from src.config import settings
+from src import metrics
 
 logger = structlog.get_logger()
 
@@ -569,20 +570,28 @@ class MetadataDB:
             with metadata_db.connection() as conn:
                 conn.execute("SELECT * FROM projects")
         """
+        metrics.METADATA_CONNECTIONS_ACTIVE.inc()
         conn = duckdb.connect(str(self._db_path))
         try:
             yield conn
         finally:
             conn.close()
+            metrics.METADATA_CONNECTIONS_ACTIVE.dec()
 
     def execute(self, query: str, params: list | None = None) -> list[tuple]:
-        """Execute a query and return results."""
-        with self.connection() as conn:
-            if params:
-                result = conn.execute(query, params).fetchall()
-            else:
-                result = conn.execute(query).fetchall()
-            return result
+        """Execute a read query and return results."""
+        start_time = time.time()
+        try:
+            with self.connection() as conn:
+                if params:
+                    result = conn.execute(query, params).fetchall()
+                else:
+                    result = conn.execute(query).fetchall()
+                return result
+        finally:
+            duration = time.time() - start_time
+            metrics.METADATA_QUERIES_TOTAL.labels(operation="read").inc()
+            metrics.METADATA_QUERY_DURATION.labels(operation="read").observe(duration)
 
     def execute_one(self, query: str, params: list | None = None) -> tuple | None:
         """Execute a query and return single result."""
@@ -591,12 +600,18 @@ class MetadataDB:
 
     def execute_write(self, query: str, params: list | None = None) -> None:
         """Execute a write query (INSERT, UPDATE, DELETE)."""
-        with self.connection() as conn:
-            if params:
-                conn.execute(query, params)
-            else:
-                conn.execute(query)
-            conn.commit()
+        start_time = time.time()
+        try:
+            with self.connection() as conn:
+                if params:
+                    conn.execute(query, params)
+                else:
+                    conn.execute(query)
+                conn.commit()
+        finally:
+            duration = time.time() - start_time
+            metrics.METADATA_QUERIES_TOTAL.labels(operation="write").inc()
+            metrics.METADATA_QUERY_DURATION.labels(operation="write").observe(duration)
 
     # ========================================
     # Project operations
@@ -728,6 +743,112 @@ class MetadataDB:
         self.execute_write("DELETE FROM projects WHERE id = ?", [project_id])
         logger.info("project_hard_deleted", project_id=project_id)
         return True
+
+    def cascade_delete_project_metadata(self, project_id: str) -> dict[str, int]:
+        """
+        Delete all metadata records related to a project (cascading delete).
+
+        Order respects foreign key constraints:
+        1. pgwire_sessions (FK -> workspaces)
+        2. workspace_credentials (FK -> workspaces)
+        3. workspaces (FK -> projects, branches)
+        4. branch_tables (FK -> branches)
+        5. snapshot_settings (FK -> projects, branches)
+        6. snapshots (FK -> projects, branches)
+        7. files (FK -> projects, branches)
+        8. branches (FK -> projects)
+        9. api_keys (FK -> projects)
+
+        Returns:
+            Dict with counts of deleted records per table
+        """
+        counts: dict[str, int] = {}
+
+        with self.connection() as conn:
+            # 1. Delete pgwire_sessions for workspaces in this project
+            result = conn.execute(
+                """
+                DELETE FROM pgwire_sessions
+                WHERE workspace_id IN (
+                    SELECT id FROM workspaces WHERE project_id = ?
+                )
+                """,
+                [project_id],
+            )
+            counts["pgwire_sessions"] = result.rowcount
+
+            # 2. Delete workspace_credentials for workspaces in this project
+            result = conn.execute(
+                """
+                DELETE FROM workspace_credentials
+                WHERE workspace_id IN (
+                    SELECT id FROM workspaces WHERE project_id = ?
+                )
+                """,
+                [project_id],
+            )
+            counts["workspace_credentials"] = result.rowcount
+
+            # 3. Delete workspaces
+            result = conn.execute(
+                "DELETE FROM workspaces WHERE project_id = ?",
+                [project_id],
+            )
+            counts["workspaces"] = result.rowcount
+
+            # 4. Delete branch_tables for branches in this project
+            result = conn.execute(
+                """
+                DELETE FROM branch_tables
+                WHERE branch_id IN (
+                    SELECT id FROM branches WHERE project_id = ?
+                )
+                """,
+                [project_id],
+            )
+            counts["branch_tables"] = result.rowcount
+
+            # 5. Delete snapshot_settings
+            result = conn.execute(
+                "DELETE FROM snapshot_settings WHERE project_id = ?",
+                [project_id],
+            )
+            counts["snapshot_settings"] = result.rowcount
+
+            # 6. Delete snapshots
+            result = conn.execute(
+                "DELETE FROM snapshots WHERE project_id = ?",
+                [project_id],
+            )
+            counts["snapshots"] = result.rowcount
+
+            # 7. Delete files
+            result = conn.execute(
+                "DELETE FROM files WHERE project_id = ?",
+                [project_id],
+            )
+            counts["files"] = result.rowcount
+
+            # 8. Delete branches
+            result = conn.execute(
+                "DELETE FROM branches WHERE project_id = ?",
+                [project_id],
+            )
+            counts["branches"] = result.rowcount
+
+            # 9. Delete api_keys
+            result = conn.execute(
+                "DELETE FROM api_keys WHERE project_id = ?",
+                [project_id],
+            )
+            counts["api_keys"] = result.rowcount
+
+        logger.info(
+            "cascade_delete_project_metadata",
+            project_id=project_id,
+            deleted_counts=counts,
+        )
+        return counts
 
     def _row_to_project_dict(self, row: tuple | None) -> dict[str, Any] | None:
         """Convert database row to project dictionary."""
