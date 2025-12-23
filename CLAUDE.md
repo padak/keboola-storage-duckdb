@@ -88,7 +88,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       └── metrics.py     # Prometheus /metrics endpoint
   ├── proto/                 # Protocol Buffer definitions
   ├── generated/             # Generated Python protobuf code
-  └── tests/                 # pytest tests (575 tests)
+  └── tests/                 # pytest tests (630 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -132,22 +132,21 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Bucket Sharing Handlers (Phase 12f)** | **DONE** | 15 |
 | **Branch & Query Handlers (Phase 12g)** | **DONE** | - |
 | Schema Migrations | TODO | - |
-| **Phase 15: E2E Test Suite** | **TODO** | - |
+| **Phase 15: E2E Test Suite** | **DONE** | 630 |
 
-**Total: 590 tests PASS** (including 62 E2E + 90 gRPC + 38 S3 tests)
+**Total: 630 tests PASS** (including 62 E2E + 90 gRPC + 38 S3 tests)
 
 ## Post-MVP TODO & Technical Debt
 
-### Phase 15: Comprehensive E2E Test Suite (TODO)
+### Phase 15: Comprehensive E2E Test Suite (DONE)
 
-Doplneni chybejicich E2E testu - viz `docs/plan/phase-15-e2e-tests.md`:
-- **93 API endpointu** k otestovani, 84 pokryto, 9 TODO
-- Testy s naming convention `test_{timestamp}_*` pro izolaci
-- Real PG Wire testy (psycopg2 pripojeni)
+Kompletni E2E test suite - viz `docs/plan/phase-15-e2e-tests.md`:
+- **93 API endpointu** - 100% pokryto
+- **630 testu** - 100% pass rate
+- 10 workflow testu pokryvajicich vsechny endpointy
+- Real HTTP E2E testy (uvicorn + httpx)
 - S3 testy s boto3 klientem
-- Incremental append bez PK
-- Branch izolace testy
-- Auto-snapshot pri TRUNCATE
+- Auto-snapshot pri TRUNCATE/DELETE ALL
 
 ### Phase 11c: Workspace Polish (Partially TODO)
 

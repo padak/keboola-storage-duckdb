@@ -60,6 +60,34 @@ test-cov: ## Run tests with coverage report
 test-fast: ## Run tests without verbose (faster)
 	.venv/bin/pytest tests/ -q
 
+# ============================================
+# Workflow E2E Tests
+# ============================================
+
+workflow: ## Run workflow E2E tests
+	.venv/bin/pytest tests/test_workflows_e2e.py -v
+
+workflow-log: ## Run workflow E2E tests with protocol logging
+	@echo "$(CYAN)Running workflows with protocol logging...$(RESET)"
+	WORKFLOW_LOG=1 .venv/bin/pytest tests/test_workflows_e2e.py -v -s
+
+workflow-one: ## Run single workflow (usage: make workflow-one W=2)
+	@if [ -z "$(W)" ]; then \
+		echo "$(YELLOW)Usage: make workflow-one W=<number>$(RESET)"; \
+		echo "  W=1  Project Lifecycle"; \
+		echo "  W=2  Data Pipeline"; \
+		echo "  W=3  Snapshot Recovery"; \
+		echo "  W=4  Branch Development"; \
+		echo "  W=5  Bucket Sharing"; \
+		echo "  W=6  Workspace SQL"; \
+		echo "  W=7  S3 Compatible"; \
+		echo "  W=8  Files Management"; \
+		echo "  W=9  Driver Bridge"; \
+		echo "  W=10 PG Wire Sessions"; \
+	else \
+		WORKFLOW_LOG=1 .venv/bin/pytest tests/test_workflows_e2e.py -v -s -k "Workflow$(W)"; \
+	fi
+
 e2e: ## Run e2e tests (server must be running)
 	@echo "$(YELLOW)Running E2E tests against http://localhost:$(PORT)$(RESET)"
 	@echo "$(YELLOW)Make sure server is running: make server$(RESET)"

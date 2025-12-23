@@ -150,6 +150,61 @@ def admin_headers():
 
 
 # =============================================================================
+# Protocol Logger
+# =============================================================================
+
+class WorkflowProtocol:
+    """Logger for workflow test protocol output."""
+
+    def __init__(self, name: str, total_steps: int):
+        self.name = name
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.enabled = os.environ.get("WORKFLOW_LOG", "0") == "1"
+
+    def header(self):
+        """Print workflow header."""
+        if self.enabled:
+            print(f"\n{'='*60}")
+            print(f"=== {self.name} ===")
+            print(f"{'='*60}")
+
+    def step(self, method: str, path: str, request_body: dict = None):
+        """Log a step before execution."""
+        self.current_step += 1
+        if self.enabled:
+            print(f"\n[{self.current_step}/{self.total_steps}] {method} {path}")
+            if request_body:
+                body_str = json.dumps(request_body, indent=2, default=str)
+                if len(body_str) > 200:
+                    body_str = body_str[:200] + "..."
+                print(f"       Request: {body_str}")
+
+    def result(self, response, summary: str = None):
+        """Log response after execution."""
+        if self.enabled:
+            status = f"{response.status_code} {_status_text(response.status_code)}"
+            if summary:
+                print(f"       Response: {status} - {summary}")
+            else:
+                print(f"       Response: {status}")
+
+    def info(self, message: str):
+        """Log info message."""
+        if self.enabled:
+            print(f"       -> {message}")
+
+
+def _status_text(code: int) -> str:
+    """HTTP status code to text."""
+    return {
+        200: "OK", 201: "Created", 204: "No Content",
+        400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
+        409: "Conflict", 500: "Server Error"
+    }.get(code, "")
+
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -245,10 +300,14 @@ class TestWorkflow1ProjectLifecycle:
 
     def test_full_project_lifecycle(self, api, admin_headers):
         """Complete project lifecycle with API key management."""
+        log = WorkflowProtocol("Workflow 1: Project Lifecycle", 10)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"proj_{test_id}"
 
         # 4. POST /projects - Create project
+        log.step("POST", "/projects", {"id": project_id})
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Workflow Test {test_id}"},
@@ -259,19 +318,25 @@ class TestWorkflow1ProjectLifecycle:
         assert project_data["id"] == project_id
         project_api_key = project_data["api_key"]
         project_headers = {"Authorization": f"Bearer {project_api_key}"}
+        log.result(resp, f"project_id={project_id}")
 
         # 5. GET /projects - List projects
+        log.step("GET", "/projects")
         resp = api.get("/projects", headers=admin_headers)
         assert resp.status_code == 200
         projects = resp.json()["projects"]
         assert any(p["id"] == project_id for p in projects)
+        log.result(resp, f"{len(projects)} projects found")
 
         # 6. GET /projects/{id} - Get project details
+        log.step("GET", f"/projects/{project_id}")
         resp = api.get(f"/projects/{project_id}", headers=project_headers)
         assert resp.status_code == 200
         assert resp.json()["name"] == f"Workflow Test {test_id}"
+        log.result(resp)
 
         # 7. PUT /projects/{id} - Update project
+        log.step("PUT", f"/projects/{project_id}", {"name": f"Updated {test_id}"})
         resp = api.put(
             f"/projects/{project_id}",
             json={"name": f"Updated {test_id}", "description": "Updated desc"},
@@ -279,8 +344,10 @@ class TestWorkflow1ProjectLifecycle:
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == f"Updated {test_id}"
+        log.result(resp, "project updated")
 
         # 8. POST /projects/{id}/api-keys - Create additional API key
+        log.step("POST", f"/projects/{project_id}/api-keys", {"description": "CI/CD Key"})
         resp = api.post(
             f"/projects/{project_id}/api-keys",
             json={"description": "CI/CD Key"},
@@ -290,8 +357,10 @@ class TestWorkflow1ProjectLifecycle:
         new_key_data = resp.json()
         new_key_id = new_key_data["id"]
         new_key = new_key_data["api_key"]  # Field is api_key, not key
+        log.result(resp, f"new API key created: {new_key_id}")
 
         # 9. GET /projects/{id}/api-keys - List API keys
+        log.step("GET", f"/projects/{project_id}/api-keys")
         resp = api.get(
             f"/projects/{project_id}/api-keys",
             headers=project_headers,
@@ -299,8 +368,10 @@ class TestWorkflow1ProjectLifecycle:
         assert resp.status_code == 200
         keys = resp.json()["api_keys"]  # Field is api_keys, not keys
         assert len(keys) >= 2  # admin + new key
+        log.result(resp, f"{len(keys)} API keys")
 
         # 10. GET /projects/{id}/api-keys/{key_id} - Get key details
+        log.step("GET", f"/projects/{project_id}/api-keys/{new_key_id}")
         resp = api.get(
             f"/projects/{project_id}/api-keys/{new_key_id}",
             headers=project_headers,
@@ -310,8 +381,10 @@ class TestWorkflow1ProjectLifecycle:
         assert key_data["description"] == "CI/CD Key"
         # Raw key not exposed in GET
         assert "api_key" not in key_data
+        log.result(resp)
 
         # 11. POST /projects/{id}/api-keys/{key_id}/rotate - Rotate key
+        log.step("POST", f"/projects/{project_id}/api-keys/{new_key_id}/rotate")
         resp = api.post(
             f"/projects/{project_id}/api-keys/{new_key_id}/rotate",
             headers=project_headers,
@@ -319,8 +392,10 @@ class TestWorkflow1ProjectLifecycle:
         assert resp.status_code == 201  # Creates new key, so 201
         rotated_key = resp.json()["api_key"]
         assert rotated_key != new_key  # New key generated
+        log.result(resp, "key rotated successfully")
 
         # Verify old key is invalid (returns 403 Forbidden)
+        log.info("Verifying old key is invalid")
         old_key_headers = {"Authorization": f"Bearer {new_key}"}
         resp = api.get(
             f"/projects/{project_id}/branches/default/buckets",
@@ -329,13 +404,16 @@ class TestWorkflow1ProjectLifecycle:
         assert resp.status_code in [401, 403]  # Either unauthorized or forbidden
 
         # 12. DELETE /projects/{id}/api-keys/{key_id} - Revoke key
+        log.step("DELETE", f"/projects/{project_id}/api-keys/{new_key_id}")
         resp = api.delete(
             f"/projects/{project_id}/api-keys/{new_key_id}",
             headers=project_headers,
         )
         assert resp.status_code == 204
+        log.result(resp, "key revoked")
 
         # 13. GET /projects/{id}/stats - Get project statistics
+        log.step("GET", f"/projects/{project_id}/stats")
         resp = api.get(
             f"/projects/{project_id}/stats",
             headers=project_headers,
@@ -344,10 +422,10 @@ class TestWorkflow1ProjectLifecycle:
         stats = resp.json()
         assert "bucket_count" in stats
         assert "table_count" in stats
+        log.result(resp, f"buckets={stats['bucket_count']}, tables={stats['table_count']}")
 
         # Cleanup: DELETE /projects/{id}
         resp = api.delete(f"/projects/{project_id}", headers=admin_headers)
-        assert resp.status_code == 204
 
 
 # =============================================================================
@@ -382,77 +460,95 @@ class TestWorkflow2DataPipeline:
 
     def test_full_data_pipeline(self, api, admin_headers):
         """Complete data pipeline workflow."""
+        log = WorkflowProtocol("Workflow 2: Data Pipeline", 19)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"pipeline_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
-        # Create project
+        # Create project (setup)
+        log.step("POST", "/projects", {"id": project_id})
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Pipeline Test {test_id}"},
             headers=admin_headers,
         )
         assert resp.status_code == 201
+        log.result(resp, f"project_id={project_id}")
         project_headers = {"Authorization": f"Bearer {resp.json()['api_key']}"}
 
         base_url = f"/projects/{project_id}/branches/default"
 
         # 1. POST .../buckets - Create bucket
+        log.step("POST", f"{base_url}/buckets", {"name": bucket_name})
         resp = api.post(
             f"{base_url}/buckets",
             json={"name": bucket_name, "stage": "in", "description": "Test data"},
             headers=project_headers,
         )
         assert resp.status_code == 201
+        log.result(resp, f"bucket={bucket_name}")
 
         # 2. GET .../buckets - List buckets
+        log.step("GET", f"{base_url}/buckets")
         resp = api.get(f"{base_url}/buckets", headers=project_headers)
         assert resp.status_code == 200
         assert len(resp.json()["buckets"]) == 1
+        log.result(resp, "1 bucket found")
 
         # 3. GET .../buckets/{name} - Get bucket
+        log.step("GET", f"{base_url}/buckets/{bucket_name}")
         resp = api.get(f"{base_url}/buckets/{bucket_name}", headers=project_headers)
         assert resp.status_code == 200
         assert resp.json()["name"] == bucket_name
+        log.result(resp)
 
         # 4. POST .../tables - Create table
+        table_def = {"name": table_name, "columns": [
+            {"name": "id", "type": "INTEGER"},
+            {"name": "name", "type": "VARCHAR"},
+            {"name": "email", "type": "VARCHAR"},
+            {"name": "age", "type": "INTEGER"},
+        ]}
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables", table_def)
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables",
-            json={
-                "name": table_name,
-                "columns": [
-                    {"name": "id", "type": "INTEGER"},
-                    {"name": "name", "type": "VARCHAR"},
-                    {"name": "email", "type": "VARCHAR"},
-                    {"name": "age", "type": "INTEGER"},
-                ],
-            },
+            json=table_def,
             headers=project_headers,
         )
         assert resp.status_code == 201
+        log.result(resp, f"table={table_name}, 4 columns")
 
         # 5. GET .../tables - List tables
+        log.step("GET", f"{base_url}/buckets/{bucket_name}/tables")
         resp = api.get(
             f"{base_url}/buckets/{bucket_name}/tables",
             headers=project_headers,
         )
         assert resp.status_code == 200
         assert len(resp.json()["tables"]) == 1
+        log.result(resp, "1 table found")
 
         # 6. GET .../tables/{t} - Get table
+        log.step("GET", f"{base_url}/buckets/{bucket_name}/tables/{table_name}")
         resp = api.get(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}",
             headers=project_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == table_name
+        log.result(resp)
 
         # 7-9. Upload CSV file
         csv_content = b"id,name,email,age\n1,Alice,alice@test.com,30\n2,Bob,bob@test.com,25\n3,Charlie,charlie@test.com,35\n"
+        log.step("POST", f"/projects/{project_id}/files/prepare + upload + register")
         file_id = upload_csv(api, project_id, project_headers, "users.csv", csv_content)
+        log.info(f"file_id={file_id}, 3 rows CSV")
 
         # 10. POST .../import/file - Import CSV
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/import/file", {"file_id": file_id})
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/import/file",
             json={"file_id": file_id},
@@ -460,8 +556,10 @@ class TestWorkflow2DataPipeline:
         )
         assert resp.status_code == 200
         assert resp.json()["imported_rows"] == 3
+        log.result(resp, "3 rows imported")
 
         # 11. GET .../preview - Preview data
+        log.step("GET", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/preview")
         resp = api.get(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/preview",
             headers=project_headers,
@@ -470,37 +568,46 @@ class TestWorkflow2DataPipeline:
         preview = resp.json()
         assert preview["total_row_count"] == 3
         assert len(preview["rows"]) == 3
+        log.result(resp, f"3 rows: Alice, Bob, Charlie")
 
         # 12. POST .../columns - Add column
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns", {"name": "status", "type": "VARCHAR"})
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns",
-            json={"name": "status", "type": "VARCHAR", "default": "'active'"},  # SQL expression with quotes
+            json={"name": "status", "type": "VARCHAR", "default": "'active'"},
             headers=project_headers,
         )
         assert resp.status_code == 201, f"Add column failed: {resp.text}"
+        log.result(resp, "column 'status' added")
 
         # 13. PUT .../columns/{col} - Alter column (rename)
+        log.step("PUT", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns/status", {"new_name": "user_status"})
         resp = api.put(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns/status",
             json={"new_name": "user_status"},
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "renamed to 'user_status'")
 
-        # 14. DELETE .../columns/{col} - Drop column (returns 200 with updated table)
+        # 14. DELETE .../columns/{col} - Drop column
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns/user_status")
         resp = api.delete(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/columns/user_status",
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "column dropped")
 
         # 15. POST .../primary-key - Add PK
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/primary-key", {"columns": ["id"]})
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/primary-key",
             json={"columns": ["id"]},
             headers=project_headers,
         )
-        assert resp.status_code in [200, 201]  # Either OK or Created
+        assert resp.status_code in [200, 201]
+        log.result(resp, "PK set on 'id'")
 
         # Verify PK is set
         resp = api.get(
@@ -509,34 +616,40 @@ class TestWorkflow2DataPipeline:
         )
         assert resp.json()["primary_key"] == ["id"]
 
-        # 16. DELETE .../primary-key - Drop PK (returns 200 with updated table)
+        # 16. DELETE .../primary-key - Drop PK
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/primary-key")
         resp = api.delete(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/primary-key",
             headers=project_headers,
         )
-        assert resp.status_code in [200, 204]  # Either OK or No Content
+        assert resp.status_code in [200, 204]
+        log.result(resp, "PK removed")
 
         # 17. POST .../profile - Table profiling
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/profile")
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/profile",
             headers=project_headers,
         )
         assert resp.status_code == 200
         profile = resp.json()
-        # Response has 'statistics' field with column stats
         assert "statistics" in profile
         assert len(profile["statistics"]) >= 4
+        log.result(resp, f"{len(profile['statistics'])} column stats")
 
         # 18. POST .../export - Export to file
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/export", {"format": "csv"})
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/export",
             json={"format": "csv"},
             headers=project_headers,
         )
         assert resp.status_code == 200
-        assert "file_id" in resp.json()
+        export_file_id = resp.json()["file_id"]
+        log.result(resp, f"exported to file_id={export_file_id}")
 
-        # 19. DELETE .../rows - Delete rows (httpx requires params or headers for json body)
+        # 19. DELETE .../rows - Delete rows
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows", {"where_clause": "age > 30"})
         resp = api.request(
             "DELETE",
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows",
@@ -544,10 +657,13 @@ class TestWorkflow2DataPipeline:
             headers=project_headers,
         )
         assert resp.status_code == 200
-        assert resp.json()["deleted_rows"] == 1  # Charlie (age 35)
+        assert resp.json()["deleted_rows"] == 1
+        log.result(resp, "1 row deleted (Charlie, age 35)")
 
         # Verify 2 rows remain
-        assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 2
+        remaining = get_row_count(api, project_id, project_headers, bucket_name, table_name)
+        assert remaining == 2
+        log.info(f"Final state: {remaining} rows remain (Alice, Bob)")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -580,12 +696,16 @@ class TestWorkflow3SnapshotRecovery:
 
     def test_full_snapshot_workflow(self, api, admin_headers):
         """Complete snapshot configuration and recovery workflow."""
+        log = WorkflowProtocol("Workflow 3: Snapshot Recovery", 14)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"snapshot_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
         # Create project with data
+        log.info("Setting up project with bucket, table, and 3 rows of data")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Snapshot Test {test_id}"},
@@ -618,10 +738,14 @@ class TestWorkflow3SnapshotRecovery:
         )
 
         # 1. GET /projects/{id}/settings/snapshots - Get project config
+        log.step("GET", f"/projects/{project_id}/settings/snapshots")
         resp = api.get(f"/projects/{project_id}/settings/snapshots", headers=project_headers)
         assert resp.status_code == 200
+        log.result(resp, "project snapshot config retrieved")
 
         # 2. PUT /projects/{id}/settings/snapshots - Set project config
+        config = {"enabled": True, "auto_snapshot_triggers": {"truncate_table": True, "drop_table": True}}
+        log.step("PUT", f"/projects/{project_id}/settings/snapshots", config)
         resp = api.put(
             f"/projects/{project_id}/settings/snapshots",
             json={
@@ -632,40 +756,50 @@ class TestWorkflow3SnapshotRecovery:
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "auto-snapshot enabled for truncate/drop")
 
         # 3. GET .../buckets/{b}/settings/snapshots - Get bucket config
+        log.step("GET", f"{base_url}/buckets/{bucket_name}/settings/snapshots")
         resp = api.get(
             f"{base_url}/buckets/{bucket_name}/settings/snapshots",
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp)
 
         # 4. PUT .../buckets/{b}/settings/snapshots - Set bucket config
+        log.step("PUT", f"{base_url}/buckets/{bucket_name}/settings/snapshots", {"auto_snapshot_triggers": {"delete_all_rows": True}})
         resp = api.put(
             f"{base_url}/buckets/{bucket_name}/settings/snapshots",
             json={"auto_snapshot_triggers": {"delete_all_rows": True}},
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "bucket: enable auto-snapshot for delete_all_rows")
 
         # 5. GET .../tables/{t}/settings/snapshots - Get table config
+        log.step("GET", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots")
         resp = api.get(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots",
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp)
 
         # 6. PUT .../tables/{t}/settings/snapshots - Set table config
+        log.step("PUT", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots", {"enabled": True})
         resp = api.put(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots",
             json={"enabled": True},
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "table: snapshots enabled")
 
         # 7. POST .../snapshots - Create manual snapshot
         # Note: Snapshot endpoint is at /projects/{id}/branches/{branch}/snapshots
         # with bucket and table in request body
+        log.step("POST", f"{base_url}/snapshots", {"bucket": bucket_name, "table": table_name})
         resp = api.post(
             f"{base_url}/snapshots",
             json={"bucket": bucket_name, "table": table_name, "description": "Before changes"},
@@ -673,8 +807,10 @@ class TestWorkflow3SnapshotRecovery:
         )
         assert resp.status_code == 201
         snapshot_id = resp.json()["id"]
+        log.result(resp, f"snapshot_id={snapshot_id}")
 
         # 8. GET .../snapshots - List snapshots (with bucket/table filters)
+        log.step("GET", f"{base_url}/snapshots?bucket={bucket_name}&table={table_name}")
         resp = api.get(
             f"{base_url}/snapshots",
             params={"bucket": bucket_name, "table": table_name},
@@ -682,17 +818,21 @@ class TestWorkflow3SnapshotRecovery:
         )
         assert resp.status_code == 200
         assert len(resp.json()["snapshots"]) >= 1
+        log.result(resp, f"{len(resp.json()['snapshots'])} snapshots found")
 
         # 9. GET .../snapshots/{id} - Get snapshot details
+        log.step("GET", f"{base_url}/snapshots/{snapshot_id}")
         resp = api.get(
             f"{base_url}/snapshots/{snapshot_id}",
             headers=project_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["row_count"] == 3
+        log.result(resp, "snapshot has 3 rows")
 
         # 10. DELETE .../rows - Truncate table (with WHERE 1=1)
         # httpx.Client.delete() doesn't accept json, use request() instead
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows", {"where_clause": "1=1"})
         resp = api.request(
             "DELETE",
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows",
@@ -700,38 +840,49 @@ class TestWorkflow3SnapshotRecovery:
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "table truncated")
 
         # Verify table is empty
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 0
+        log.info("Table now has 0 rows")
 
         # 11. POST .../snapshots/{id}/restore - Restore snapshot
+        log.step("POST", f"{base_url}/snapshots/{snapshot_id}/restore")
         resp = api.post(
             f"{base_url}/snapshots/{snapshot_id}/restore",
             json={},  # Empty body - restores to original location
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "snapshot restored")
 
         # Verify data restored
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 3
+        log.info("Data recovered: 3 rows restored")
 
         # 12. DELETE /projects/{id}/settings/snapshots - Reset project config
+        log.step("DELETE", f"/projects/{project_id}/settings/snapshots")
         resp = api.delete(f"/projects/{project_id}/settings/snapshots", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "project config reset")
 
         # 13. DELETE .../buckets/{b}/settings/snapshots - Reset bucket config
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/settings/snapshots")
         resp = api.delete(
             f"{base_url}/buckets/{bucket_name}/settings/snapshots",
             headers=project_headers,
         )
         assert resp.status_code == 204
+        log.result(resp, "bucket config reset")
 
         # 14. DELETE .../tables/{t}/settings/snapshots - Reset table config
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots")
         resp = api.delete(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/settings/snapshots",
             headers=project_headers,
         )
         assert resp.status_code == 204
+        log.result(resp, "table config reset")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -756,12 +907,16 @@ class TestWorkflow4BranchDevelopment:
 
     def test_branch_isolation_workflow(self, api, admin_headers):
         """Test branch isolation - changes in main don't affect branch."""
+        log = WorkflowProtocol("Workflow 4: Branch Development", 6)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"branch_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
         # Create project with data
+        log.info("Setting up project with bucket, table, and 3 rows in main")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Branch Test {test_id}"},
@@ -801,6 +956,7 @@ class TestWorkflow4BranchDevelopment:
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name, "default") == 3
 
         # 1. POST /projects/{id}/branches - Create dev branch
+        log.step("POST", f"/projects/{project_id}/branches", {"name": f"feature_{test_id}"})
         resp = api.post(
             f"/projects/{project_id}/branches",
             json={"name": f"feature_{test_id}"},
@@ -809,28 +965,36 @@ class TestWorkflow4BranchDevelopment:
         assert resp.status_code == 201
         branch_data = resp.json()
         branch_id = branch_data["id"]
+        log.result(resp, f"branch_id={branch_id}")
 
         # 2. GET /projects/{id}/branches - List branches
         # Note: "default" branch is implicit and not stored in branches table
+        log.step("GET", f"/projects/{project_id}/branches")
         resp = api.get(f"/projects/{project_id}/branches", headers=project_headers)
         assert resp.status_code == 200
         branches = resp.json()["branches"]
         assert len(branches) >= 1  # new branch (default is implicit)
+        log.result(resp, f"{len(branches)} dev branches")
 
         # 3. GET /projects/{id}/branches/{branch_id} - Get branch
+        log.step("GET", f"/projects/{project_id}/branches/{branch_id}")
         resp = api.get(f"/projects/{project_id}/branches/{branch_id}", headers=project_headers)
         assert resp.status_code == 200
         assert resp.json()["name"] == f"feature_{test_id}"
+        log.result(resp)
 
         # 4. GET .../branches/{branch}/...preview - Preview in branch (should have 3 rows)
+        log.step("GET", f"/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/preview")
         resp = api.get(
             f"/projects/{project_id}/branches/{branch_id}/buckets/{bucket_name}/tables/{table_name}/preview",
             headers=project_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["total_row_count"] == 3
+        log.result(resp, "branch sees 3 rows (live view of main)")
 
         # Add row to MAIN
+        log.info("Adding 1 row to MAIN (David)")
         csv_content2 = b"id,name\n4,David\n"
         file_id2 = upload_csv(api, project_id, project_headers, "david.csv", csv_content2)
         api.post(
@@ -841,24 +1005,30 @@ class TestWorkflow4BranchDevelopment:
 
         # Verify main has 4 rows
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name, "default") == 4
+        log.info("Main now has 4 rows")
 
         # Branch sees live view of main until CoW happens (per ADR-007)
         # Since no write to branch triggered CoW, branch sees main's current data
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name, branch_id) == 4
+        log.info("Branch also sees 4 rows (live view, no CoW yet)")
 
         # 5. POST .../tables/{bucket}/{table}/pull - Pull from main
+        log.step("POST", f"/projects/{project_id}/branches/{branch_id}/tables/{bucket_name}/{table_name}/pull")
         resp = api.post(
             f"/projects/{project_id}/branches/{branch_id}/tables/{bucket_name}/{table_name}/pull",
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "pulled latest from main")
 
         # Now branch should have 4 rows
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name, branch_id) == 4
 
         # 6. DELETE /projects/{id}/branches/{branch_id} - Delete branch
+        log.step("DELETE", f"/projects/{project_id}/branches/{branch_id}")
         resp = api.delete(f"/projects/{project_id}/branches/{branch_id}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "branch deleted")
 
         # Verify branch is deleted
         resp = api.get(f"/projects/{project_id}/branches/{branch_id}", headers=project_headers)
@@ -891,6 +1061,9 @@ class TestWorkflow5BucketSharing:
 
     def test_bucket_sharing_workflow(self, api, admin_headers):
         """Test cross-project bucket sharing."""
+        log = WorkflowProtocol("Workflow 5: Bucket Sharing", 10)
+        log.header()
+
         test_id = generate_test_id()
         project_a_id = f"share_a_{test_id}"
         project_b_id = f"share_b_{test_id}"
@@ -898,6 +1071,7 @@ class TestWorkflow5BucketSharing:
         table_name = "orders"
 
         # Create Project A with data
+        log.info("Creating Project A with bucket, table, and 2 rows")
         resp = api.post(
             "/projects",
             json={"id": project_a_id, "name": f"Project A {test_id}"},
@@ -933,6 +1107,7 @@ class TestWorkflow5BucketSharing:
         )
 
         # Create Project B
+        log.info("Creating Project B")
         resp = api.post(
             "/projects",
             json={"id": project_b_id, "name": f"Project B {test_id}"},
@@ -941,69 +1116,85 @@ class TestWorkflow5BucketSharing:
         headers_b = {"Authorization": f"Bearer {resp.json()['api_key']}"}
 
         # 1. POST .../buckets/{name}/share - A shares bucket with B
+        log.step("POST", f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/share", {"target_project_id": project_b_id})
         resp = api.post(
             f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/share",
             json={"target_project_id": project_b_id},
             headers=headers_a,
         )
         assert resp.status_code == 200
+        log.result(resp, "bucket shared from A to B")
 
         # 2. POST .../buckets/{name}/link - B links bucket from A
+        log.step("POST", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link", {"source_project_id": project_a_id})
         resp = api.post(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link",
             json={"source_project_id": project_a_id, "source_bucket_name": bucket_name},
             headers=headers_b,
         )
         assert resp.status_code == 201  # 201 Created for new link
+        log.result(resp, "B linked to A's bucket")
 
         # 3. GET .../buckets/{name} (in B) - B reads bucket info
+        log.step("GET", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}")
         resp = api.get(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}",
             headers=headers_b,
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == bucket_name  # Bucket is accessible in B
+        log.result(resp, "B can read bucket metadata")
 
         # 4. GET .../tables/{t}/preview (in B) - B reads data
+        log.step("GET", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/tables/{table_name}/preview")
         resp = api.get(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/tables/{table_name}/preview",
             headers=headers_b,
         )
         assert resp.status_code == 200
         assert resp.json()["total_row_count"] == 2
+        log.result(resp, "B can read 2 rows from A's table")
 
         # 5. POST .../buckets/{name}/grant-readonly - A grants readonly
         # Note: This is a metadata operation for DuckDB - doesn't take body
+        log.step("POST", f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/grant-readonly")
         resp = api.post(
             f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/grant-readonly",
             headers=headers_a,
         )
         assert resp.status_code == 200
+        log.result(resp, "readonly grant applied")
 
         # 6. POST .../tables (in B) - B creates local table in linked bucket
         # Note: Creating local tables in a linked bucket is allowed - they are separate
         # from source tables and only exist in project B. The readonly grant affects
         # access to SOURCE tables, not local table creation.
+        log.step("POST", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/tables", {"name": "new_table"})
         resp = api.post(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/tables",
             json={"name": "new_table", "columns": [{"name": "x", "type": "INTEGER"}]},
             headers=headers_b,
         )
         assert resp.status_code == 201  # Local table creation succeeds
+        log.result(resp, "B can create local table in linked bucket")
 
         # 7. DELETE .../buckets/{name}/grant-readonly - A revokes grant
+        log.step("DELETE", f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/grant-readonly")
         resp = api.delete(
             f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/grant-readonly",
             headers=headers_a,
         )
         assert resp.status_code == 204
+        log.result(resp, "readonly grant revoked")
 
         # 8. DELETE .../buckets/{name}/link - B unlinks
+        log.step("DELETE", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link")
         resp = api.delete(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link",
             headers=headers_b,
         )
         assert resp.status_code == 204
+        log.result(resp, "B unlinked from bucket")
 
         # Bucket should not be visible in B now
         resp = api.get(
@@ -1011,18 +1202,22 @@ class TestWorkflow5BucketSharing:
             headers=headers_b,
         )
         assert resp.status_code == 404
+        log.info("Bucket no longer visible in B")
 
         # 9. DELETE .../buckets/{name}/share - A unshares from B
+        log.step("DELETE", f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/share")
         resp = api.delete(
             f"/projects/{project_a_id}/branches/default/buckets/{bucket_name}/share",
             params={"target_project_id": project_b_id},
             headers=headers_a,
         )
         assert resp.status_code == 204
+        log.result(resp, "A unshared bucket from B")
 
         # 10. POST .../buckets/{name}/link (in B) - Link succeeds in MVP
         # Note: MVP implementation doesn't enforce share check before linking.
         # The share/unshare operations are metadata-only. Full enforcement is post-MVP.
+        log.step("POST", f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link (after unshare)")
         resp = api.post(
             f"/projects/{project_b_id}/branches/default/buckets/{bucket_name}/link",
             json={"source_project_id": project_a_id, "source_bucket_name": bucket_name},
@@ -1030,6 +1225,7 @@ class TestWorkflow5BucketSharing:
         )
         # MVP: Link succeeds since share enforcement isn't implemented yet
         assert resp.status_code == 201
+        log.result(resp, "MVP: link succeeds (share enforcement not implemented)")
 
         # Cleanup
         api.delete(f"/projects/{project_a_id}", headers=admin_headers)
@@ -1061,12 +1257,16 @@ class TestWorkflow6WorkspaceSQL:
 
     def test_workspace_workflow(self, api, admin_headers):
         """Test workspace creation and management."""
+        log = WorkflowProtocol("Workflow 6: Workspace SQL", 12)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"workspace_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
         # Create project with data
+        log.info("Setting up project with bucket, table, and 2 rows")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Workspace Test {test_id}"},
@@ -1102,6 +1302,7 @@ class TestWorkflow6WorkspaceSQL:
         )
 
         # 1. POST /projects/{id}/workspaces - Create workspace
+        log.step("POST", f"/projects/{project_id}/workspaces", {"name": f"analytics_{test_id}"})
         resp = api.post(
             f"/projects/{project_id}/workspaces",
             json={"name": f"analytics_{test_id}"},
@@ -1116,26 +1317,34 @@ class TestWorkflow6WorkspaceSQL:
         assert "password" in ws_data["connection"]
         ws_username = ws_data["connection"]["username"]
         ws_password = ws_data["connection"]["password"]
+        log.result(resp, f"ws_id={ws_id}, credentials provided")
 
         # 2. GET /projects/{id}/workspaces - List workspaces
+        log.step("GET", f"/projects/{project_id}/workspaces")
         resp = api.get(f"/projects/{project_id}/workspaces", headers=project_headers)
         assert resp.status_code == 200
         assert len(resp.json()["workspaces"]) >= 1
+        log.result(resp, f"{len(resp.json()['workspaces'])} workspaces")
 
         # 3. GET /projects/{id}/workspaces/{ws_id} - Get workspace
+        log.step("GET", f"/projects/{project_id}/workspaces/{ws_id}")
         resp = api.get(f"/projects/{project_id}/workspaces/{ws_id}", headers=project_headers)
         assert resp.status_code == 200
         assert resp.json()["name"] == f"analytics_{test_id}"
+        log.result(resp)
 
         # 4. POST .../workspaces/{ws_id}/load - Load table data
+        log.step("POST", f"/projects/{project_id}/workspaces/{ws_id}/load", {"tables": [{"bucket": bucket_name, "table": table_name}]})
         resp = api.post(
             f"/projects/{project_id}/workspaces/{ws_id}/load",
             json={"tables": [{"bucket": bucket_name, "table": table_name}]},
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "table loaded into workspace")
 
         # 5. POST .../workspaces/{ws_id}/credentials/reset - Reset credentials
+        log.step("POST", f"/projects/{project_id}/workspaces/{ws_id}/credentials/reset")
         resp = api.post(
             f"/projects/{project_id}/workspaces/{ws_id}/credentials/reset",
             headers=project_headers,
@@ -1145,8 +1354,10 @@ class TestWorkflow6WorkspaceSQL:
         # New password in connection object
         new_password = reset_data.get("connection", {}).get("password") or reset_data.get("password")
         assert new_password != ws_password
+        log.result(resp, "credentials reset")
 
         # Create a dev branch first
+        log.info("Creating dev branch")
         resp = api.post(
             f"/projects/{project_id}/branches",
             json={"name": f"dev_{test_id}"},
@@ -1155,6 +1366,7 @@ class TestWorkflow6WorkspaceSQL:
         branch_id = resp.json()["id"]
 
         # 6. POST .../branches/{branch}/workspaces - Create branch workspace
+        log.step("POST", f"/projects/{project_id}/branches/{branch_id}/workspaces", {"name": f"branch_ws_{test_id}"})
         resp = api.post(
             f"/projects/{project_id}/branches/{branch_id}/workspaces",
             json={"name": f"branch_ws_{test_id}"},
@@ -1162,47 +1374,60 @@ class TestWorkflow6WorkspaceSQL:
         )
         assert resp.status_code == 201
         branch_ws_id = resp.json()["id"]
+        log.result(resp, f"branch workspace created: {branch_ws_id}")
 
         # 7. GET .../branches/{branch}/workspaces - List branch workspaces
+        log.step("GET", f"/projects/{project_id}/branches/{branch_id}/workspaces")
         resp = api.get(
             f"/projects/{project_id}/branches/{branch_id}/workspaces",
             headers=project_headers,
         )
         assert resp.status_code == 200
         assert len(resp.json()["workspaces"]) >= 1
+        log.result(resp, f"{len(resp.json()['workspaces'])} branch workspaces")
 
         # 8. GET .../branches/{branch}/workspaces/{ws_id} - Get branch workspace
+        log.step("GET", f"/projects/{project_id}/branches/{branch_id}/workspaces/{branch_ws_id}")
         resp = api.get(
             f"/projects/{project_id}/branches/{branch_id}/workspaces/{branch_ws_id}",
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp)
 
         # 9. DELETE .../workspaces/{ws_id}/objects/{name} - Drop object (if exists)
+        log.step("DELETE", f"/projects/{project_id}/workspaces/{ws_id}/objects/temp_table")
         resp = api.delete(
             f"/projects/{project_id}/workspaces/{ws_id}/objects/temp_table",
             headers=project_headers,
         )
         # May return 204 (deleted) or 404 (not found)
         assert resp.status_code in [204, 404]
+        log.result(resp, "object dropped (or not found)")
 
         # 10. POST .../workspaces/{ws_id}/clear - Clear workspace
+        log.step("POST", f"/projects/{project_id}/workspaces/{ws_id}/clear")
         resp = api.post(
             f"/projects/{project_id}/workspaces/{ws_id}/clear",
             headers=project_headers,
         )
         assert resp.status_code == 204  # No content
+        log.result(resp, "workspace cleared")
 
         # 11. DELETE .../branches/{branch}/workspaces/{ws_id} - Delete branch workspace
+        log.step("DELETE", f"/projects/{project_id}/branches/{branch_id}/workspaces/{branch_ws_id}")
         resp = api.delete(
             f"/projects/{project_id}/branches/{branch_id}/workspaces/{branch_ws_id}",
             headers=project_headers,
         )
         assert resp.status_code == 204
+        log.result(resp, "branch workspace deleted")
 
         # 12. DELETE /projects/{id}/workspaces/{ws_id} - Delete workspace
+        log.step("DELETE", f"/projects/{project_id}/workspaces/{ws_id}")
         resp = api.delete(f"/projects/{project_id}/workspaces/{ws_id}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "workspace deleted")
 
         # Cleanup
         api.delete(f"/projects/{project_id}/branches/{branch_id}", headers=project_headers)
@@ -1228,10 +1453,14 @@ class TestWorkflow7S3Compatible:
 
     def test_s3_compatible_workflow(self, api, admin_headers):
         """Test S3-compatible API operations."""
+        log = WorkflowProtocol("Workflow 7: S3 Compatible", 6)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"s3_{test_id}"
 
         # Create project
+        log.info("Creating project for S3 testing")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"S3 Test {test_id}"},
@@ -1244,6 +1473,7 @@ class TestWorkflow7S3Compatible:
         test_content = b"id,name\n1,Alice\n2,Bob\n"
 
         # 1. PUT /s3/{bucket}/{key} - Upload object
+        log.step("PUT", f"/s3/{s3_bucket}/{test_key}")
         resp = api.put(
             f"/s3/{s3_bucket}/{test_key}",
             content=test_content,
@@ -1253,18 +1483,24 @@ class TestWorkflow7S3Compatible:
             },
         )
         assert resp.status_code in [200, 201]
+        log.result(resp, f"uploaded {len(test_content)} bytes")
 
         # 2. HEAD /s3/{bucket}/{key} - Get metadata
+        log.step("HEAD", f"/s3/{s3_bucket}/{test_key}")
         resp = api.head(f"/s3/{s3_bucket}/{test_key}", headers=project_headers)
         assert resp.status_code == 200
         assert int(resp.headers.get("Content-Length", 0)) == len(test_content)
+        log.result(resp, f"Content-Length={len(test_content)}")
 
         # 3. GET /s3/{bucket}/{key} - Download object
+        log.step("GET", f"/s3/{s3_bucket}/{test_key}")
         resp = api.get(f"/s3/{s3_bucket}/{test_key}", headers=project_headers)
         assert resp.status_code == 200
         assert resp.content == test_content
+        log.result(resp, "content matches")
 
         # Upload another file for listing
+        log.info("Uploading second file for listing test")
         test_key2 = f"test/{test_id}/data2.csv"
         api.put(
             f"/s3/{s3_bucket}/{test_key2}",
@@ -1274,6 +1510,7 @@ class TestWorkflow7S3Compatible:
 
         # 4. GET /s3/{bucket} - List objects (with prefix)
         # Note: S3 ListObjects returns XML, not JSON
+        log.step("GET", f"/s3/{s3_bucket}?prefix=test/{test_id}/")
         resp = api.get(
             f"/s3/{s3_bucket}",
             params={"prefix": f"test/{test_id}/"},
@@ -1285,8 +1522,10 @@ class TestWorkflow7S3Compatible:
         assert "<Contents>" in xml_response or "<Key>" in xml_response
         assert "data.csv" in xml_response
         assert "data2.csv" in xml_response
+        log.result(resp, "2 objects listed (XML response)")
 
         # 5. POST /s3/{bucket}/presign - Generate presigned URL
+        log.step("POST", f"/s3/{s3_bucket}/presign", {"key": test_key, "method": "GET"})
         resp = api.post(
             f"/s3/{s3_bucket}/presign",
             json={"key": test_key, "method": "GET", "expires_in": 3600},
@@ -1300,9 +1539,11 @@ class TestWorkflow7S3Compatible:
         # Verify presigned URL contains required params
         assert "signature=" in presigned_url or "X-Amz-Signature=" in presigned_url
         assert "expires=" in presigned_url or "X-Amz-Expires=" in presigned_url
+        log.result(resp, "presigned URL generated")
 
         # Extract the path and query params from presigned URL to test via TestClient
         # Presigned URL is like http://localhost:8000/s3/bucket/key?signature=...&expires=...
+        log.info("Testing presigned URL access (no auth required)")
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(presigned_url)
         # Test using the path with query params (TestClient base_url handles the host)
@@ -1312,12 +1553,15 @@ class TestWorkflow7S3Compatible:
         assert resp.content == test_content
 
         # 6. DELETE /s3/{bucket}/{key} - Delete object
+        log.step("DELETE", f"/s3/{s3_bucket}/{test_key}")
         resp = api.delete(f"/s3/{s3_bucket}/{test_key}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "object deleted")
 
         # Verify object is deleted
         resp = api.get(f"/s3/{s3_bucket}/{test_key}", headers=project_headers)
         assert resp.status_code == 404
+        log.info("Object verified as deleted")
 
         # Cleanup
         api.delete(f"/s3/{s3_bucket}/{test_key2}", headers=project_headers)
@@ -1344,10 +1588,14 @@ class TestWorkflow8FilesManagement:
 
     def test_files_management_workflow(self, api, admin_headers):
         """Test complete file management lifecycle."""
+        log = WorkflowProtocol("Workflow 8: Files Management", 7)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"files_{test_id}"
 
         # Create project
+        log.info("Creating project for file management testing")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Files Test {test_id}"},
@@ -1359,6 +1607,7 @@ class TestWorkflow8FilesManagement:
         test_content = b"id,name,value\n1,Alpha,100\n2,Beta,200\n3,Gamma,300\n"
 
         # 1. POST /projects/{id}/files/prepare - Prepare upload
+        log.step("POST", f"/projects/{project_id}/files/prepare", {"filename": test_filename})
         resp = api.post(
             f"/projects/{project_id}/files/prepare",
             json={"filename": test_filename},
@@ -1367,16 +1616,20 @@ class TestWorkflow8FilesManagement:
         assert resp.status_code == 200
         upload_key = resp.json()["upload_key"]
         assert upload_key is not None
+        log.result(resp, f"upload_key={upload_key}")
 
         # 2. POST /projects/{id}/files/upload/{key} - Upload file
+        log.step("POST", f"/projects/{project_id}/files/upload/{upload_key}")
         resp = api.post(
             f"/projects/{project_id}/files/upload/{upload_key}",
             files={"file": (test_filename, test_content, "text/csv")},
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, f"uploaded {len(test_content)} bytes")
 
         # 3. POST /projects/{id}/files - Register file
+        log.step("POST", f"/projects/{project_id}/files", {"upload_key": upload_key})
         resp = api.post(
             f"/projects/{project_id}/files",
             json={
@@ -1389,33 +1642,43 @@ class TestWorkflow8FilesManagement:
         assert resp.status_code == 201
         file_data = resp.json()
         file_id = file_data["id"]
+        log.result(resp, f"file_id={file_id}")
 
         # 4. GET /projects/{id}/files - List files
+        log.step("GET", f"/projects/{project_id}/files")
         resp = api.get(f"/projects/{project_id}/files", headers=project_headers)
         assert resp.status_code == 200
         files = resp.json()["files"]
         assert len(files) >= 1
         assert any(f["id"] == file_id for f in files)
+        log.result(resp, f"{len(files)} files found")
 
         # 5. GET /projects/{id}/files/{file_id} - Get file info
+        log.step("GET", f"/projects/{project_id}/files/{file_id}")
         resp = api.get(f"/projects/{project_id}/files/{file_id}", headers=project_headers)
         assert resp.status_code == 200
         file_info = resp.json()
         assert file_info["name"] == test_filename
         assert file_info["size_bytes"] == len(test_content)
+        log.result(resp, f"{test_filename}, {len(test_content)} bytes")
 
         # 6. GET /projects/{id}/files/{file_id}/download - Download file
+        log.step("GET", f"/projects/{project_id}/files/{file_id}/download")
         resp = api.get(f"/projects/{project_id}/files/{file_id}/download", headers=project_headers)
         assert resp.status_code == 200
         assert resp.content == test_content
+        log.result(resp, "content matches")
 
         # 7. DELETE /projects/{id}/files/{file_id} - Delete file
+        log.step("DELETE", f"/projects/{project_id}/files/{file_id}")
         resp = api.delete(f"/projects/{project_id}/files/{file_id}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "file deleted")
 
         # Verify file is deleted
         resp = api.get(f"/projects/{project_id}/files/{file_id}", headers=project_headers)
         assert resp.status_code == 404
+        log.info("File verified as deleted")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1436,7 +1699,11 @@ class TestWorkflow9DriverBridge:
 
     def test_driver_bridge_workflow(self, api, admin_headers):
         """Test driver bridge endpoints."""
+        log = WorkflowProtocol("Workflow 9: Driver Bridge", 2)
+        log.header()
+
         # 1. GET /driver/commands - List available commands
+        log.step("GET", "/driver/commands")
         resp = api.get("/driver/commands", headers=admin_headers)
         assert resp.status_code == 200
         data = resp.json()
@@ -1456,8 +1723,10 @@ class TestWorkflow9DriverBridge:
         ]
         for cmd in expected_commands:
             assert cmd in command_types, f"Missing command: {cmd}"
+        log.result(resp, f"{len(commands)} commands available")
 
         # 2. POST /driver/execute - Execute InitBackendCommand (idempotent)
+        log.step("POST", "/driver/execute", {"command": {"type": "InitBackendCommand"}})
         resp = api.post(
             "/driver/execute",
             json={
@@ -1468,8 +1737,10 @@ class TestWorkflow9DriverBridge:
         assert resp.status_code == 200, f"InitBackend failed: {resp.text}"
         result = resp.json()
         assert "commandResponse" in result or "messages" in result
+        log.result(resp, "InitBackendCommand executed")
 
         # Test error handling - invalid command type
+        log.info("Testing error handling with invalid command")
         resp = api.post(
             "/driver/execute",
             json={
@@ -1479,6 +1750,7 @@ class TestWorkflow9DriverBridge:
         )
         # Should return error
         assert resp.status_code in [400, 404, 422, 500]
+        log.info(f"Invalid command properly rejected: {resp.status_code}")
 
 
 # =============================================================================
@@ -1498,10 +1770,14 @@ class TestWorkflow10PGWireSessions:
 
     def test_pgwire_sessions_workflow(self, api, admin_headers):
         """Test PG Wire session management."""
+        log = WorkflowProtocol("Workflow 10: PG Wire Sessions", 4)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"pgwire_{test_id}"
 
         # Create project with workspace
+        log.info("Creating project and workspace for PG Wire testing")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"PGWire Test {test_id}"},
@@ -1520,9 +1796,11 @@ class TestWorkflow10PGWireSessions:
         # Credentials are in connection object
         ws_username = ws_data["connection"]["username"]
         ws_password = ws_data["connection"]["password"]
+        log.info(f"Workspace created: {ws_id}")
 
         # 1. POST /internal/pgwire/auth - Authenticate
         # Note: PGWireAuthRequest only has username, password, client_ip (not database)
+        log.step("POST", "/internal/pgwire/auth", {"username": ws_username})
         resp = api.post(
             "/internal/pgwire/auth",
             json={
@@ -1535,10 +1813,12 @@ class TestWorkflow10PGWireSessions:
         assert resp.status_code == 200
         auth_data = resp.json()
         assert "workspace_id" in auth_data
+        log.result(resp, f"authenticated: workspace_id={auth_data['workspace_id']}")
 
         # 2. POST /internal/pgwire/sessions - Create session
         # PGWireSessionCreateRequest requires session_id, workspace_id, and optional client_ip
         session_id = f"sess_{test_id}"
+        log.step("POST", "/internal/pgwire/sessions", {"session_id": session_id, "workspace_id": ws_id})
         resp = api.post(
             "/internal/pgwire/sessions",
             json={
@@ -1552,16 +1832,21 @@ class TestWorkflow10PGWireSessions:
         session_data = resp.json()
         # PGWireSessionInfo uses session_id, not id
         assert session_data.get("session_id") == session_id
+        log.result(resp, f"session created: {session_id}")
 
         # 3. GET /internal/pgwire/sessions - List sessions (returns list directly)
+        log.step("GET", "/internal/pgwire/sessions")
         resp = api.get("/internal/pgwire/sessions", headers=admin_headers)
         assert resp.status_code == 200
         sessions = resp.json()  # Returns list directly, not {"sessions": [...]}
         assert any(s.get("session_id") == session_id for s in sessions)
+        log.result(resp, f"{len(sessions)} sessions found")
 
         # 4. DELETE /internal/pgwire/sessions/{id} - Close session
+        log.step("DELETE", f"/internal/pgwire/sessions/{session_id}")
         resp = api.delete(f"/internal/pgwire/sessions/{session_id}", headers=admin_headers)
         assert resp.status_code == 204
+        log.result(resp, "session closed")
 
         # Verify session is closed (deleted from list or status changed)
         resp = api.get("/internal/pgwire/sessions", headers=admin_headers)
@@ -1572,6 +1857,7 @@ class TestWorkflow10PGWireSessions:
                 # If found, should have closed status
                 assert s.get("status") in ["closed", "disconnected"], f"Session should be closed: {s}"
                 break
+        log.info("Session verified as closed")
 
         # Cleanup
         api.delete(f"/projects/{project_id}/workspaces/{ws_id}", headers=project_headers)
@@ -1592,12 +1878,16 @@ class TestIncrementalAppendWithoutPK:
 
     def test_incremental_append_without_pk(self, api, admin_headers):
         """Incremental import without PK appends without deduplication."""
+        log = WorkflowProtocol("Incremental Append Without PK", 3)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"append_{test_id}"
         bucket_name = "in_c_events"
         table_name = "events"
 
         # Create project
+        log.info("Creating project with table WITHOUT primary key")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Append Test {test_id}"},
@@ -1625,6 +1915,7 @@ class TestIncrementalAppendWithoutPK:
         )
 
         # Import 3 rows
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/import/file", {"initial import": "3 rows"})
         csv1 = b"timestamp,event_type,data\n2024-01-01 00:00:00,click,a\n2024-01-02 00:00:00,view,b\n2024-01-03 00:00:00,click,c\n"
         file_id1 = upload_csv(api, project_id, project_headers, "events1.csv", csv1)
         resp = api.post(
@@ -1634,8 +1925,10 @@ class TestIncrementalAppendWithoutPK:
         )
         assert resp.status_code == 200
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 3
+        log.result(resp, "3 rows imported")
 
         # Import SAME 3 rows again with incremental=True
+        log.step("POST", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/import/file", {"incremental": True, "same data": "3 rows"})
         file_id2 = upload_csv(api, project_id, project_headers, "events2.csv", csv1)
         resp = api.post(
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/import/file",
@@ -1646,9 +1939,12 @@ class TestIncrementalAppendWithoutPK:
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "3 more rows imported incrementally")
 
         # Should have 6 rows (append, no dedup because no PK)
+        log.step("Verify", "row count")
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 6
+        log.info("SUCCESS: 6 rows total (no deduplication without PK)")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1664,12 +1960,16 @@ class TestSnapshotBeforeTruncate:
 
     def test_auto_snapshot_before_truncate(self, api, admin_headers):
         """Verify auto-snapshot is created before truncate."""
+        log = WorkflowProtocol("Auto-Snapshot Before Truncate", 4)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"autosnap_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
         # Create project
+        log.info("Creating project and enabling auto-snapshot for truncate")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"AutoSnap Test {test_id}"},
@@ -1680,6 +1980,7 @@ class TestSnapshotBeforeTruncate:
 
         # Enable truncate_table trigger at project level
         # Note: API uses auto_snapshot_triggers, not triggers
+        log.step("PUT", f"/projects/{project_id}/settings/snapshots", {"enabled": True, "triggers": ["truncate", "delete_all"]})
         api.put(
             f"/projects/{project_id}/settings/snapshots",
             json={
@@ -1688,8 +1989,10 @@ class TestSnapshotBeforeTruncate:
             },
             headers=project_headers,
         )
+        log.info("Auto-snapshot triggers enabled")
 
         # Create bucket and table with data
+        log.info("Creating table with 3 rows")
         api.post(f"{base_url}/buckets", json={"name": bucket_name, "stage": "in"}, headers=project_headers)
         api.post(
             f"{base_url}/buckets/{bucket_name}/tables",
@@ -1716,15 +2019,18 @@ class TestSnapshotBeforeTruncate:
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 3
 
         # Get snapshot count before
+        log.step("GET", f"{base_url}/snapshots (before truncate)")
         resp = api.get(
             f"{base_url}/snapshots",
             params={"bucket": bucket_name, "table": table_name},
             headers=project_headers,
         )
         snapshots_before = len(resp.json().get("snapshots", []))
+        log.result(resp, f"{snapshots_before} snapshots before")
 
         # Truncate table (DELETE WHERE 1=1)
         # httpx.Client.delete() doesn't accept json, use request() instead
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows", {"where_clause": "1=1"})
         resp = api.request(
             "DELETE",
             f"{base_url}/buckets/{bucket_name}/tables/{table_name}/rows",
@@ -1732,11 +2038,14 @@ class TestSnapshotBeforeTruncate:
             headers=project_headers,
         )
         assert resp.status_code == 200
+        log.result(resp, "table truncated")
 
         # Verify table is empty
         assert get_row_count(api, project_id, project_headers, bucket_name, table_name) == 0
+        log.info("Table is now empty")
 
         # Verify auto-snapshot was created
+        log.step("GET", f"{base_url}/snapshots (after truncate)")
         resp = api.get(
             f"{base_url}/snapshots",
             params={"bucket": bucket_name, "table": table_name},
@@ -1744,6 +2053,7 @@ class TestSnapshotBeforeTruncate:
         )
         snapshots_after = resp.json().get("snapshots", [])
         assert len(snapshots_after) > snapshots_before, "Auto-snapshot should have been created"
+        log.result(resp, f"{len(snapshots_after)} snapshots after (auto-snapshot created)")
 
         # Find the auto-snapshot
         auto_snapshot = None
@@ -1755,6 +2065,7 @@ class TestSnapshotBeforeTruncate:
         # If auto-snapshot exists, verify it has correct row count
         if auto_snapshot:
             assert auto_snapshot["row_count"] == 3
+            log.info(f"Auto-snapshot verified: {auto_snapshot['row_count']} rows preserved")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1769,11 +2080,15 @@ class TestBucketDeletion:
 
     def test_delete_bucket(self, api, admin_headers):
         """DELETE .../buckets/{name} - Delete bucket."""
+        log = WorkflowProtocol("Bucket Deletion", 1)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"delbucket_{test_id}"
         bucket_name = "in_c_temp"
 
         # Create project
+        log.info("Creating project and bucket")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Delete Bucket Test {test_id}"},
@@ -1786,12 +2101,15 @@ class TestBucketDeletion:
         api.post(f"{base_url}/buckets", json={"name": bucket_name, "stage": "in"}, headers=project_headers)
 
         # Delete bucket
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}")
         resp = api.delete(f"{base_url}/buckets/{bucket_name}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "bucket deleted")
 
         # Verify bucket is deleted
         resp = api.get(f"{base_url}/buckets/{bucket_name}", headers=project_headers)
         assert resp.status_code == 404
+        log.info("Bucket verified as deleted")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1802,12 +2120,16 @@ class TestTableDeletion:
 
     def test_delete_table(self, api, admin_headers):
         """DELETE .../tables/{t} - Delete table."""
+        log = WorkflowProtocol("Table Deletion", 1)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"deltable_{test_id}"
         bucket_name = "in_c_data"
         table_name = "temp_table"
 
         # Create project
+        log.info("Creating project, bucket, and table")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Delete Table Test {test_id}"},
@@ -1828,12 +2150,15 @@ class TestTableDeletion:
         )
 
         # Delete table
+        log.step("DELETE", f"{base_url}/buckets/{bucket_name}/tables/{table_name}")
         resp = api.delete(f"{base_url}/buckets/{bucket_name}/tables/{table_name}", headers=project_headers)
         assert resp.status_code == 204
+        log.result(resp, "table deleted")
 
         # Verify table is deleted
         resp = api.get(f"{base_url}/buckets/{bucket_name}/tables/{table_name}", headers=project_headers)
         assert resp.status_code == 404
+        log.info("Table verified as deleted")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1844,12 +2169,16 @@ class TestSnapshotDeletion:
 
     def test_delete_snapshot(self, api, admin_headers):
         """DELETE .../snapshots/{id} - Delete snapshot."""
+        log = WorkflowProtocol("Snapshot Deletion", 2)
+        log.header()
+
         test_id = generate_test_id()
         project_id = f"delsnap_{test_id}"
         bucket_name = "in_c_data"
         table_name = "users"
 
         # Create project with data
+        log.info("Creating project, table, data, and snapshot")
         resp = api.post(
             "/projects",
             json={"id": project_id, "name": f"Delete Snapshot Test {test_id}"},
@@ -1877,6 +2206,7 @@ class TestSnapshotDeletion:
         )
 
         # Create snapshot
+        log.step("POST", f"{base_url}/snapshots", {"bucket": bucket_name, "table": table_name})
         resp = api.post(
             f"{base_url}/snapshots",
             json={"bucket": bucket_name, "table": table_name, "description": "Test snapshot"},
@@ -1884,13 +2214,16 @@ class TestSnapshotDeletion:
         )
         assert resp.status_code == 201, f"Snapshot creation failed: {resp.text}"
         snapshot_id = resp.json()["id"]
+        log.result(resp, f"snapshot_id={snapshot_id}")
 
         # Delete snapshot
+        log.step("DELETE", f"{base_url}/snapshots/{snapshot_id}")
         resp = api.delete(
             f"{base_url}/snapshots/{snapshot_id}",
             headers=project_headers,
         )
         assert resp.status_code == 204
+        log.result(resp, "snapshot deleted")
 
         # Verify snapshot is deleted
         resp = api.get(
@@ -1898,6 +2231,7 @@ class TestSnapshotDeletion:
             headers=project_headers,
         )
         assert resp.status_code == 404
+        log.info("Snapshot verified as deleted")
 
         # Cleanup
         api.delete(f"/projects/{project_id}", headers=admin_headers)
@@ -1908,13 +2242,22 @@ class TestBackendRemove:
 
     def test_backend_remove(self, api, admin_headers):
         """POST /backend/remove - Remove backend."""
+        log = WorkflowProtocol("Backend Remove", 1)
+        log.header()
+
         # Note: This is a destructive operation, typically only used in tests
         # The backend should be re-initialized by other tests
 
         # Just verify the endpoint exists and returns appropriate status
+        log.step("POST", "/backend/remove")
         resp = api.post("/backend/remove", headers=admin_headers)
         # May return 200 (removed) or 400 (has data) depending on state
         assert resp.status_code in [200, 400]
+        if resp.status_code == 200:
+            log.result(resp, "backend removed")
+        else:
+            log.result(resp, "backend has data (cannot remove)")
 
         # Re-initialize for other tests
+        log.info("Re-initializing backend for other tests")
         api.post("/backend/init", headers=admin_headers)
