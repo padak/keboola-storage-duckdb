@@ -1036,6 +1036,47 @@ async def delete_rows(
     # Validate table exists
     _validate_table_exists(resolved_project_id, bucket_name, table_name)
 
+    # Check if this is a "delete all rows" operation (truncate)
+    # Common patterns: "1=1", "TRUE", "true", empty or whitespace
+    where_lower = delete_request.where_clause.strip().lower()
+    is_delete_all = where_lower in ("1=1", "true", "1", "")
+
+    # Check if auto-snapshot should be created before deleting all rows
+    if is_delete_all:
+        # Try both triggers - truncate_table and delete_all_rows
+        should_snapshot = should_create_snapshot(
+            resolved_project_id, bucket_name, table_name, "truncate_table"
+        ) or should_create_snapshot(
+            resolved_project_id, bucket_name, table_name, "delete_all_rows"
+        )
+
+        if should_snapshot:
+            from src.routers.snapshots import create_snapshot_internal
+
+            try:
+                await create_snapshot_internal(
+                    project_id=resolved_project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                    snapshot_type="auto_pretruncate",
+                    description=f"Auto-backup before DELETE ALL ROWS from {bucket_name}.{table_name}",
+                )
+                logger.info(
+                    "auto_snapshot_created_before_truncate",
+                    project_id=resolved_project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                )
+            except Exception as e:
+                # Log but don't fail the delete if snapshot fails
+                logger.warning(
+                    "auto_snapshot_failed_before_truncate",
+                    project_id=resolved_project_id,
+                    bucket_name=bucket_name,
+                    table_name=table_name,
+                    error=str(e),
+                )
+
     try:
         result = project_db_manager.delete_table_rows(
             project_id=resolved_project_id,

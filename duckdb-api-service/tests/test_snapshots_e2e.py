@@ -268,6 +268,178 @@ class TestSnapshotBeforeDropTable:
         assert response.json()["total"] == 0
 
 
+class TestSnapshotBeforeTruncate:
+    """Test automatic snapshot creation before TRUNCATE (DELETE ALL ROWS).
+
+    This tests the actual execution of auto-snapshot when truncate_table
+    or delete_all_rows triggers are enabled.
+    """
+
+    def test_auto_snapshot_before_truncate_via_delete_all(self, client, project_with_data):
+        """Auto-snapshot is created when DELETE ALL ROWS (truncate) is executed."""
+        # 1. Enable truncate_table trigger at project level
+        response = client.put(
+            f"/projects/{project_with_data['project_id']}/settings/snapshots",
+            json={"auto_snapshot_triggers": {"truncate_table": True}},
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+
+        # 2. Verify trigger is enabled
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/settings/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["effective_config"]["auto_snapshot_triggers"]["truncate_table"] is True
+
+        # 3. Verify table has data (3 rows from fixture)
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/preview",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["total_row_count"] == 3
+
+        # 4. Verify no snapshots exist initially
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        initial_snapshots = response.json()["total"]
+
+        # 5. TRUNCATE table via DELETE with where_clause = "1=1" (deletes all)
+        import json
+        response = client.request(
+            "DELETE",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/rows",
+            content=json.dumps({"where_clause": "1=1"}),
+            headers={**project_with_data["project_headers"], "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200
+        assert response.json()["deleted_rows"] == 3
+        assert response.json()["table_rows_after"] == 0
+
+        # 6. Verify auto-snapshot was created
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == initial_snapshots + 1
+
+        # Find the auto-snapshot
+        auto_snapshots = [s for s in data["snapshots"] if "auto_" in s.get("snapshot_type", "")]
+        assert len(auto_snapshots) >= 1
+        snapshot = auto_snapshots[0]
+        assert snapshot["row_count"] == 3  # Had 3 rows before truncate
+        assert "truncate" in snapshot.get("description", "").lower() or "delete" in snapshot.get("description", "").lower()
+
+        # 7. Verify table is empty now
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/preview",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["total_row_count"] == 0
+
+        # 8. Restore from auto-snapshot
+        snapshot_id = snapshot["id"]
+        response = client.post(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots/{snapshot_id}/restore",
+            json={},
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["row_count"] == 3
+
+        # 9. Verify data is restored
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/preview",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["total_row_count"] == 3
+
+    def test_no_auto_snapshot_when_truncate_disabled(self, client, project_with_data):
+        """No auto-snapshot when truncate_table trigger is disabled (default)."""
+        # Verify truncate trigger is disabled by default
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/settings/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+        assert response.json()["effective_config"]["auto_snapshot_triggers"]["truncate_table"] is False
+
+        # Get initial snapshot count
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        initial_count = response.json()["total"]
+
+        # Delete all rows (truncate)
+        import json
+        response = client.request(
+            "DELETE",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/rows",
+            content=json.dumps({"where_clause": "1=1"}),
+            headers={**project_with_data["project_headers"], "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200
+
+        # Verify no new snapshots were created
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.json()["total"] == initial_count
+
+    def test_auto_snapshot_delete_all_rows_trigger(self, client, project_with_data):
+        """Test delete_all_rows trigger specifically (separate from truncate_table)."""
+        # Enable delete_all_rows trigger
+        response = client.put(
+            f"/projects/{project_with_data['project_id']}/settings/snapshots",
+            json={"auto_snapshot_triggers": {"delete_all_rows": True}},
+            headers=project_with_data["project_headers"],
+        )
+        assert response.status_code == 200
+
+        # Verify trigger is enabled
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/settings/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.json()["effective_config"]["auto_snapshot_triggers"]["delete_all_rows"] is True
+
+        # Get initial snapshot count
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        initial_count = response.json()["total"]
+
+        # Delete all rows
+        import json
+        response = client.request(
+            "DELETE",
+            f"/projects/{project_with_data['project_id']}/branches/default/buckets/{project_with_data['bucket_name']}/tables/{project_with_data['table_name']}/rows",
+            content=json.dumps({"where_clause": "TRUE"}),  # Another way to select all
+            headers={**project_with_data["project_headers"], "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200
+        assert response.json()["deleted_rows"] == 3
+
+        # Verify auto-snapshot was created
+        response = client.get(
+            f"/projects/{project_with_data['project_id']}/branches/default/snapshots",
+            headers=project_with_data["project_headers"],
+        )
+        assert response.json()["total"] == initial_count + 1
+
+
 class TestSnapshotRetention:
     """Test snapshot retention and expiration."""
 
