@@ -15,14 +15,17 @@ Supported operations:
 - ListObjectsV2 (GET /{bucket}?list-type=2)
 - Presign (POST /{bucket}/presign) - Generate pre-signed URLs
 
-Authentication:
-- Authorization: Bearer {api_key} (same as REST API)
-- Pre-signed URL with signature query parameter
+Authentication (in order of precedence):
+1. AWS Signature V4 - Authorization: AWS4-HMAC-SHA256 ...
+2. Pre-signed URL with signature query parameter
+3. Authorization: Bearer {api_key}
+4. X-Api-Key header
 """
 
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import time
 import urllib.parse
@@ -279,13 +282,256 @@ def _verify_signature(
     return hmac.compare_digest(signature, expected)
 
 
+# ============================================================================
+# AWS Signature V4 Support
+# ============================================================================
+
+
+def _parse_aws_auth_header(auth_header: str) -> dict | None:
+    """Parse AWS4-HMAC-SHA256 Authorization header.
+
+    Expected format:
+        AWS4-HMAC-SHA256
+        Credential={access_key}/{date}/{region}/{service}/aws4_request,
+        SignedHeaders={header_list},
+        Signature={signature}
+
+    Returns:
+        Dictionary with parsed components or None if invalid format.
+    """
+    if not auth_header.startswith("AWS4-HMAC-SHA256"):
+        return None
+
+    # Remove "AWS4-HMAC-SHA256 " prefix and parse key=value pairs
+    # Handle both space-separated and comma-separated formats
+    content = auth_header[len("AWS4-HMAC-SHA256"):].strip()
+
+    # Extract Credential
+    cred_match = re.search(r"Credential=([^,\s]+)", content)
+    if not cred_match:
+        return None
+    credential = cred_match.group(1)
+
+    # Parse credential: access_key/date/region/service/aws4_request
+    cred_parts = credential.split("/")
+    if len(cred_parts) != 5 or cred_parts[4] != "aws4_request":
+        return None
+
+    # Extract SignedHeaders
+    headers_match = re.search(r"SignedHeaders=([^,\s]+)", content)
+    if not headers_match:
+        return None
+    signed_headers = headers_match.group(1).split(";")
+
+    # Extract Signature
+    sig_match = re.search(r"Signature=([a-fA-F0-9]+)", content)
+    if not sig_match:
+        return None
+    signature = sig_match.group(1)
+
+    return {
+        "access_key": cred_parts[0],
+        "date": cred_parts[1],  # YYYYMMDD format
+        "region": cred_parts[2],
+        "service": cred_parts[3],
+        "signed_headers": signed_headers,
+        "signature": signature.lower(),  # Normalize to lowercase
+    }
+
+
+def _derive_signing_key(secret_key: str, date: str, region: str, service: str) -> bytes:
+    """Derive AWS Sig V4 signing key.
+
+    The signing key is derived as:
+        kDate = HMAC("AWS4" + secret_key, date)
+        kRegion = HMAC(kDate, region)
+        kService = HMAC(kRegion, service)
+        kSigning = HMAC(kService, "aws4_request")
+
+    Args:
+        secret_key: The AWS secret access key
+        date: Date in YYYYMMDD format
+        region: AWS region (e.g., "us-east-1" or "local")
+        service: Service name (e.g., "s3")
+
+    Returns:
+        The derived signing key as bytes
+    """
+    k_date = hmac.new(f"AWS4{secret_key}".encode(), date.encode(), hashlib.sha256).digest()
+    k_region = hmac.new(k_date, region.encode(), hashlib.sha256).digest()
+    k_service = hmac.new(k_region, service.encode(), hashlib.sha256).digest()
+    k_signing = hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+    return k_signing
+
+
+def _build_canonical_request(
+    method: str,
+    uri: str,
+    query_string: str,
+    headers: dict[str, str],
+    signed_headers: list[str],
+    payload_hash: str,
+) -> str:
+    """Build AWS Sig V4 canonical request.
+
+    Format:
+        {HTTP_METHOD}\\n
+        {URI}\\n
+        {QUERY_STRING}\\n
+        {CANONICAL_HEADERS}\\n
+        {SIGNED_HEADERS}\\n
+        {HASHED_PAYLOAD}
+    """
+    # Sort signed headers
+    sorted_headers = sorted(signed_headers)
+
+    # Build canonical headers (lowercase name: trimmed value\n)
+    canonical_headers = ""
+    for h in sorted_headers:
+        value = headers.get(h.lower(), "")
+        # Trim whitespace and collapse multiple spaces
+        value = " ".join(value.split())
+        canonical_headers += f"{h.lower()}:{value}\n"
+
+    signed_headers_str = ";".join(sorted_headers)
+
+    # URL-encode URI path (but not the slashes)
+    # boto3 sends URI already encoded, so we need to handle that
+    canonical_uri = uri
+    if not canonical_uri.startswith("/"):
+        canonical_uri = "/" + canonical_uri
+
+    # Sort query string parameters
+    if query_string:
+        params = urllib.parse.parse_qsl(query_string, keep_blank_values=True)
+        sorted_params = sorted(params, key=lambda x: (x[0], x[1]))
+        canonical_qs = urllib.parse.urlencode(sorted_params, quote_via=urllib.parse.quote)
+    else:
+        canonical_qs = ""
+
+    return f"{method}\n{canonical_uri}\n{canonical_qs}\n{canonical_headers}\n{signed_headers_str}\n{payload_hash}"
+
+
+def _verify_aws_sig_v4(request: Request, bucket: str, key: str) -> tuple[bool, str | None]:
+    """Verify AWS Signature V4 authentication.
+
+    Args:
+        request: The FastAPI request
+        bucket: S3 bucket name
+        key: Object key (can be empty for bucket operations)
+
+    Returns:
+        Tuple of (is_valid, access_key) where access_key is None if invalid
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("AWS4-HMAC-SHA256"):
+        return False, None
+
+    parsed = _parse_aws_auth_header(auth_header)
+    if not parsed:
+        logger.debug("aws_sig_v4_parse_failed", auth_header=auth_header[:50])
+        return False, None
+
+    access_key = parsed["access_key"]
+
+    # Get the S3 secret key from settings
+    # We use a single S3 credential pair for simplicity
+    expected_access_key = settings.s3_access_key_id
+    secret_key = settings.s3_secret_access_key or settings.admin_api_key
+
+    if not secret_key:
+        logger.warning("aws_sig_v4_no_secret_key", msg="S3_SECRET_ACCESS_KEY not configured")
+        return False, None
+
+    # Verify access key matches
+    if access_key != expected_access_key:
+        logger.debug("aws_sig_v4_wrong_access_key", provided=access_key, expected=expected_access_key)
+        return False, None
+
+    # Get required headers
+    x_amz_date = request.headers.get("x-amz-date", "")
+    x_amz_content_sha256 = request.headers.get("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+
+    if not x_amz_date:
+        logger.debug("aws_sig_v4_missing_date")
+        return False, None
+
+    # Check request age (prevent replay attacks)
+    try:
+        # x-amz-date format: YYYYMMDDTHHMMSSZ
+        request_time = datetime.strptime(x_amz_date, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        age_seconds = abs((now - request_time).total_seconds())
+        if age_seconds > settings.s3_sig_v4_max_age_seconds:
+            logger.debug("aws_sig_v4_request_too_old", age_seconds=age_seconds)
+            return False, None
+    except ValueError:
+        logger.debug("aws_sig_v4_invalid_date_format", x_amz_date=x_amz_date)
+        return False, None
+
+    # Build canonical URI
+    if key:
+        uri = f"/s3/{bucket}/{key}"
+    else:
+        uri = f"/s3/{bucket}"
+
+    # Get query string (excluding signature-related params which boto3 doesn't use in header auth)
+    query_string = str(request.url.query) if request.url.query else ""
+
+    # Build headers dict with lowercase keys
+    headers_dict = {k.lower(): v for k, v in request.headers.items()}
+
+    # Build canonical request
+    canonical_request = _build_canonical_request(
+        method=request.method,
+        uri=uri,
+        query_string=query_string,
+        headers=headers_dict,
+        signed_headers=parsed["signed_headers"],
+        payload_hash=x_amz_content_sha256,
+    )
+
+    # Build string to sign
+    scope = f"{parsed['date']}/{parsed['region']}/{parsed['service']}/aws4_request"
+    canonical_request_hash = hashlib.sha256(canonical_request.encode()).hexdigest()
+    string_to_sign = f"AWS4-HMAC-SHA256\n{x_amz_date}\n{scope}\n{canonical_request_hash}"
+
+    # Derive signing key and compute expected signature
+    signing_key = _derive_signing_key(secret_key, parsed["date"], parsed["region"], parsed["service"])
+    expected_sig = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
+    # Constant-time comparison
+    if hmac.compare_digest(expected_sig, parsed["signature"]):
+        logger.info(
+            "aws_sig_v4_access_granted",
+            bucket=bucket,
+            key=key,
+            method=request.method,
+            access_key=access_key,
+        )
+        return True, access_key
+
+    logger.debug(
+        "aws_sig_v4_signature_mismatch",
+        expected=expected_sig[:16] + "...",
+        provided=parsed["signature"][:16] + "...",
+    )
+    return False, None
+
+
 async def _check_presign_or_auth(
     request: Request,
     bucket: str,
     key: str,
     method: str,
 ) -> bool:
-    """Check if request has valid pre-signed URL or valid auth.
+    """Check if request has valid authentication.
+
+    Authentication methods (checked in order):
+    1. AWS Signature V4 (Authorization: AWS4-HMAC-SHA256 ...)
+    2. Pre-signed URL (?signature=...&expires=...)
+    3. Bearer token (Authorization: Bearer ...)
+    4. X-Api-Key header
 
     Args:
         request: The FastAPI request
@@ -297,9 +543,29 @@ async def _check_presign_or_auth(
         True if authorized
 
     Raises:
-        HTTPException: If neither pre-signed nor authenticated
+        HTTPException: If not authenticated
     """
-    # Check for pre-signed URL parameters
+    # 1. Check for AWS Signature V4 (boto3, aws-cli, rclone)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("AWS4-HMAC-SHA256"):
+        is_valid, access_key = _verify_aws_sig_v4(request, bucket, key)
+        if is_valid:
+            # Validate that project exists (bucket = project_xxx)
+            project_id = _extract_project_id(bucket)
+            project = metadata_db.get_project(project_id)
+            if not project:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"Code": "NoSuchBucket", "Message": "The specified bucket does not exist"},
+                )
+            return True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"Code": "SignatureDoesNotMatch", "Message": "The request signature we calculated does not match the signature you provided"},
+            )
+
+    # 2. Check for pre-signed URL parameters
     signature = request.query_params.get("X-Amz-Signature") or request.query_params.get("signature")
     expires = request.query_params.get("X-Amz-Expires") or request.query_params.get("expires")
     content_type = request.query_params.get("X-Amz-Content-Type") or request.query_params.get("content_type")
@@ -322,7 +588,7 @@ async def _check_presign_or_auth(
                 detail={"Code": "SignatureDoesNotMatch", "Message": "The request signature is invalid or expired"},
             )
 
-    # Fall back to header-based auth
+    # 3. Fall back to Bearer token / X-Api-Key header-based auth
     try:
         api_key = await get_api_key_flexible(request)
     except HTTPException:

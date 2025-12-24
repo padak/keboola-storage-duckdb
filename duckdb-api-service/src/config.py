@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     presign_max_expiry: int = 604800  # Max URL expiry in seconds (7 days)
     base_url: str = "http://localhost:8000"  # Base URL for pre-signed URLs
 
+    # AWS Signature V4 settings (for boto3/aws-cli/rclone compatibility)
+    # These are separate from project API keys - used only for S3-compatible API
+    s3_access_key_id: str = "duckdb"  # AWS-style access key ID
+    s3_secret_access_key: str | None = None  # AWS-style secret key (defaults to admin_api_key)
+    s3_region: str = "local"  # Region name (used in signature, can be anything)
+    s3_sig_v4_max_age_seconds: int = 900  # Max age of signed request (15 minutes)
+
     # PG Wire server settings (Phase 11b)
     pgwire_host: str = "localhost"
     pgwire_port: int = 5432
