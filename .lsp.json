@@ -1,0 +1,10 @@
+{
+  "pyright": {
+    "command": "/Users/padak/github/Keboola Storage v3/duckdb-api-service/.venv/bin/pyright-langserver",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    }
+  }
+}
