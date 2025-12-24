@@ -88,7 +88,7 @@ duckdb-api-service/          # Python FastAPI service for DuckDB operations
   │       └── metrics.py     # Prometheus /metrics endpoint
   ├── proto/                 # Protocol Buffer definitions
   ├── generated/             # Generated Python protobuf code
-  └── tests/                 # pytest tests (630 tests)
+  └── tests/                 # pytest tests (640 tests)
 
 connection/                   # Keboola Connection (git submodule/clone)
 ```
@@ -133,8 +133,9 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Branch & Query Handlers (Phase 12g)** | **DONE** | - |
 | Schema Migrations | TODO | - |
 | **Phase 15: E2E Test Suite** | **DONE** | 630 |
+| **Phase 18: AWS Signature V4** | **DONE** | 10 |
 
-**Total: 630 tests PASS** (including 62 E2E + 90 gRPC + 38 S3 tests)
+**Total: 640 tests PASS** (including 62 E2E + 90 gRPC + 48 S3/boto3 tests)
 
 ## Post-MVP TODO & Technical Debt
 
@@ -142,7 +143,7 @@ connection/                   # Keboola Connection (git submodule/clone)
 
 Kompletni E2E test suite - viz `docs/plan/phase-15-e2e-tests.md`:
 - **93 API endpointu** - 100% pokryto
-- **630 testu** - 100% pass rate
+- **640 testu** - 100% pass rate
 - 10 workflow testu pokryvajicich vsechny endpointy
 - Real HTTP E2E testy (uvicorn + httpx)
 - S3 testy s boto3 klientem

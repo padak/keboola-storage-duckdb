@@ -4,7 +4,7 @@
 
 ## Current Status: ALL PHASES DONE - MVP Complete!
 
-**Total Tests: 630**
+**Total Tests: 640**
 
 | Phase | Name | Status | Tests | Details |
 |-------|------|--------|-------|---------|
@@ -38,6 +38,14 @@
 | 15 | Comprehensive E2E Test Suite | DONE | 19 workflow | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
 | **16** | **Bug Fixes (E2E)** | **TODO** | - | [phase-16-bugfixes.md](phase-16-bugfixes.md) |
 | **17** | **CLI & Python SDK** | **TODO** | - | [phase-17-cli-sdk.md](phase-17-cli-sdk.md) |
+| **18** | **AWS Signature V4** | **DONE** | 10 | [phase-18-aws-sig-v4.md](phase-18-aws-sig-v4.md) |
+
+### Phase 18: AWS Signature V4 - DONE
+
+boto3/aws-cli/rclone kompatibilita pro S3-compatible API:
+- AWS Signature V4 verifikace
+- 10 boto3 integration testu
+- Funguje s existujicimi S3 klienty
 
 ### Phase 17: CLI & Python SDK - TODO
 
@@ -57,7 +65,7 @@ Opravy dvou bugu nalezenych pri E2E testovani:
 
 19 passing workflow testu pokryvajicich vsech 93 API endpointu:
 - Workflows 1-10: Project, Data, Snapshot, Branch, Sharing, Workspace, S3, Files, Driver, PGWire
-- 630 testu celkem, 100% pass rate
+- 640 testu celkem, 100% pass rate
 
 ### Phase 14: Backend Plugin Architecture - PROPOSAL
 
@@ -147,6 +155,8 @@ All bucket/table endpoints now use branch-first URL pattern:
 *** MVP COMPLETE! ***
        ↓
 [DONE] Comprehensive E2E Test Suite - Phase 15 (630 tests)
+       ↓
+[DONE] AWS Signature V4 - Phase 18 (10 boto3 tests)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -171,6 +181,7 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.15 | 2025-12-24 | Phase 18 DONE: AWS Signature V4 - boto3/aws-cli/rclone compatibility (10 tests) |
 | v7.14 | 2025-12-23 | Phase 17 PLANNED: CLI & Python SDK (keboola-duckdb-cli, keboola-duckdb-sdk) |
 | v7.13 | 2025-12-23 | Phase 15 DONE: Comprehensive E2E Test Suite - 630 tests, 100% pass rate, 93 API endpoints covered |
 | v7.12 | 2025-12-21 | Phase 12h.8 DONE: Backend audit - fixed 5 files (getAssignedBackends, removeBackend, getRootCredentialsForBackend, getDefaultConnectionForBackend, File PHPDoc) |

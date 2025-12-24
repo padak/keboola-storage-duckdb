@@ -507,10 +507,11 @@ async def require_s3_bucket_access(
     """
     Dependency for S3-compatible API endpoints.
 
-    Supports multiple authentication methods:
-    1. Authorization: Bearer {api_key}
-    2. X-Api-Key: {api_key}
-    3. x-amz-security-token: {api_key}
+    Supports multiple authentication methods (in order):
+    1. AWS Signature V4: Authorization: AWS4-HMAC-SHA256 ... (for boto3/aws-cli)
+    2. Authorization: Bearer {api_key}
+    3. X-Api-Key: {api_key}
+    4. x-amz-security-token: {api_key}
 
     This accepts both:
     1. Admin key (has access to all buckets/projects)
@@ -531,14 +532,32 @@ async def require_s3_bucket_access(
         AuthenticationError: If the key is invalid
         AuthorizationError: If the key doesn't have access to this bucket
     """
-    # Extract API key from flexible sources
-    api_key = await get_api_key_flexible(request)
-
     # Extract project_id from bucket name
     if bucket.startswith("project_"):
         project_id = bucket[8:]
     else:
         project_id = bucket
+
+    # Check for AWS Signature V4 (boto3/aws-cli/rclone)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("AWS4-HMAC-SHA256"):
+        # Import here to avoid circular import
+        from src.routers.s3_compat import _verify_aws_sig_v4
+
+        # For bucket-level operations, key is empty
+        is_valid, access_key = _verify_aws_sig_v4(request, bucket, "")
+        if is_valid:
+            # Validate project exists
+            project = metadata_db.get_project(project_id)
+            if not project:
+                raise AuthorizationError(f"Bucket {bucket} does not exist")
+            logger.info("auth_s3_sig_v4_access", bucket=bucket, project_id=project_id, access_key=access_key)
+            return f"aws_sig_v4:{access_key}"  # Return marker for logging
+        else:
+            raise AuthenticationError("Invalid AWS Signature V4")
+
+    # Extract API key from flexible sources (Bearer, X-Api-Key, etc.)
+    api_key = await get_api_key_flexible(request)
 
     # Admin key has access to everything
     if verify_admin_key(api_key):
