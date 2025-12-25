@@ -11,10 +11,10 @@ Row operations (delete rows, profile) work on both main and dev branches.
 """
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src import metrics
 from src.branch_utils import (
@@ -27,11 +27,14 @@ from src.dependencies import require_project_access
 from src.models.responses import (
     AddColumnRequest,
     AlterColumnRequest,
+    ColumnCorrelation,
     ColumnInfo,
     ColumnStatistics,
     DeleteRowsRequest,
     DeleteRowsResponse,
+    DetectedPattern,
     ErrorResponse,
+    QualityIssue,
     SetPrimaryKeyRequest,
     TableProfileResponse,
     TableResponse,
@@ -1177,7 +1180,7 @@ async def delete_rows(
         500: {"model": ErrorResponse},
     },
     summary="Profile table",
-    description="Get statistical profile of a table (min, max, avg, percentiles, etc.). Works on both main and dev branches.",
+    description="Get advanced statistical profile of a table with data quality insights.",
     dependencies=[Depends(require_project_access)],
 )
 async def profile_table(
@@ -1185,20 +1188,27 @@ async def profile_table(
     branch_id: str,
     bucket_name: str,
     table_name: str,
+    mode: Literal["basic", "full", "distribution", "quality"] = Query(
+        default="basic",
+        description="Profile mode: basic (default), full (all features), distribution (histograms), quality (correlations & patterns)",
+    ),
 ) -> TableProfileResponse:
     """
-    Get statistical profile of a table.
+    Get advanced statistical profile of a table.
 
-    Uses DuckDB's SUMMARIZE command to calculate:
-    - Min/max values
-    - Approximate unique count
-    - Average and standard deviation (numeric columns)
-    - Percentiles (q25, q50, q75)
-    - Null percentage
+    **Modes:**
+    - `basic`: Standard stats (min, max, avg, std, percentiles, cardinality, outliers)
+    - `full`: All features including histograms, patterns, and correlations
+    - `distribution`: Focus on distribution analysis with histograms
+    - `quality`: Focus on data quality with pattern detection and correlations
+
+    **Statistics included:**
+    - Basic: min, max, count, null%, unique count, cardinality class
+    - Numeric: avg, std, skewness, kurtosis, percentiles (q01-q99), outlier detection
+    - String: avg/min/max length, empty count, pattern detection (email, UUID, URL, etc.)
+    - Quality: quality score, issues/recommendations, column correlations
 
     This is a read-only operation and does not modify data.
-
-    Note: Row operations work on both main and dev branches (no schema restriction).
     """
     start_time = time.time()
     request_id = _get_request_id()
@@ -1212,6 +1222,7 @@ async def profile_table(
         branch_id=branch_id,
         bucket_name=bucket_name,
         table_name=table_name,
+        mode=mode,
         request_id=request_id,
     )
 
@@ -1226,6 +1237,7 @@ async def profile_table(
             project_id=resolved_project_id,
             bucket_name=bucket_name,
             table_name=table_name,
+            mode=mode,
         )
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -1240,6 +1252,8 @@ async def profile_table(
             details={
                 "row_count": profile_data["row_count"],
                 "column_count": profile_data["column_count"],
+                "mode": mode,
+                "quality_score": profile_data.get("quality_score"),
                 "branch_id": branch_id,
             },
             duration_ms=duration_ms,
@@ -1251,19 +1265,42 @@ async def profile_table(
             branch_id=resolved_branch_id,
             bucket_name=bucket_name,
             table_name=table_name,
+            mode=mode,
             row_count=profile_data["row_count"],
             column_count=profile_data["column_count"],
+            quality_score=profile_data.get("quality_score"),
             duration_ms=duration_ms,
         )
+
+        # Build response with proper model instances
+        statistics = []
+        for stat in profile_data["statistics"]:
+            # Convert detected_patterns if present
+            patterns = None
+            if stat.get("detected_patterns"):
+                patterns = [DetectedPattern(**p) for p in stat["detected_patterns"]]
+                stat["detected_patterns"] = patterns
+            statistics.append(ColumnStatistics(**stat))
+
+        # Convert quality issues
+        quality_issues = None
+        if profile_data.get("quality_issues"):
+            quality_issues = [QualityIssue(**issue) for issue in profile_data["quality_issues"]]
+
+        # Convert correlations
+        correlations = None
+        if profile_data.get("correlations"):
+            correlations = [ColumnCorrelation(**corr) for corr in profile_data["correlations"]]
 
         return TableProfileResponse(
             table_name=profile_data["table_name"],
             bucket_name=profile_data["bucket_name"],
             row_count=profile_data["row_count"],
             column_count=profile_data["column_count"],
-            statistics=[
-                ColumnStatistics(**stat) for stat in profile_data["statistics"]
-            ],
+            statistics=statistics,
+            quality_score=profile_data.get("quality_score"),
+            quality_issues=quality_issues,
+            correlations=correlations,
         )
 
     except HTTPException:

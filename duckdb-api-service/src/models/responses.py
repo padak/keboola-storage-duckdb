@@ -290,31 +290,109 @@ class DeleteRowsResponse(BaseModel):
     table_rows_after: int = Field(description="Total rows remaining in table")
 
 
+class DetectedPattern(BaseModel):
+    """Detected pattern in a string column."""
+
+    pattern: str = Field(description="Pattern type (email, uuid, url, phone, ipv4, date_iso, datetime_iso)")
+    match_count: int = Field(description="Number of values matching pattern")
+    match_percentage: float = Field(description="Percentage of values matching pattern")
+
+
 class ColumnStatistics(BaseModel):
-    """Statistics for a single column from SUMMARIZE."""
+    """Statistics for a single column - advanced profiling."""
 
     column_name: str = Field(description="Column name")
     column_type: str = Field(description="Column data type")
     min: Any | None = Field(default=None, description="Minimum value")
     max: Any | None = Field(default=None, description="Maximum value")
-    approx_unique: int | None = Field(default=None, description="Approximate unique count")
-    avg: float | None = Field(default=None, description="Average value (numeric columns)")
-    std: float | None = Field(default=None, description="Standard deviation (numeric columns)")
-    q25: Any | None = Field(default=None, description="25th percentile")
-    q50: Any | None = Field(default=None, description="50th percentile (median)")
-    q75: Any | None = Field(default=None, description="75th percentile")
+    approx_unique: int | None = Field(default=None, description="Unique count")
+    cardinality_ratio: float | None = Field(default=None, description="Unique/total ratio (0-1)")
+    cardinality_class: str | None = Field(
+        default=None,
+        description="Cardinality class: unique, high, medium, low, very_low, constant"
+    )
     count: int | None = Field(default=None, description="Non-null count")
     null_percentage: float | None = Field(default=None, description="Percentage of null values")
 
+    # Numeric stats
+    avg: float | None = Field(default=None, description="Average value (numeric columns)")
+    std: float | None = Field(default=None, description="Standard deviation (numeric columns)")
+    skewness: float | None = Field(default=None, description="Skewness (0=symmetric, >0 right-skewed, <0 left-skewed)")
+    kurtosis: float | None = Field(default=None, description="Kurtosis (0=normal, >0 heavy-tailed, <0 light-tailed)")
+
+    # Extended percentiles
+    q01: Any | None = Field(default=None, description="1st percentile")
+    q05: Any | None = Field(default=None, description="5th percentile")
+    q25: Any | None = Field(default=None, description="25th percentile")
+    q50: Any | None = Field(default=None, description="50th percentile (median)")
+    q75: Any | None = Field(default=None, description="75th percentile")
+    q95: Any | None = Field(default=None, description="95th percentile")
+    q99: Any | None = Field(default=None, description="99th percentile")
+
+    # Outlier detection
+    outlier_count: int | None = Field(default=None, description="Number of outliers (IQR method)")
+    outlier_lower_bound: float | None = Field(default=None, description="Lower bound for outliers")
+    outlier_upper_bound: float | None = Field(default=None, description="Upper bound for outliers")
+
+    # Histogram (for distribution mode)
+    histogram: Any | None = Field(default=None, description="Distribution histogram buckets")
+
+    # String stats
+    avg_length: float | None = Field(default=None, description="Average string length")
+    min_length: int | None = Field(default=None, description="Minimum string length")
+    max_length: int | None = Field(default=None, description="Maximum string length")
+    empty_count: int | None = Field(default=None, description="Count of empty strings")
+    whitespace_only_count: int | None = Field(default=None, description="Count of whitespace-only strings")
+
+    # Pattern detection
+    detected_patterns: list[DetectedPattern] | None = Field(
+        default=None,
+        description="Detected string patterns (email, uuid, url, etc.)"
+    )
+
+
+class QualityIssue(BaseModel):
+    """Data quality issue detected in a column."""
+
+    column: str = Field(description="Column name")
+    type: str = Field(description="Issue type: high_nulls, constant, outliers, skewed, pk_candidate, enum_candidate")
+    severity: str = Field(description="Severity: info, warning, error")
+    message: str = Field(description="Human-readable issue description")
+
+
+class ColumnCorrelation(BaseModel):
+    """Correlation between two numeric columns."""
+
+    column1: str = Field(description="First column name")
+    column2: str = Field(description="Second column name")
+    correlation: float = Field(description="Pearson correlation coefficient (-1 to 1)")
+    strength: str = Field(description="Correlation strength: strong (>0.7), moderate (0.4-0.7)")
+
 
 class TableProfileResponse(BaseModel):
-    """Response for table profiling (SUMMARIZE)."""
+    """Response for advanced table profiling."""
 
     table_name: str = Field(description="Table name")
     bucket_name: str = Field(description="Bucket name")
     row_count: int = Field(description="Total rows in table")
     column_count: int = Field(description="Number of columns")
     statistics: list[ColumnStatistics] = Field(description="Per-column statistics")
+
+    # Quality metrics
+    quality_score: float | None = Field(
+        default=None,
+        description="Overall data quality score (0-100)"
+    )
+    quality_issues: list[QualityIssue] | None = Field(
+        default=None,
+        description="Detected data quality issues and recommendations"
+    )
+
+    # Correlations (for full/quality mode)
+    correlations: list[ColumnCorrelation] | None = Field(
+        default=None,
+        description="Significant correlations between numeric columns"
+    )
 
 
 # ============================================

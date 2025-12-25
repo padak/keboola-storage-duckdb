@@ -5134,14 +5134,16 @@ class ProjectDBManager:
         project_id: str,
         bucket_name: str,
         table_name: str,
+        mode: str = "basic",
     ) -> dict[str, Any]:
         """
-        Get statistical profile of a table using DuckDB's SUMMARIZE.
+        Get statistical profile of a table with advanced analytics.
 
         Args:
             project_id: The project ID
             bucket_name: The bucket name
             table_name: The table name
+            mode: Profile mode - "basic", "full", "distribution", "quality"
 
         Returns:
             Dict with table info and per-column statistics
@@ -5160,50 +5162,341 @@ class ProjectDBManager:
                 f"SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}"
             ).fetchone()[0]
 
-            # Get column count
-            column_count_result = conn.execute(
+            # Get column info from information_schema
+            columns_info = conn.execute(
                 f"""
-                SELECT COUNT(*)
+                SELECT column_name, data_type
                 FROM information_schema.columns
                 WHERE table_schema = 'main' AND table_name = '{TABLE_DATA_NAME}'
+                ORDER BY ordinal_position
                 """
-            ).fetchone()
-            column_count = column_count_result[0] if column_count_result else 0
-
-            # Run SUMMARIZE to get statistics
-            # SUMMARIZE returns columns: column_name, column_type, min, max, approx_unique, avg, std, q25, q50, q75, count, null_percentage
-            summarize_result = conn.execute(
-                f"SUMMARIZE main.{TABLE_DATA_NAME}"
             ).fetchall()
+            column_count = len(columns_info)
+
+            # Numeric types for which advanced stats make sense
+            numeric_types = {
+                "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "HUGEINT", "UBIGINT",
+                "UINTEGER", "USMALLINT", "UTINYINT", "UHUGEINT",
+                "DOUBLE", "FLOAT", "REAL", "DECIMAL", "NUMERIC",
+            }
+
+            # String types for pattern analysis
+            string_types = {"VARCHAR", "TEXT", "STRING", "CHAR"}
 
             statistics = []
-            for row in summarize_result:
-                stat = {
-                    "column_name": row[0],
-                    "column_type": row[1],
-                    "min": self._serialize_value(row[2]),
-                    "max": self._serialize_value(row[3]),
-                    "approx_unique": row[4],
-                    "avg": row[5],
-                    "std": row[6],
-                    "q25": self._serialize_value(row[7]),
-                    "q50": self._serialize_value(row[8]),
-                    "q75": self._serialize_value(row[9]),
-                    "count": row[10],
-                    "null_percentage": row[11],
-                }
+            quality_issues = []
+            quality_score = 100.0
+
+            for col_name, col_type in columns_info:
+                col_type_upper = col_type.upper() if col_type else ""
+                is_numeric = any(col_type_upper.startswith(nt) for nt in numeric_types)
+                is_string = any(col_type_upper.startswith(st) for st in string_types)
+
+                # Build advanced stats query for this column
+                stat = self._get_column_stats(
+                    conn, col_name, col_type, is_numeric, is_string, row_count, mode
+                )
                 statistics.append(stat)
 
-            return {
+                # Collect quality issues
+                if stat.get("null_percentage", 0) > 50:
+                    quality_issues.append({
+                        "column": col_name,
+                        "type": "high_nulls",
+                        "severity": "warning",
+                        "message": f"Column has {stat['null_percentage']:.1f}% null values",
+                    })
+                    quality_score -= 5
+
+                if stat.get("cardinality_class") == "constant":
+                    quality_issues.append({
+                        "column": col_name,
+                        "type": "constant",
+                        "severity": "info",
+                        "message": "Column has constant value (all rows identical)",
+                    })
+
+                if is_numeric and stat.get("outlier_count", 0) > 0:
+                    outlier_pct = (stat["outlier_count"] / row_count * 100) if row_count > 0 else 0
+                    if outlier_pct > 5:
+                        quality_issues.append({
+                            "column": col_name,
+                            "type": "outliers",
+                            "severity": "warning",
+                            "message": f"{stat['outlier_count']} outliers detected ({outlier_pct:.1f}%)",
+                        })
+                        quality_score -= 2
+
+                if is_numeric and abs(stat.get("skewness") or 0) > 2:
+                    skew_dir = "right" if stat["skewness"] > 0 else "left"
+                    quality_issues.append({
+                        "column": col_name,
+                        "type": "skewed",
+                        "severity": "info",
+                        "message": f"Highly {skew_dir}-skewed distribution (skewness={stat['skewness']:.2f})",
+                    })
+
+                # Suggest primary key candidates
+                if stat.get("cardinality_class") == "unique" and stat.get("null_percentage", 0) == 0:
+                    quality_issues.append({
+                        "column": col_name,
+                        "type": "pk_candidate",
+                        "severity": "info",
+                        "message": "100% unique, non-null - potential primary key",
+                    })
+
+                # Suggest ENUM for low cardinality strings
+                if is_string and stat.get("cardinality_class") in ("very_low", "low"):
+                    quality_issues.append({
+                        "column": col_name,
+                        "type": "enum_candidate",
+                        "severity": "info",
+                        "message": f"Only {stat['approx_unique']} distinct values - consider ENUM type",
+                    })
+
+            quality_score = max(0, min(100, quality_score))
+
+            result = {
                 "table_name": table_name,
                 "bucket_name": bucket_name,
                 "row_count": row_count,
                 "column_count": column_count,
                 "statistics": statistics,
+                "quality_score": round(quality_score, 1),
+                "quality_issues": quality_issues,
             }
+
+            # Add correlations for full/quality mode
+            if mode in ("full", "quality") and row_count > 0:
+                numeric_cols = [
+                    s["column_name"] for s in statistics
+                    if any(s["column_type"].upper().startswith(nt) for nt in numeric_types)
+                ]
+                if len(numeric_cols) >= 2:
+                    result["correlations"] = self._get_correlations(conn, numeric_cols[:10])
+
+            return result
 
         finally:
             conn.close()
+
+    def _get_column_stats(
+        self,
+        conn: Any,
+        col_name: str,
+        col_type: str,
+        is_numeric: bool,
+        is_string: bool,
+        row_count: int,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Get comprehensive statistics for a single column."""
+        quoted_col = f'"{col_name}"'
+
+        # Base stats query
+        base_query = f"""
+        SELECT
+            COUNT(*) as total_count,
+            COUNT({quoted_col}) as non_null_count,
+            COUNT(DISTINCT {quoted_col}) as unique_count,
+            MIN({quoted_col}) as min_val,
+            MAX({quoted_col}) as max_val
+        FROM main.{TABLE_DATA_NAME}
+        """
+        base_result = conn.execute(base_query).fetchone()
+
+        total_count = base_result[0]
+        non_null_count = base_result[1]
+        unique_count = base_result[2]
+        min_val = base_result[3]
+        max_val = base_result[4]
+
+        null_percentage = ((total_count - non_null_count) / total_count * 100) if total_count > 0 else 0
+        cardinality_ratio = (unique_count / non_null_count) if non_null_count > 0 else 0
+
+        # Classify cardinality
+        if unique_count == non_null_count and non_null_count > 0:
+            cardinality_class = "unique"
+        elif unique_count == 1:
+            cardinality_class = "constant"
+        elif cardinality_ratio > 0.9:
+            cardinality_class = "high"
+        elif cardinality_ratio > 0.5:
+            cardinality_class = "medium"
+        elif cardinality_ratio > 0.01:
+            cardinality_class = "low"
+        else:
+            cardinality_class = "very_low"
+
+        stat = {
+            "column_name": col_name,
+            "column_type": col_type,
+            "min": self._serialize_value(min_val),
+            "max": self._serialize_value(max_val),
+            "approx_unique": unique_count,
+            "cardinality_ratio": round(cardinality_ratio, 4),
+            "cardinality_class": cardinality_class,
+            "count": non_null_count,
+            "null_percentage": round(null_percentage, 2),
+        }
+
+        # Numeric-specific stats
+        if is_numeric and non_null_count > 0:
+            numeric_query = f"""
+            SELECT
+                AVG({quoted_col}) as avg_val,
+                STDDEV({quoted_col}) as std_val,
+                SKEWNESS({quoted_col}) as skewness,
+                KURTOSIS({quoted_col}) as kurtosis,
+                QUANTILE_CONT({quoted_col}, [0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99]) as percentiles
+            FROM main.{TABLE_DATA_NAME}
+            WHERE {quoted_col} IS NOT NULL
+            """
+            try:
+                num_result = conn.execute(numeric_query).fetchone()
+                stat["avg"] = round(num_result[0], 4) if num_result[0] is not None else None
+                stat["std"] = round(num_result[1], 4) if num_result[1] is not None else None
+                stat["skewness"] = round(num_result[2], 4) if num_result[2] is not None else None
+                stat["kurtosis"] = round(num_result[3], 4) if num_result[3] is not None else None
+
+                percentiles = num_result[4] if num_result[4] else []
+                if len(percentiles) == 7:
+                    stat["q01"] = self._serialize_value(percentiles[0])
+                    stat["q05"] = self._serialize_value(percentiles[1])
+                    stat["q25"] = self._serialize_value(percentiles[2])
+                    stat["q50"] = self._serialize_value(percentiles[3])
+                    stat["q75"] = self._serialize_value(percentiles[4])
+                    stat["q95"] = self._serialize_value(percentiles[5])
+                    stat["q99"] = self._serialize_value(percentiles[6])
+
+                    # Calculate IQR outliers
+                    q25 = percentiles[2]
+                    q75 = percentiles[4]
+                    if q25 is not None and q75 is not None:
+                        iqr = q75 - q25
+                        lower_bound = q25 - 1.5 * iqr
+                        upper_bound = q75 + 1.5 * iqr
+                        outlier_query = f"""
+                        SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}
+                        WHERE {quoted_col} < {lower_bound} OR {quoted_col} > {upper_bound}
+                        """
+                        outlier_count = conn.execute(outlier_query).fetchone()[0]
+                        stat["outlier_count"] = outlier_count
+                        stat["outlier_lower_bound"] = round(lower_bound, 4)
+                        stat["outlier_upper_bound"] = round(upper_bound, 4)
+            except Exception:
+                # Skip advanced numeric stats if query fails
+                pass
+
+            # Histogram for distribution mode
+            if mode in ("full", "distribution") and non_null_count > 0:
+                try:
+                    hist_query = f"""
+                    SELECT HISTOGRAM({quoted_col})
+                    FROM main.{TABLE_DATA_NAME}
+                    WHERE {quoted_col} IS NOT NULL
+                    """
+                    hist_result = conn.execute(hist_query).fetchone()
+                    if hist_result and hist_result[0]:
+                        stat["histogram"] = hist_result[0]
+                except Exception:
+                    pass
+        else:
+            # Non-numeric columns don't have these stats
+            stat["avg"] = None
+            stat["std"] = None
+            stat["skewness"] = None
+            stat["kurtosis"] = None
+
+        # String-specific stats
+        if is_string and non_null_count > 0:
+            string_query = f"""
+            SELECT
+                AVG(LENGTH({quoted_col})) as avg_length,
+                MIN(LENGTH({quoted_col})) as min_length,
+                MAX(LENGTH({quoted_col})) as max_length,
+                COUNT(*) FILTER (WHERE {quoted_col} = '') as empty_count,
+                COUNT(*) FILTER (WHERE TRIM({quoted_col}) = '' AND {quoted_col} != '') as whitespace_only_count
+            FROM main.{TABLE_DATA_NAME}
+            WHERE {quoted_col} IS NOT NULL
+            """
+            try:
+                str_result = conn.execute(string_query).fetchone()
+                stat["avg_length"] = round(str_result[0], 1) if str_result[0] else None
+                stat["min_length"] = str_result[1]
+                stat["max_length"] = str_result[2]
+                stat["empty_count"] = str_result[3]
+                stat["whitespace_only_count"] = str_result[4]
+            except Exception:
+                pass
+
+            # Pattern detection for full mode
+            if mode in ("full", "quality") and non_null_count > 0:
+                stat["detected_patterns"] = self._detect_patterns(conn, col_name, non_null_count)
+
+        return stat
+
+    def _detect_patterns(self, conn: Any, col_name: str, non_null_count: int) -> list[dict]:
+        """Detect common patterns in string column."""
+        quoted_col = f'"{col_name}"'
+        patterns = []
+
+        pattern_checks = [
+            ("email", r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
+            ("uuid", r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"),
+            ("url", r"^https?://"),
+            ("phone", r"^\+?[0-9\s\-\(\)]{10,20}$"),
+            ("ipv4", r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"),
+            ("date_iso", r"^\d{4}-\d{2}-\d{2}$"),
+            ("datetime_iso", r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}"),
+        ]
+
+        for pattern_name, regex in pattern_checks:
+            try:
+                query = f"""
+                SELECT COUNT(*) FROM main.{TABLE_DATA_NAME}
+                WHERE {quoted_col} IS NOT NULL
+                AND regexp_full_match({quoted_col}, '{regex}')
+                """
+                match_count = conn.execute(query).fetchone()[0]
+                if match_count > 0:
+                    match_pct = (match_count / non_null_count * 100) if non_null_count > 0 else 0
+                    patterns.append({
+                        "pattern": pattern_name,
+                        "match_count": match_count,
+                        "match_percentage": round(match_pct, 1),
+                    })
+            except Exception:
+                pass
+
+        return patterns
+
+    def _get_correlations(self, conn: Any, numeric_cols: list[str]) -> list[dict]:
+        """Calculate correlations between numeric columns."""
+        correlations = []
+
+        for i, col1 in enumerate(numeric_cols):
+            for col2 in numeric_cols[i + 1:]:
+                try:
+                    query = f"""
+                    SELECT CORR("{col1}", "{col2}")
+                    FROM main.{TABLE_DATA_NAME}
+                    WHERE "{col1}" IS NOT NULL AND "{col2}" IS NOT NULL
+                    """
+                    corr_val = conn.execute(query).fetchone()[0]
+                    if corr_val is not None and abs(corr_val) > 0.3:
+                        correlations.append({
+                            "column1": col1,
+                            "column2": col2,
+                            "correlation": round(corr_val, 4),
+                            "strength": "strong" if abs(corr_val) > 0.7 else "moderate",
+                        })
+                except Exception:
+                    pass
+
+        # Sort by absolute correlation value
+        correlations.sort(key=lambda x: abs(x["correlation"]), reverse=True)
+        return correlations[:20]  # Top 20 correlations
 
     def _serialize_value(self, val: Any) -> Any:
         """Serialize a value for JSON response."""
