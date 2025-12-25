@@ -1,6 +1,6 @@
 # Phase 17: CLI & Python SDK
 
-**Status:** TODO
+**Status:** CLI DONE (2024-12-25), SDK TODO
 **Priority:** Post-MVP
 
 ## Overview
@@ -824,7 +824,7 @@ keboola-duckdb
 │   ├── create <project> <bucket> <name> --columns <json> [--branch default]
 │   ├── get <project> <bucket> <table> [--branch default]
 │   ├── preview <project> <bucket> <table> [--limit 100] [--branch default]
-│   ├── profile <project> <bucket> <table> [--branch default]
+│   ├── profile <project> <bucket> <table> [-m mode] [-q] [-d] [-r] [-c cols] [--branch default]
 │   ├── delete <project> <bucket> <table> [--branch default] [--yes]
 │   └── delete-many <project> <bucket> --tables <t1,t2,...> [--yes]  # Bulk delete
 ├── schema

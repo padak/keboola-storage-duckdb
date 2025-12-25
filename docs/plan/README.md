@@ -37,8 +37,20 @@
 | 14 | Backend Plugin Architecture | PROPOSAL | - | [phase-14-backend-registry.md](phase-14-backend-registry.md) |
 | 15 | Comprehensive E2E Test Suite | DONE | 19 workflow | [phase-15-e2e-tests.md](phase-15-e2e-tests.md) |
 | **16** | **Bug Fixes (E2E)** | **TODO** | - | [phase-16-bugfixes.md](phase-16-bugfixes.md) |
-| **17** | **CLI & Python SDK** | **TODO** | - | [phase-17-cli-sdk.md](phase-17-cli-sdk.md) |
+| **17** | **CLI & Python SDK** | **DONE** | 118 | [phase-17-cli-sdk.md](phase-17-cli-sdk.md) |
 | **18** | **AWS Signature V4** | **DONE** | 10 | [phase-18-aws-sig-v4.md](phase-18-aws-sig-v4.md) |
+| **19** | **Advanced Table Profiling** | **DONE** | 4 | [phase-19-advanced-profiling.md](phase-19-advanced-profiling.md) |
+
+### Phase 19: Advanced Table Profiling - DONE
+
+Data scientist-friendly table profiling:
+- Skewness, Kurtosis, extended percentiles (Q01-Q99)
+- Cardinality analysis (unique/high/medium/low/constant)
+- Outlier detection (IQR method)
+- Quality score (0-100) with recommendations
+- Pattern detection (email, UUID, URL, phone)
+- Column correlations (Pearson)
+- CLI flags: `-q` (quality), `-r` (correlations), `-d` (distribution)
 
 ### Phase 18: AWS Signature V4 - DONE
 
@@ -47,7 +59,7 @@ boto3/aws-cli/rclone kompatibilita pro S3-compatible API:
 - 10 boto3 integration testu
 - Funguje s existujicimi S3 klienty
 
-### Phase 17: CLI & Python SDK - TODO
+### Phase 17: CLI & Python SDK - CLI DONE, SDK TODO
 
 Python CLI a SDK pro externi vyvojare:
 - `keboola-duckdb-cli` - CLI nastroj (typer, rich)
@@ -157,6 +169,10 @@ All bucket/table endpoints now use branch-first URL pattern:
 [DONE] Comprehensive E2E Test Suite - Phase 15 (630 tests)
        ↓
 [DONE] AWS Signature V4 - Phase 18 (10 boto3 tests)
+       ↓
+[DONE] CLI (keboola-duckdb) - Phase 17 (118 tests)
+       ↓
+[DONE] Advanced Table Profiling - Phase 19 (skewness, correlations, quality score)
 ```
 
 ## E2E Test Coverage (Phase 11c)
@@ -181,6 +197,9 @@ All bucket/table endpoints now use branch-first URL pattern:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v7.18 | 2025-12-25 | CLI profile fix: mode handling (-m full/quality/distribution), histogram visualization |
+| v7.17 | 2025-12-25 | Phase 19 DONE: Advanced Table Profiling - skewness, kurtosis, cardinality, outliers, quality score, correlations |
+| v7.16 | 2025-12-25 | Phase 17 DONE: CLI (keboola-duckdb) - projects, buckets, tables, files, profile commands (118 tests) |
 | v7.15 | 2025-12-24 | Phase 18 DONE: AWS Signature V4 - boto3/aws-cli/rclone compatibility (10 tests) |
 | v7.14 | 2025-12-23 | Phase 17 PLANNED: CLI & Python SDK (keboola-duckdb-cli, keboola-duckdb-sdk) |
 | v7.13 | 2025-12-23 | Phase 15 DONE: Comprehensive E2E Test Suite - 630 tests, 100% pass rate, 93 API endpoints covered |

@@ -133,9 +133,11 @@ connection/                   # Keboola Connection (git submodule/clone)
 | **Branch & Query Handlers (Phase 12g)** | **DONE** | - |
 | Schema Migrations | TODO | - |
 | **Phase 15: E2E Test Suite** | **DONE** | 630 |
+| **Phase 17: CLI (keboola-duckdb)** | **DONE** | 118 |
 | **Phase 18: AWS Signature V4** | **DONE** | 10 |
+| **Phase 19: Advanced Table Profiling** | **DONE** | 4 |
 
-**Total: 640 tests PASS** (including 62 E2E + 90 gRPC + 48 S3/boto3 tests)
+**Total: 772 tests PASS** (API: 640, CLI: 118, boto3: 10, profile: 4)
 
 ## Post-MVP TODO & Technical Debt
 
